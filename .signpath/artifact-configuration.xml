@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configuration d'artefact SignPath pour LKS Launcher.
+  À coller dans SignPath : projet "lks-launcher" > Artifact configurations.
+
+  L'artefact envoyé par GitHub Actions est un zip contenant l'installeur NSIS.
+  Seul l'installeur (construit à partir de ce dépôt) est signé. Le binaire
+  Electron qu'il contient est un binaire upstream et reste non signé, comme le
+  permettent les conditions de SignPath Foundation.
+  Le nom et la version du produit sont imposés (exigence de SignPath Foundation).
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="LKS-Launcher-Setup-${version}.exe" product-name="LKS Launcher" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

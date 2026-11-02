@@ -11,6 +11,8 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
 - **Mise à jour automatique du launcher** via les releases GitHub.
 
+> **About (English):** LKS Launcher is an open source launcher for the racing game Assetto Corsa, made for the Lowkey Syndicate community. It keeps the group's cars and tracks in sync, starts single-player sessions, joins the group's servers, installs the official Custom Shaders Patch with optimized graphics presets, and lets admins publish content updates. Windows installer: see [Releases](https://github.com/Pab-69/LKS-Launcher/releases).
+
 ---
 
 ## Pour les membres
@@ -108,14 +110,14 @@ Les photos affichées sur l'accueil (diaporama et « Le Garage ») et pendant le
 
 ### Sortir une nouvelle version du launcher
 
-1. Change `version` dans `package.json` (ex. `1.0.1`).
-2. `git tag v1.0.1 && git push --tags`
-3. GitHub Actions construit l'installeur Windows et publie la release. Les launchers déjà installés se mettent à jour tout seuls.
+1. Change `version` dans `package.json` (ex. `1.0.1`) et pousse sur `main`.
+2. Onglet *Actions* → *Build & release* → *Run workflow*, case **release** cochée. Pousser un tag `v1.0.1` depuis ton PC fait la même chose.
+3. GitHub Actions construit l'installeur Windows, le signe si la signature est configurée, puis publie la release. Les launchers déjà installés se mettent à jour tout seuls.
 
 ### Construire l'installeur
 
 - **Sans release** : onglet *Actions* du dépôt → *Build & release* → *Run workflow*. L'installeur `LKS-Launcher-Setup-x.y.z.exe` est téléchargeable dans les *Artifacts* du run.
-- **Avec release** (les membres reçoivent la mise à jour) : pousser un tag `vX.Y.Z` (voir plus haut).
+- **Avec release** (les membres reçoivent la mise à jour) : même chose avec la case **release** cochée, ou un tag `vX.Y.Z` (voir plus haut).
 
 ### Signer l'installeur (message « Windows a protégé votre ordinateur »)
 
@@ -135,10 +137,44 @@ Même signé, un tout nouveau certificat peut encore déclencher SmartScreen pen
 
 Le workflow est déjà prêt à signer : ajoute les secrets dans *Settings → Secrets and variables → Actions* :
 
+- SignPath : voir la section suivante ;
 - certificat `.pfx` : `WIN_CSC_LINK` (le fichier encodé en base64) et `WIN_CSC_KEY_PASSWORD` ;
 - Azure Trusted Signing : secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` et variables `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, `AZURE_SIGN_PUBLISHER`.
 
 En attendant, les membres font **« Informations complémentaires → Exécuter quand même »** une seule fois. Les mises à jour suivantes s'installent ensuite toutes seules, sans repasser par ce message.
+
+### Signature gratuite avec SignPath Foundation
+
+Le dépôt est prêt pour [SignPath Foundation](https://signpath.org/) : licence MIT, [politique de confidentialité](PRIVACY.md), section « Code signing policy » ci-dessous, configuration d'artefact dans [`.signpath/artifact-configuration.xml`](.signpath/artifact-configuration.xml) et étapes de signature dans le workflow.
+
+Ce qu'il reste à faire, et que toi seul peux faire :
+
+1. **Activer la double authentification** sur ton compte GitHub. SignPath l'exige pour tous les membres de l'équipe.
+2. **Postuler** sur [signpath.org/apply](https://signpath.org/apply) avec l'adresse du dépôt. La réponse prend en général quelques jours à quelques semaines.
+3. Une fois accepté, dans SignPath :
+   - activer la double authentification sur ton compte SignPath ;
+   - dans le projet (slug `lks-launcher`), coller le contenu de `.signpath/artifact-configuration.xml` comme configuration d'artefact par défaut ;
+   - relier le projet au dépôt GitHub (*Trusted Build System* « GitHub.com ») et vérifier que la politique de signature s'appelle `release-signing`, avec toi comme approbateur ;
+   - créer un jeton d'API pour un utilisateur CI qui a le droit de soumettre des demandes de signature.
+4. Dans GitHub (*Settings → Secrets and variables → Actions*) :
+   - **secret** `SIGNPATH_API_TOKEN` : le jeton d'API ;
+   - **variable** `SIGNPATH_ORGANIZATION_ID` : l'identifiant de l'organisation SignPath ;
+   - variables facultatives `SIGNPATH_PROJECT_SLUG` (par défaut `lks-launcher`), `SIGNPATH_POLICY_SLUG` (par défaut `release-signing`) et `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`.
+5. Lancer *Run workflow* avec **release** cochée, puis **approuver la demande dans SignPath**. Chaque release doit être approuvée à la main ; le workflow attend jusqu'à 2 h. L'installeur signé est ensuite publié, et `latest.yml` est recalculé pour que la mise à jour automatique accepte le fichier signé.
+
+### Licence
+
+Le code source est sous licence [MIT](LICENSE). Les polices sont sous licence SIL Open Font License (voir `src/renderer/fonts/`). Les logos et visuels du Lowkey Syndicate (`assets/`, `src/renderer/img/`) appartiennent au Lowkey Syndicate.
+
+## Politique de signature de code / Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+> Candidature en cours : tant qu'elle n'a pas été acceptée, les installeurs publiés ne sont pas signés. *(Application pending: releases are unsigned until it is approved.)*
+
+- Committers and reviewers: [Pab-69](https://github.com/Pab-69)
+- Approvers: [Pab-69](https://github.com/Pab-69)
+- Privacy policy: see [PRIVACY.md](PRIVACY.md). The launcher has no telemetry; it only contacts the services listed there (GitHub for content and updates, the official Custom Shaders Patch site when the user installs it, and the game servers the user chooses).
 
 ### Architecture
 

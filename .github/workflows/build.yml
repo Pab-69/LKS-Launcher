@@ -4,11 +4,14 @@ name: Build & release
 # - Lancer à la main (onglet Actions > Run workflow) -> construit l'installeur, téléchargeable dans "Artifacts"
 #   (cocher « release » pour publier la release et créer le tag automatiquement)
 #
-# Signature de code (optionnelle, voir README > « Signer l'installeur ») :
+# Signature de code (optionnelle, une seule méthode à la fois, voir README) :
+#   SignPath (gratuit pour l'open source) : secret SIGNPATH_API_TOKEN
+#       + variables SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG
+#       (+ SIGNPATH_ARTIFACT_CONFIGURATION_SLUG si ce n'est pas la configuration par défaut)
 #   Certificat .pfx      : secrets WIN_CSC_LINK (pfx en base64) + WIN_CSC_KEY_PASSWORD
 #   Azure Trusted Signing : secrets AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
-#                          + variables AZURE_SIGN_ENDPOINT, AZURE_SIGN_ACCOUNT, AZURE_SIGN_PROFILE, AZURE_SIGN_PUBLISHER
-# Sans secrets, l'installeur est construit sans signature.
+#       + variables AZURE_SIGN_ENDPOINT, AZURE_SIGN_ACCOUNT, AZURE_SIGN_PROFILE, AZURE_SIGN_PUBLISHER
+# Sans rien de tout ça, l'installeur est construit sans signature.
 
 on:
   push:
@@ -22,10 +25,12 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,37 +40,105 @@ jobs:
       - run: npm ci
       - run: npm test
 
+      - name: Version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Signing mode
         id: sign
         shell: bash
         env:
+          HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
           HAS_PFX: ${{ secrets.WIN_CSC_LINK != '' }}
           HAS_AZURE: ${{ secrets.AZURE_CLIENT_SECRET != '' && vars.AZURE_SIGN_ENDPOINT != '' }}
         run: |
-          if [ "$HAS_AZURE" = "true" ]; then
+          if [ "$HAS_SIGNPATH" = "true" ]; then
+            echo "mode=signpath" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signature via SignPath (approbation manuelle requise dans SignPath)"
+          elif [ "$HAS_AZURE" = "true" ]; then
+            echo "mode=azure" >> "$GITHUB_OUTPUT"
             echo "args=-c.win.azureSignOptions.endpoint=${{ vars.AZURE_SIGN_ENDPOINT }} -c.win.azureSignOptions.codeSigningAccountName=${{ vars.AZURE_SIGN_ACCOUNT }} -c.win.azureSignOptions.certificateProfileName=${{ vars.AZURE_SIGN_PROFILE }} -c.win.azureSignOptions.publisherName=\"${{ vars.AZURE_SIGN_PUBLISHER }}\"" >> "$GITHUB_OUTPUT"
             echo "::notice::Signature via Azure Trusted Signing"
           elif [ "$HAS_PFX" = "true" ]; then
-            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "mode=pfx" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"
             echo "::notice::Signature via certificat .pfx"
           else
-            echo "args=" >> "$GITHUB_OUTPUT"
-            echo "::warning::Aucun certificat configuré : installeur NON signé (Windows SmartScreen affichera un avertissement)"
+            echo "mode=none" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"
+            echo "::warning::Aucune signature configurée : installeur NON signé (Windows SmartScreen affichera un avertissement)"
           fi
 
-      - name: Build installer (publish the release when a tag is pushed)
+      - name: Build installer
         shell: bash
-        run: npx electron-builder --win --publish ${{ (startsWith(github.ref, 'refs/tags/') || inputs.release) && 'always' || 'never' }} ${{ steps.sign.outputs.args }}
+        run: npx electron-builder --win --publish never ${{ steps.sign.outputs.args }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ steps.sign.outputs.mode == 'pfx' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ steps.sign.outputs.mode == 'pfx' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+      # ---- SignPath: sign the finished installer, then refresh the auto-update metadata
+      - name: Upload unsigned installer for SignPath
+        id: unsigned
+        if: steps.sign.outputs.mode == 'signpath'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/LKS-Launcher-Setup-${{ steps.ver.outputs.version }}.exe
+          if-no-files-found: error
+
+      - name: Sign with SignPath
+        if: steps.sign.outputs.mode == 'signpath'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'lks-launcher' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # Chaque release doit être approuvée à la main dans SignPath : on attend jusqu'à 2 h.
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: signed
+          parameters: |
+            version: "${{ steps.ver.outputs.version }}"
+
+      - name: Use the signed installer
+        if: steps.sign.outputs.mode == 'signpath'
+        shell: bash
+        run: cp -f signed/LKS-Launcher-Setup-${{ steps.ver.outputs.version }}.exe dist/
+
+      - name: Refresh latest.yml and blockmap
+        shell: bash
+        run: node tools/update-latest.js dist
+
+      - name: Check signature
+        if: steps.sign.outputs.mode != 'none'
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "dist/LKS-Launcher-Setup-${{ steps.ver.outputs.version }}.exe"
+          Write-Host "Signature : $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Installeur non signé correctement" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: LKS-Launcher-Setup
-          path: dist/*.exe
+          path: dist/LKS-Launcher-Setup-*.exe
           if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          FILES="dist/LKS-Launcher-Setup-$VERSION.exe dist/LKS-Launcher-Setup-$VERSION.exe.blockmap dist/latest.yml"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --clobber
+          else
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "$VERSION" --notes-file .github/release-notes.md
+          fi

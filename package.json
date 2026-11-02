@@ -5,7 +5,7 @@
   "description": "Launcher Assetto Corsa du Lowkey Syndicate : synchro des voitures/circuits, solo, serveurs.",
   "main": "src/main/main.js",
   "author": "Lowkey Syndicate",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "start": "electron .",
@@ -33,7 +33,8 @@
       "src/**/*",
       "assets/**/*",
       "lks.config.json",
-      "package.json"
+      "package.json",
+      "LICENSE"
     ],
     "win": {
       "target": [
@@ -65,5 +66,10 @@
         "releaseType": "release"
       }
     ]
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pab-69/LKS-Launcher.git"
+  },
+  "homepage": "https://github.com/Pab-69/LKS-Launcher"
 }
