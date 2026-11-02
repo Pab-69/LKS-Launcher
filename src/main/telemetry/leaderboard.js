@@ -22,8 +22,13 @@ function downsample(samples, max = MAX_SAMPLES) {
   return out;
 }
 
-const packSamples = (samples) => zlib.gzipSync(JSON.stringify(downsample(samples))).toString('base64');
-const unpackSamples = (b64) => JSON.parse(zlib.gunzipSync(Buffer.from(b64, 'base64')).toString('utf8'));
+const packSamples = (samples, ghost) => zlib.gzipSync(JSON.stringify(ghost ? { v: 2, s: downsample(samples), g: downsample(ghost, 3000) } : downsample(samples))).toString('base64');
+/** Samples of a shared lap (and its ghost rows, when there is one). */
+function unpackLap(b64) {
+  const data = JSON.parse(zlib.gunzipSync(Buffer.from(b64, 'base64')).toString('utf8'));
+  return Array.isArray(data) ? { samples: data, ghost: null } : { samples: data.s || [], ghost: data.g || null };
+}
+const unpackSamples = (b64) => unpackLap(b64).samples;
 
 class Leaderboard {
   constructor({ url, anonKey, fetchImpl }) {
@@ -66,6 +71,8 @@ class Leaderboard {
       samples = lap.samples.map((r, i) => [...pad(r), ...lap.tandem.leadSamples[i]]);
     }
     const meta = { lapMs: lap.lapMs, topSpeed: lap.topSpeed, session: lap.session, date: lap.date, mode };
+    const ghost = kind !== 'tandem' && lap.ghost && Array.isArray(lap.ghost.rows) ? lap.ghost.rows : null;
+    if (ghost) meta.ghost = true;
     if (kind === 'drift') meta.drift = res;
     if (kind === 'tandem') Object.assign(meta, { tandem: res, lead: lap.tandem.lead });
     return this.request('/rest/v1/rpc/submit_lap', {
@@ -80,7 +87,7 @@ class Leaderboard {
         p_lap_ms: kind === 'time' ? lap.lapMs : null,
         p_score: res ? res.score : null,
         p_rules: rules || (res ? res.rules || '' : ''),
-        p_samples: packSamples(samples),
+        p_samples: packSamples(samples, ghost),
         p_meta: meta,
       }),
     });
@@ -129,7 +136,8 @@ class Leaderboard {
     const r = rows[0];
     const meta = r.meta || {};
     const mode = meta.mode || 'normal';
-    let samples = unpackSamples(r.samples);
+    const unpacked = unpackLap(r.samples);
+    let samples = unpacked.samples;
     let tandem;
     if (r.kind === 'tandem') {
       tandem = { lead: meta.lead || { name: '?', car: '' }, leadSamples: samples.map((x) => x.slice(FOLLOWER_COLS)), ...(meta.tandem || {}), modes: { [mode]: meta.tandem || { score: Number(r.score) } } };
@@ -150,6 +158,7 @@ class Leaderboard {
       topSpeed: meta.topSpeed || 0,
       drift,
       tandem,
+      ghost: unpacked.ghost ? { rows: unpacked.ghost } : undefined,
       mode,
       date: r.created_at,
       samples,
@@ -157,4 +166,4 @@ class Leaderboard {
   }
 }
 
-module.exports = { Leaderboard, packSamples, unpackSamples, downsample };
+module.exports = { Leaderboard, packSamples, unpackSamples, unpackLap, downsample };

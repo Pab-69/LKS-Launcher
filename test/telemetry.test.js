@@ -486,6 +486,51 @@ test('championship round: results sent with the round rules', async () => {
   assert.ok(round.length === 1 && round[0][0] === 'drift' && round[0][1] === 'pro');
 });
 
+test('ghost: recorded lap attached, shared and written for the in-game app', async () => {
+  const G = require('../src/main/telemetry/ghosts');
+  const { packSamples, unpackLap } = require('../src/main/telemetry/leaderboard');
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(sim), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}) });
+  const laps = [];
+  m.on('lap', (e) => laps.push(e.lap));
+  for (let i = 0; i < 1400; i++) m.tick();
+  const lap = m.store.list()[0];
+  const rows = Array.from({ length: 400 }, (_, i) => [i * 50, i, 5, 0, 1, 0, 0, 0, 1, 0, 80]);
+  const dir = tmp();
+  const write = (name, data) => fs.writeFileSync(path.join(dir, name), JSON.stringify(data));
+  write('a.json', { v: 1, track: lap.track, layout: lap.layout, car: lap.car, driver: 'Pab', time: Math.floor(Date.parse(lap.date) / 1000), lapMs: lap.lapMs, rows });
+  write('b.json', { v: 1, track: lap.track, layout: lap.layout, car: lap.car, driver: 'Pab', time: Math.floor(Date.now() / 1000), lapMs: 99999, rows }); // its lap is not saved yet
+  write('c.json', { v: 1, track: lap.track, rows: [[1]] });
+  m.synced.add(`${lap.car}|${lap.track}|${lap.layout}`);
+  assert.strictEqual(m.attachGhosts(dir), 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['b.json'], 'unmatched recent ghost kept for later, bad file removed');
+  assert.ok(!m.synced.has(`${lap.car}|${lap.track}|${lap.layout}`), 'bests resent with the ghost');
+  assert.strictEqual(m.store.list()[0].ghost, true, 'index only flags it');
+  const full = m.store.load(lap.id);
+  assert.strictEqual(full.ghost.rows.length, 400);
+  assert.strictEqual(m.attachGhosts(dir, Date.now() + 120000), 0);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'old unmatched ghost dropped');
+
+  // shared with the lap
+  const packed = unpackLap(packSamples(full.samples, full.ghost.rows));
+  assert.strictEqual(packed.ghost.length, 400);
+  assert.ok(packed.samples.length > 100);
+  assert.strictEqual(unpackLap(packSamples(full.samples)).ghost, null, 'older format still read');
+
+  // file for the app
+  const app = tmp();
+  assert.strictEqual(G.currentGhost(app), null);
+  const info = G.writeGhost(app, full);
+  assert.deepStrictEqual([info.driver, info.track], ['Pab', full.track]);
+  const written = JSON.parse(fs.readFileSync(path.join(app, 'ghost.json'), 'utf8'));
+  assert.strictEqual(written.rows.length, 400);
+  assert.strictEqual(G.currentGhost(app).driver, 'Pab');
+  G.clearGhost(app);
+  assert.strictEqual(G.currentGhost(app), null);
+  assert.throws(() => G.writeGhost(app, { ...full, ghost: undefined }), /fantôme/);
+  assert.strictEqual(G.cleanRows(Array.from({ length: 9000 }, (_, i) => [i, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0])).length, 6000);
+});
+
 test('companion tools and in-game app', () => {
   const env = { 'ProgramFiles(x86)': 'C:\\PF86', ProgramFiles: 'C:\\PF' };
   const status = toolsStatus({ env, exists: (p) => p.includes('SimHub') });
@@ -496,5 +541,6 @@ test('companion tools and in-game app', () => {
   assert.ok(st.upToDate);
   assert.ok(fs.existsSync(path.join(ac, 'apps', 'lua', 'LKS', 'LKS.lua')));
   assert.ok(fs.existsSync(path.join(ac, 'apps', 'lua', 'LKS', 'manifest.ini')));
+  assert.ok(fs.existsSync(path.join(ac, 'apps', 'lua', 'LKS', 'ghosts')));
   assert.strictEqual(removeIngame(ac).installed, null);
 });

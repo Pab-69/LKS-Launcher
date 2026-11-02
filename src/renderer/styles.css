@@ -646,3 +646,4 @@ select.input.board-select { width: auto; min-width: 240px; }
 .champ-round-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
 .champ-round-fields .field { margin: 0; }
 @media (max-width: 1100px) { .champ-round-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lap-row { grid-template-columns: 130px minmax(0, 1fr) 110px 160px 320px; }

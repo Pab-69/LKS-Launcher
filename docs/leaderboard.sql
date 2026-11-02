@@ -67,7 +67,11 @@ begin
   select * into cur from public.lks_laps
    where steam_id = p_steam_id and car = p_car and track = p_track
      and layout = coalesce(p_layout, '') and kind = p_kind and rules = coalesce(p_rules, '');
-  if found and ((p_kind = 'time' and cur.lap_ms <= p_lap_ms) or (p_kind <> 'time' and cur.score >= p_score)) then
+  -- un record égal remplace l'ancien seulement s'il apporte un fantôme
+  if found and (
+       (p_kind = 'time' and (cur.lap_ms < p_lap_ms or (cur.lap_ms = p_lap_ms and not (p_meta ? 'ghost' and not cur.meta ? 'ghost'))))
+    or (p_kind <> 'time' and (cur.score > p_score or (cur.score = round(p_score, 1) and not (p_meta ? 'ghost' and not cur.meta ? 'ghost'))))
+  ) then
     return 'record précédent conservé';
   end if;
 

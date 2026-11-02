@@ -13,6 +13,8 @@ const { LapStore } = require('./store');
 const { Leaderboard } = require('./leaderboard');
 const { DashServer } = require('./dash-server');
 const { BattleStore, findPartnerRun } = require('./battles');
+const { readGhostFiles, matchLap } = require('./ghosts');
+const fs = require('fs');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
@@ -231,6 +233,35 @@ class TelemetryManager extends EventEmitter {
     this.judge(lap, this.getCourse(lap));
     await this.onLap(lap);
     return this.detectBattle(lap);
+  }
+
+  /**
+   * Ghost laps recorded by the in-game app: attach each one to the matching
+   * lap of this PC's driver. Returns how many were attached.
+   */
+  attachGhosts(dir, now = Date.now()) {
+    const { steamId } = this.recorder.getDriver() || {};
+    let n = 0;
+    for (const { file, ghost, bad } of readGhostFiles(dir)) {
+      if (bad) {
+        fs.rmSync(file, { force: true });
+        continue;
+      }
+      const match = matchLap(ghost, this.store.list({ track: ghost.track, layout: ghost.layout }), steamId);
+      if (match) {
+        try {
+          const lap = this.store.load(match.id);
+          lap.ghost = { rows: ghost.rows };
+          this.store.save(lap, { imported: Boolean(match.imported) });
+          this.synced.delete(`${lap.car}|${lap.track}|${lap.layout || ''}`); // resend the bests, now with their ghost
+          n++;
+        } catch {
+          /* lap gone */
+        }
+      } else if (now - ghost.time < 60000) continue; // its lap may not be saved yet
+      fs.rmSync(file, { force: true });
+    }
+    return n;
   }
 
   /** Two runs with the roles swapped = a battle. */

@@ -19,6 +19,7 @@ function summary(lap) {
     const { leadSamples, ...tandem } = rest.tandem;
     rest.tandem = tandem;
   }
+  if (rest.ghost) rest.ghost = true; // ghost rows stay in the lap file
   return { ...rest, samples: samples ? samples.length : 0 };
 }
 

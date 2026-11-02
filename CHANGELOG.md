@@ -1,5 +1,17 @@
 # Journal des versions
 
+## 1.9.0
+
+- **Fantôme** : une voiture translucide rejoue un tour pour que tu la suives.
+  - Ça peut être ton tour ou celui d'un autre pilote du classement.
+  - Choisis le tour avec le bouton « Fantôme » dans Tours ou Classement.
+  - Le fantôme part quand tu passes la ligne de départ.
+  - Dans l'appli en jeu : l'afficher ou le masquer, régler son avance (0 à 2 s) et le mode « Attente », où il ralentit quand tu es loin derrière.
+- L'appli en jeu enregistre chaque tour complet pour le fantôme. Le fantôme est partagé avec ton record.
+- L'appli en jeu tourne même fenêtre fermée (tandem, clips, fantôme).
+- Appli en jeu 1.4 : réinstalle-la dans Outils.
+- Pour les admins : relance le script SQL du classement.
+
 ## 1.8.0
 
 - **Battle tandem** : deux runs avec les rôles inversés, un passage chacun devant.

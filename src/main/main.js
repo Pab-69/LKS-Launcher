@@ -35,6 +35,7 @@ const { Leaderboard } = require('./telemetry/leaderboard');
 const { courseVersion, referenceFrom, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
 const { autoCourse } = require('./telemetry/ailine');
 const { collectRuns } = require('./telemetry/tandem');
+const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
 const { dedupe: dedupeBattles } = require('./telemetry/battles');
 
@@ -446,7 +447,13 @@ function cleanRules(rules) {
 /** Tandem runs saved by the in-game app (it sees the car in front). */
 async function importTandemRuns() {
   if (!telemetry || !acRoot() || settings.data.telemetry.enabled === false) return;
-  const dir = path.join(ingame.appDir(acRoot()), 'runs');
+  const appDir = ingame.appDir(acRoot());
+  try {
+    if (telemetry.attachGhosts(path.join(appDir, 'ghosts'))) send('telemetry:lap', null);
+  } catch (err) {
+    console.warn('[ghost]', err.message);
+  }
+  const dir = path.join(appDir, 'runs');
   if (!fs.existsSync(dir)) return;
   for (const lap of collectRuns(dir, { name: settings.data.driverName || '', steamId: settings.data.steamId || '' })) {
     try {
@@ -1126,6 +1133,23 @@ function setupIpc() {
     return course;
   });
   handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
+  handle('ghost:status', () => (acRoot() ? ghosts.currentGhost(ingame.appDir(acRoot())) : null));
+  handle('ghost:clear', () => {
+    if (acRoot()) ghosts.clearGhost(ingame.appDir(acRoot()));
+    return true;
+  });
+  handle('ghost:set', async (id) => {
+    if (!acRoot()) throw new Error("Dossier d'Assetto Corsa non configuré");
+    let lap;
+    if (String(id).startsWith('remote-')) {
+      const board = telemetry.board();
+      if (!board) throw new Error('Classement partagé non configuré');
+      lap = await board.lap(String(id).slice(7));
+    } else lap = telemetry.store.load(id);
+    const status = ingame.ingameStatus(acRoot());
+    if (!status.installed || !status.upToDate) ingame.installIngame(acRoot(), allDriftCourses()); // the ghost needs the app 1.4
+    return ghosts.writeGhost(ingame.appDir(acRoot()), lap);
+  });
   handle('battles:list', async ({ track, layout = '', mode = 'normal' }) => {
     const version = courseVersion(driftCourse({ track, layout }), mode);
     const view = (b) => ({ ...b, result: b.modes[mode] || null });

@@ -393,6 +393,7 @@ export default function telemetryView(root, params = {}) {
           : h('div', h('strong', note(d)), h('div.s', d && d.zeroed ? `Run à 0 : ${d.zeroed}` : d && d.score > 0 ? `${Math.round(d.avgAngle)}° moy. · ${Math.round(d.maxAngle)}° max` : '')),
         h('div.row',
           l.tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(l.id) } }, 'Voir') : null,
+          l.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce tour en fantôme', on: { click: () => useGhost(l.id) } }, 'Fantôme') : null,
           h('button.btn.btn-sm', { title: 'Tour A', on: { click: () => pick('a', l.id) } }, 'A'),
           h('button.btn.btn-sm', { title: 'Tour B', on: { click: () => pick('b', l.id) } }, 'B'),
           l.imported ? null : h('button.btn.btn-sm.btn-ghost', { title: 'Exporter', on: { click: async () => { const f = await guard(() => api.call('telemetry:export', l.id)); if (f) toast('Tour exporté', 'success'); } } }, icon('upload')),
@@ -411,6 +412,11 @@ export default function telemetryView(root, params = {}) {
       tab = 'compare';
       render();
     }
+  }
+
+  async function useGhost(id) {
+    const g = await guard(() => api.call('ghost:set', id));
+    if (g) toast(`Fantôme prêt : ${g.driver} sur ${trackName(g.track, g.layout)}. Il part quand tu passes la ligne de départ.`, 'success', 7000);
   }
 
   async function openTandem(id) {
@@ -468,8 +474,8 @@ export default function telemetryView(root, params = {}) {
     else if (!remote) body.append(h('div.notice.info', 'Classement partagé pas encore configuré : seuls tes tours et ceux importés apparaissent.'));
     if (judged) body.append(courseNotice(info, boardQuery.kind));
     const rows = remote
-      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, date: r.created_at, me: r.steam_id === store.settings.steamId }))
-      : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.result ? l.result.score : 0, d: l.result, lead: l.tandem && l.tandem.lead, date: l.date, me: l.driver.steamId === store.settings.steamId }));
+      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: r.steam_id === store.settings.steamId }))
+      : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.result ? l.result.score : 0, d: l.result, lead: l.tandem && l.tandem.lead, ghost: Boolean(l.ghost), date: l.date, me: l.driver.steamId === store.settings.steamId }));
     if (!rows.length) {
       body.append(h('div.empty.mt', h('strong', 'Personne pour l’instant'), boardQuery.kind === 'tandem' ? 'Installe l’appli en jeu (Outils) et suis un pote : ton chase est noté.' : judged ? 'Sois le premier à poser une run.' : 'Sois le premier à poser un temps.'));
       return;
@@ -486,6 +492,7 @@ export default function telemetryView(root, params = {}) {
         h('strong.board-v', value, judged ? h('small', ' /100') : null),
         h('span.s', gap),
         h('div.row', h('span.s', dateFr(r.date)),
+          r.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce tour en fantôme', on: { click: () => useGhost(r.id) } }, 'Fantôme') : null,
           boardQuery.kind === 'tandem' ? h('button.btn.btn-sm', { on: { click: () => openTandem(r.id) } }, 'Voir')
             : rows.length > 1 || !r.me ? h('button.btn.btn-sm', { on: { click: () => compareWith(r, r.me ? rows[i === 0 ? 1 : i - 1] : null) } }, 'Comparer') : null)));
     });
@@ -950,7 +957,7 @@ export default function telemetryView(root, params = {}) {
 
   // ------------------------------------------------------------ tools
   async function renderTools() {
-    const [st, tools, game] = await Promise.all([api.call('telemetry:status'), api.call('tools:status'), api.call('ingame:status')]);
+    const [st, tools, game, ghost] = await Promise.all([api.call('telemetry:status'), api.call('tools:status'), api.call('ingame:status'), api.call('ghost:status').catch(() => null)]);
     const setT = async (patch) => { await guard(() => api.call('telemetry:settings', patch)); render(); };
     body.append(
       h('div.grid.grid-2',
@@ -963,7 +970,11 @@ export default function telemetryView(root, params = {}) {
             game.installed ? h(`span.tag.${game.upToDate ? 'ok' : 'warn'}`, game.upToDate ? `Installée (v${game.installed})` : `Mise à jour v${game.available}`) : h('span.tag.plain', 'Non installée'),
             h('button.btn.btn-sm.btn-primary', { on: { click: async () => { if (await guard(() => api.call('ingame:install'), 'Appli installée')) render(); } } }, game.installed && game.upToDate ? 'Réinstaller' : 'Installer'),
             game.installed ? h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { await guard(() => api.call('ingame:remove')); render(); } } }, 'Retirer') : null),
-          h('p.hint', 'En jeu : barre d’applis à droite de l’écran, puis « LKS ».')),
+          h('p.hint', 'En jeu : barre d’applis à droite de l’écran, puis « LKS ».'),
+          h('h3.mt', 'Fantôme'),
+          ghost
+            ? h('div.row.wrap', h('span', `${ghost.driver} · ${trackName(ghost.track, ghost.layout)} · ${lapTime(ghost.lapMs)}`), h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { await api.call('ghost:clear'); render(); } } }, 'Retirer'))
+            : h('p.muted', { style: { margin: 0 } }, 'Aucun. Choisis un tour avec « Fantôme » dans Tours ou Classement : une voiture translucide le rejoue pour que tu la suives.')),
         h('div.panel', h('h3', 'Tableau de bord sur téléphone'),
           toggle('Activer', Boolean(st.dashEnabled), (v) => setT({ dashEnabled: v }), 'Ouvre l’adresse sur ton téléphone, connecté au même Wi-Fi.'),
           st.dash.running ? h('div.grid.mt', st.dash.urls.map((u) => h('div.row', h('code.invite-code', u), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', u); toast('Adresse copiée', 'success'); } } }, 'Copier')))) : null),

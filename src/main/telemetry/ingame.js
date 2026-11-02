@@ -51,6 +51,7 @@ function installIngame(acRoot, courses) {
   fs.mkdirSync(dir, { recursive: true });
   for (const f of fs.readdirSync(SRC)) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   fs.mkdirSync(path.join(dir, 'runs'), { recursive: true }); // tandem runs written by the app
+  fs.mkdirSync(path.join(dir, 'ghosts'), { recursive: true }); // laps recorded for the ghost
   writeCourses(acRoot, courses);
   return ingameStatus(acRoot);
 }

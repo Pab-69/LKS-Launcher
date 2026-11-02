@@ -168,6 +168,8 @@ Au drift, le chrono ne compte pas. Chaque run reçoit une note sur 100 :
 
 **Championnat** (onglet Championnat, créé par les admins) : une liste de manches avec circuit, format (solo drift, tandem ou battle), mode et dates. En solo et en tandem, c'est la meilleure note de chaque pilote pendant la manche qui compte. En battle, il y a des qualifs en solo pendant la manche, puis un tableau à élimination (1 contre N, 2 contre N-1…), gagné par la dernière battle sans one more time. Les points se donnent par place (25, 18, 15… modifiables) et s'additionnent au classement général. Avec le classement partagé, les résultats d'une manche sont envoyés avec ses propres règles (`version@manche`). Sans lui, le championnat se calcule avec les tours présents sur le PC.
 
+**Fantôme** : l'appli en jeu enregistre chaque tour complet (position et orientation de la voiture, 20 fois par seconde). Le launcher le range avec le tour et le partage avec le record. Le bouton **Fantôme** (Tours ou Classement) écrit ce tour dans `apps/lua/LKS/ghost.json`. Au prochain passage de la ligne, une voiture translucide le rejoue (avance réglable, attente si tu décroches). Le fantôme est dessiné avec la forme de ta voiture et n'a pas de collisions.
+
 Les admins placent les clips dans **Télémétrie → Parcours drift** : choisir une run propre (elle donne la ligne et la vitesse de référence), régler le départ et l'arrivée, cliquer sur la carte pour poser les clips (intérieur : la corde, extérieur : le mur), puis **Publier**. Quand un parcours change, les runs sont notées à nouveau et le classement drift de ce circuit repart avec les nouvelles règles. Sans clips, seuls l'angle et la vitesse comptent.
 
 ### Site vitrine (GitHub Pages)

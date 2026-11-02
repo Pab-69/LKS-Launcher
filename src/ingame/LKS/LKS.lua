@@ -1,7 +1,8 @@
 -- LKS : appli en jeu pour le Custom Shaders Patch.
 -- Angle de drift, clips du parcours et écart avec ton meilleur tour de la session.
--- Tandem : quand une voiture roule devant toi, la run (toi + elle) est
--- enregistrée dans runs/ et le launcher note ton chase.
+-- Tandem : quand une voiture roule devant ou derrière toi, la run est
+-- enregistrée dans runs/ et le launcher note le chase et les battles.
+-- Fantôme : une voiture translucide rejoue une run choisie dans le launcher.
 -- La note complète s'affiche dans le launcher.
 
 local BUCKETS = 1000
@@ -172,11 +173,131 @@ local function updateClips(car, angle)
   end
 end
 
-function script.windowMain(dt)
+-- ------------------------------------------------------------- fantôme
+-- Enregistrement : chaque tour complet est écrit dans ghosts/ (position et
+-- orientation 20 fois par seconde) ; le launcher le range avec le tour.
+-- Lecture : le launcher écrit ghost.json (une run choisie, la tienne ou celle
+-- d'un autre pilote) ; une voiture translucide la rejoue à chaque tour.
+local rec = { rows = {}, lastT = -1 }
+local ghost = { data = nil, t = 0, running = false, lead = 500, wait = true, visible = true, gap = nil, note = nil }
+local trackId = safe(function() return ac.getTrackID() end, '')
+local layoutId = safe(function() return ac.getTrackLayout() end, '')
+
+local function appDir()
+  local okDir, dir = pcall(function() return __dirname end)
+  return (okDir and dir) or '.'
+end
+
+local function recordGhost(car)
+  local t = car.lapTimeMs
+  if t - rec.lastT < 50 or #rec.rows >= 20000 then return end
+  rec.lastT = t
+  local p, l, u = car.position, car.look, car.up
+  rec.rows[#rec.rows + 1] = table.concat({ tostring(t), num(p.x), num(p.y), num(p.z),
+    string.format('%.4f', l.x), string.format('%.4f', l.y), string.format('%.4f', l.z),
+    string.format('%.4f', u.x), string.format('%.4f', u.y), string.format('%.4f', u.z), num(car.speedKmh) }, ',')
+end
+
+local function saveGhost(car)
+  local rows = rec.rows
+  if (car.previousLapTimeMs or 0) <= 0 or #rows < 40 then return end
+  local stamp = tostring(safe(function() return os.time() end, math.random(1, 1e9))) .. '-' .. tostring(math.random(1000, 9999))
+  local json = '{"v":1,"track":' .. jstr(trackId) .. ',"layout":' .. jstr(layoutId) ..
+    ',"car":' .. jstr(safe(function() return ac.getCarID(0) end, '')) ..
+    ',"driver":' .. jstr(safe(function() return ac.getDriverName(0) end, '')) ..
+    ',"time":' .. tostring(safe(function() return os.time() end, 0)) ..
+    ',"lapMs":' .. tostring(car.previousLapTimeMs) ..
+    ',"rows":[[' .. table.concat(rows, '],[') .. ']]}'
+  pcall(function()
+    local f = io.open(appDir() .. '/ghosts/' .. stamp .. '.json', 'w')
+    f:write(json)
+    f:close()
+  end)
+end
+
+local function loadGhost()
+  ghost.data = nil
+  local raw = safe(function() return io.load(appDir() .. '/ghost.json') end, nil)
+  if not raw or raw == '' then return end
+  local ok, g = pcall(function() return JSON.parse(raw) end)
+  if not ok or type(g) ~= 'table' or type(g.rows) ~= 'table' or #g.rows < 10 then return end
+  if g.track ~= trackId or (g.layout or '') ~= (layoutId or '') then
+    ghost.note = 'Fantôme prévu pour un autre circuit'
+    return
+  end
+  ghost.data = g
+  ghost.note = nil
+end
+
+-- position du fantôme au temps t (ms) : interpolation entre deux échantillons
+local function ghostAt(t)
+  local rows = ghost.data.rows
+  local n = #rows
+  if t <= rows[1][1] then return rows[1], rows[1], 0 end
+  if t >= rows[n][1] then return rows[n], rows[n], 0 end
+  local lo, hi = 1, n
+  while hi - lo > 1 do
+    local mid = math.floor((lo + hi) / 2)
+    if rows[mid][1] <= t then lo = mid else hi = mid end
+  end
+  local a, b = rows[lo], rows[hi]
+  local k = (b[1] == a[1]) and 0 or (t - a[1]) / (b[1] - a[1])
+  return a, b, k
+end
+
+local gPos, gLook, gUp = vec3(), vec3(), vec3()
+local function updateGhost(car, dt)
+  if not ghost.data or not ghost.running then return end
+  local rows = ghost.data.rows
+  local a, b, k = ghostAt(ghost.t)
+  local function lerp(i) return a[i] + (b[i] - a[i]) * k end
+  gPos:set(lerp(2), lerp(3), lerp(4))
+  gLook:set(lerp(5), lerp(6), lerp(7))
+  gLook:normalize()
+  gUp:set(lerp(8), lerp(9), lerp(10))
+  gUp:normalize()
+  local dx, dz = gPos.x - car.position.x, gPos.z - car.position.z
+  ghost.gap = math.sqrt(dx * dx + dz * dz)
+  -- « attendre » : le fantôme ralentit quand tu es loin derrière
+  local rate = 1
+  if ghost.wait and ghost.gap > 20 then rate = math.max(0.35, 1 - (ghost.gap - 20) / 40) end
+  ghost.t = ghost.t + dt * 1000 * rate
+  if ghost.t > rows[#rows][1] + 2000 then ghost.running = false end
+end
+
+local ghostMesh = {
+  mesh = ac.SimpleMesh.carShape(0, true),
+  transform = mat4x4(),
+  textures = {},
+  values = {},
+  shader = [[
+    float4 main(PS_IN pin) {
+      float l = saturate(pin.NormalW.y * 0.5 + 0.6);
+      return float4(float3(0.9, 0.08, 0.16) * l * gWhiteRefPoint, 0.38 * pin.FogAlphaMultiplier());
+    }
+  ]],
+}
+
+render.on('main.track.transparent', function ()
+  if not ghost.visible or not ghost.data or not ghost.running then return end
+  if safe(function() return ac.getSim().isReplayActive end, false) then return end
+  render.setBlendMode(render.BlendMode.AlphaBlend)
+  render.setCullMode(render.CullMode.None)
+  render.setDepthMode(render.DepthMode.ReadOnly)
+  ghostMesh.transform = mat4x4.look(gPos, gLook, gUp)
+  render.mesh(ghostMesh)
+end)
+
+loadGhost()
+
+-- ------------------------------------------------------------- boucle (même fenêtre fermée)
+local state = { angle = 0, gap = nil, delta = nil }
+
+function script.update(dt)
   local car = ac.getCar(0)
   if not car then return end
 
-  -- nouveau tour : garder le meilleur tour comme référence, remettre les clips à zéro
+  -- nouveau tour : meilleur tour de référence, clips, tandem, fantôme
   if car.lapCount ~= lastLapCount then
     if lastLapCount >= 0 and car.previousLapTimeMs > 0 and (bestTime == nil or car.previousLapTimeMs < bestTime) then
       best = current
@@ -184,20 +305,32 @@ function script.windowMain(dt)
     end
     current = {}
     resetClips()
-    if lastLapCount >= 0 then saveRun(car) end
+    if lastLapCount >= 0 then
+      saveRun(car)
+      saveGhost(car)
+    end
     resetTandem()
+    rec.rows, rec.lastT = {}, -1
+    loadGhost() -- le launcher a pu changer de fantôme
+    ghost.t, ghost.running = ghost.lead, ghost.data ~= nil
     lastLapCount = car.lapCount
   end
 
   local angle = driftAngle(car)
   updateClips(car, angle)
-  local gap = updateTandem(car)
+  state.angle = angle
+  state.gap = updateTandem(car)
+  recordGhost(car)
+  updateGhost(car, dt)
 
   local bucket = math.floor(car.splinePosition * BUCKETS)
   if current[bucket] == nil then current[bucket] = car.lapTimeMs end
+  state.delta = (best and best[bucket]) and (car.lapTimeMs - best[bucket]) / 1000 or nil
+end
 
+function script.windowMain(dt)
   ui.pushFont(ui.Font.Huge)
-  ui.text(string.format('%2.0f°', angle))
+  ui.text(string.format('%2.0f°', state.angle))
   ui.popFont()
 
   if #clips > 0 then
@@ -207,18 +340,36 @@ function script.windowMain(dt)
     if lastClip then ui.textColored(lastClip, GREEN) end
   end
 
+  local gap = state.gap
   if gap then
     ui.textColored(string.format(tandem.role == 'lead' and 'Lead : chaser à %.1f m' or 'Chase : %.1f m', gap), gap < 5 and GREEN or GREY)
   elseif tandem.saved then
     ui.textColored(tandem.saved, GREY)
   end
 
-  if best and best[bucket] then
-    local delta = (car.lapTimeMs - best[bucket]) / 1000
+  if state.delta then
     ui.pushFont(ui.Font.Title)
-    ui.textColored(string.format('%+.2f s', delta), delta <= 0 and GREEN or RED)
+    ui.textColored(string.format('%+.2f s', state.delta), state.delta <= 0 and GREEN or RED)
     ui.popFont()
   else
     ui.textColored('Écart : après un tour complet', GREY)
+  end
+
+  -- fantôme
+  if ghost.data then
+    local g = ghost.data
+    ui.textColored(string.format('Fantôme : %s', tostring(g.driver or '?')), GREY)
+    if ghost.running and ghost.gap then
+      ui.textColored(string.format('à %.0f m', ghost.gap), ghost.gap < 8 and GREEN or GREY)
+    elseif not ghost.running then
+      ui.textColored('Départ au prochain passage de la ligne', GREY)
+    end
+    if ui.button(ghost.visible and 'Masquer' or 'Afficher') then ghost.visible = not ghost.visible end
+    ui.sameLine()
+    if ui.button(ghost.wait and 'Attente : oui' or 'Attente : non') then ghost.wait = not ghost.wait end
+    ui.sameLine()
+    if ui.button(string.format('Avance %.1f s', ghost.lead / 1000)) then ghost.lead = (ghost.lead + 500) % 2500 end
+  elseif ghost.note then
+    ui.textColored(ghost.note, GREY)
   end
 end
