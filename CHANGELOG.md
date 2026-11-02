@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.10.1
+
+- Hébergement : quand la liste publique du jeu refuse ton serveur (« trop de tentatives d'inscription »), Assetto Corsa le coupait au bout de quelques secondes, et chaque redémarrage aggravait le refus. Le launcher reconnaît maintenant cette cause et relance le serveur **hors de la liste publique** : les codes d'invitation marchent toujours. L'option est décochée pour la prochaine fois.
+- Diagnostic : les ports s'affichent aussi quand le serveur est arrêté.
+
 ## 1.10.0
 
 - Hébergement plus fiable :

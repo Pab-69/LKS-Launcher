@@ -8,7 +8,7 @@ const path = require('path');
 const http = require('http');
 const dgram = require('dgram');
 const ini = require('../src/main/ini');
-const { buildServerConfig, packContent, ServerHost } = require('../src/main/hosting');
+const { buildServerConfig, packContent, ServerHost, serverStopReason, LOBBY_REFUSED } = require('../src/main/hosting');
 const { findGateway, isPrivateIp } = require('../src/main/upnp');
 const { networkAddresses } = require('../src/main/netinfo');
 const { encodeInvite, decodeInvite } = require('../src/shared/invite');
@@ -282,4 +282,16 @@ test('real PC report: PowerShell progress output, VirtualBox card, v2 box answer
   const gw = new Gateway({ controlUrl: `http://127.0.0.1:${web.address().port}/ctl`, serviceType: 'urn:schemas-upnp-org:service:WANIPConnection:2', localAddress: '192.168.1.117' });
   await gw.map(9600, 'TCP', 'LKS');
   assert.deepStrictEqual(actions, ['AddPortMapping:0', 'AddPortMapping:86400', 'AddPortMapping:3600', 'AddAnyPortMapping:3600']);
+});
+
+test('stop reason: the AC lobby refusing the server is recognised', () => {
+  const log = [
+    'Registering to AC central server',
+    'RESPONSE: ERROR - TOO MANY REGISTRATION ATTEMPTS, SLOW DOWN',
+    'LOBBY COULD NOT BE RACHED, SHUTTING SERVER DOWN',
+    'Serveur arrêté (code 0)',
+  ];
+  assert.strictEqual(serverStopReason(log), LOBBY_REFUSED);
+  assert.strictEqual(serverStopReason(['listen udp :9600: bind: address already in use']), 'un port du serveur est déjà utilisé');
+  assert.strictEqual(serverStopReason(['all good']), '');
 });
