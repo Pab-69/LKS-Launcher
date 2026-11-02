@@ -1,4 +1,4 @@
-import { api, h, clear, bytes, toast, lapTime, guard } from './ui.js';
+import { api, h, clear, bytes, toast, lapTime, guard, modal, icon } from './ui.js';
 import { store, set, subscribe, loadContent } from './store.js';
 import { randomShowcase, brandUrl, onBrand, initBrand } from './showcase.js';
 import home from './views/home.js';
@@ -133,14 +133,41 @@ function renderGameOverlay(info) {
   el.hidden = true;
 }
 
+let bannerDismissedFor = null;
+
+export function installUpdate() {
+  return guard(() => api.call('updater:install'));
+}
+
+export function showNotes(title, notes) {
+  modal({
+    title,
+    small: true,
+    body: h('div.notes', notes || 'Améliorations et corrections.'),
+    foot: [h('button.btn.btn-primary', { on: { click: () => document.getElementById('modal-root').click() } }, 'Super')],
+  });
+}
+
 function renderUpdater() {
   const b = document.getElementById('updater-badge');
+  const banner = document.getElementById('update-banner');
   const u = store.updater;
   b.hidden = !u || !['downloading', 'ready'].includes(u.state);
+  banner.hidden = !u || u.state !== 'ready' || bannerDismissedFor === u.version;
   if (!u) return;
-  if (u.state === 'downloading') b.textContent = `Mise à jour du launcher ${u.percent ? `${u.percent.toFixed(0)} %` : '…'}`;
-  if (u.state === 'ready') b.textContent = `Redémarrer pour installer v${u.version}`;
-  b.onclick = () => u.state === 'ready' && api.call('updater:install');
+  if (u.state === 'downloading') b.textContent = `Mise à jour v${u.version || ''} : ${u.percent ? `${u.percent.toFixed(0)} %` : '…'}`;
+  if (u.state === 'ready') b.textContent = `Mettre à jour vers v${u.version}`;
+  b.onclick = () => (u.state === 'ready' ? installUpdate() : window.lksGo('settings'));
+  if (u.state === 'ready' && !banner.hidden) {
+    clear(banner);
+    banner.append(
+      h('span.update-cross'),
+      h('div.update-text', h('strong', `La version ${u.version} du launcher est prête`), h('span', 'Elle s’installe en quelques secondes, sans repasser par l’installeur. Sinon, elle s’installera toute seule à la fermeture.')),
+      u.notes ? h('button.btn.btn-ghost.btn-sm', { on: { click: () => showNotes(`Nouveautés de la v${u.version}`, u.notes) } }, 'Nouveautés') : null,
+      h('button.btn.btn-primary.btn-sm', { on: { click: installUpdate } }, icon('refresh'), 'Redémarrer et mettre à jour'),
+      h('button.btn.btn-ghost.btn-sm', { title: 'Plus tard', on: { click: () => { bannerDismissedFor = u.version; renderUpdater(); } } }, icon('x')),
+    );
+  }
 }
 
 subscribe((patch) => {
@@ -180,6 +207,8 @@ onBrand(renderBrand);
   const [info, s, summary] = await Promise.all([api.call('app:info'), api.call('settings:get'), api.call('sync:summary'), initBrand()]);
   document.getElementById('app-version').textContent = `LKS Launcher v${info.version}`;
   set({ info, settings: s, summary });
+  api.call('updater:state').then((updater) => set({ updater })).catch(() => {});
+  api.call('app:whatsNew').then((w) => { if (w) showNotes(`Bienvenue dans la v${w.version}`, w.notes); }).catch(() => {});
   const first = !s.acRoot || !s.driverName;
   go(first ? 'settings' : 'home', first ? { welcome: true } : {});
   refreshGraphicsBadge();

@@ -23,3 +23,14 @@ test('latest.yml is regenerated for a (re-signed) installer', () => {
   assert.ok(fs.existsSync(`${exe}.blockmap`));
   assert.throws(() => update(dist, '0.0.1'), /introuvable/);
 });
+
+test('changelog section of the current version feeds release notes and "what\'s new"', () => {
+  const { changelogSection, markdownToText } = require('../src/shared/changelog');
+  const md = '# Journal\n\n## 1.1.0\n\n- **Mises à jour** en un clic\n- Nouvelle icône\n\n## 1.0.0\n\n- Première version\n';
+  assert.strictEqual(changelogSection(md, '1.1.0'), '- **Mises à jour** en un clic\n- Nouvelle icône');
+  assert.strictEqual(markdownToText(changelogSection(md, '1.1.0')), '• Mises à jour en un clic\n• Nouvelle icône');
+  assert.strictEqual(changelogSection(md, '1.0.0'), '- Première version');
+  assert.strictEqual(changelogSection(md, '2.0.0'), '');
+  const real = fs.readFileSync(path.join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
+  assert.ok(changelogSection(real, require('../package.json').version), 'CHANGELOG has an entry for the package version');
+});

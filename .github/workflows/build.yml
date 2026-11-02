@@ -137,8 +137,10 @@ jobs:
         run: |
           TAG="v$VERSION"
           FILES="dist/LKS-Launcher-Setup-$VERSION.exe dist/LKS-Launcher-Setup-$VERSION.exe.blockmap dist/latest.yml"
+          node tools/release-notes.js > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $FILES --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
-            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "$VERSION" --notes-file .github/release-notes.md
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "$VERSION" --notes-file release-notes.md
           fi

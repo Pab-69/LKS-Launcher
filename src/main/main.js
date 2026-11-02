@@ -198,22 +198,84 @@ function ensureReady() {
   if (sync.running) throw new Error('Synchronisation en cours, patientez quelques instants');
 }
 
+let updaterState = { state: 'idle' };
+let lastUpdateCheck = 0;
+let whatsNew = null;
+
+function setUpdater(patch) {
+  updaterState = { ...updaterState, ...patch };
+  send('updater:status', updaterState);
+}
+
+/** GitHub gives release notes as HTML (or a list of versions): make plain text. */
+function notesToText(notes) {
+  if (!notes) return '';
+  const html = Array.isArray(notes) ? notes.map((n) => n.note || '').join('\n') : String(notes);
+  return html
+    .replace(/<li[^>]*>/gi, '\n• ')
+    .replace(/<(br|\/p|\/h\d|\/ul|\/li)[^>]*>/gi, '\n')
+    .replace(/<h\d[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function checkForUpdates() {
+  if (!updater) return Promise.resolve(null);
+  lastUpdateCheck = Date.now();
+  return updater.checkForUpdates().catch((e) => setUpdater({ state: 'error', error: e.message }));
+}
+
+/** First start after an update: remember which "what's new" to show. */
+function computeWhatsNew() {
+  const current = app.getVersion();
+  const previous = settings.data.lastRunVersion;
+  // v1.0.0 did not record its version: an existing profile without it means an update.
+  const updated = previous ? previous !== current : settings.existed;
+  if (updated) {
+    let notes = '';
+    try {
+      const { changelogSection, markdownToText } = require('../shared/changelog');
+      notes = markdownToText(changelogSection(fs.readFileSync(path.join(__dirname, '..', '..', 'CHANGELOG.md'), 'utf8'), current));
+    } catch {
+      /* no changelog */
+    }
+    const pending = settings.data.updateNotes || {};
+    if (!notes && pending.version === current) notes = pending.notes;
+    whatsNew = { version: current, previous: previous || null, notes };
+  }
+  if (previous !== current) settings.update({ lastRunVersion: current });
+}
+
 function setupUpdater() {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged) {
+    updaterState = { state: 'dev' };
+    return;
+  }
   try {
     updater = require('electron-updater').autoUpdater;
   } catch {
     return;
   }
-  updater.autoDownload = true;
-  updater.on('checking-for-update', () => send('updater:status', { state: 'checking' }));
-  updater.on('update-available', (i) => send('updater:status', { state: 'downloading', version: i.version }));
-  updater.on('update-not-available', () => send('updater:status', { state: 'latest' }));
-  updater.on('download-progress', (p) => send('updater:status', { state: 'downloading', percent: p.percent }));
-  updater.on('update-downloaded', (i) => send('updater:status', { state: 'ready', version: i.version }));
-  updater.on('error', (e) => send('updater:status', { state: 'error', error: e.message }));
-  updater.checkForUpdates().catch(() => {});
-  setInterval(() => updater.checkForUpdates().catch(() => {}), 60 * 60 * 1000);
+  updater.autoDownload = true; // only the changed blocks are downloaded (blockmap)
+  updater.autoInstallOnAppQuit = true; // installed silently when the launcher is closed
+  updater.on('checking-for-update', () => updaterState.state !== 'ready' && setUpdater({ state: 'checking' }));
+  updater.on('update-available', (i) => setUpdater({ state: 'downloading', version: i.version, percent: 0, notes: notesToText(i.releaseNotes) }));
+  updater.on('update-not-available', () => setUpdater({ state: 'latest', checkedAt: new Date().toISOString() }));
+  updater.on('download-progress', (p) => setUpdater({ state: 'downloading', percent: p.percent, speed: p.bytesPerSecond, transferred: p.transferred, total: p.total }));
+  updater.on('update-downloaded', (i) => {
+    const notes = notesToText(i.releaseNotes) || updaterState.notes || '';
+    settings.update({ updateNotes: { version: i.version, notes } });
+    setUpdater({ state: 'ready', version: i.version, notes, percent: 100 });
+  });
+  updater.on('error', (e) => setUpdater({ state: 'error', error: e.message }));
+  setTimeout(checkForUpdates, 5000);
+  setInterval(checkForUpdates, 30 * 60 * 1000);
+  // Coming back to the launcher after a while: check again.
+  app.on('browser-window-focus', () => {
+    if (Date.now() - lastUpdateCheck > 15 * 60 * 1000 && updaterState.state !== 'downloading' && updaterState.state !== 'ready') checkForUpdates();
+  });
 }
 
 // ---------------------------------------------------------------- graphics / CSP
@@ -531,11 +593,24 @@ function setupIpc() {
 
   // Updater
   handle('updater:check', async () => {
-    if (!updater) return { state: app.isPackaged ? 'error' : 'dev' };
-    await updater.checkForUpdates();
-    return { state: 'checking' };
+    if (!updater) return { state: updaterState.state };
+    await checkForUpdates();
+    return updaterState;
   });
-  handle('updater:install', () => updater && updater.quitAndInstall());
+  handle('updater:state', () => updaterState);
+  handle('app:whatsNew', () => {
+    const w = whatsNew;
+    whatsNew = null; // shown once
+    return w;
+  });
+  handle('updater:install', () => {
+    if (!updater || updaterState.state !== 'ready') throw new Error('Aucune mise à jour prête');
+    if (game.running) throw new Error("Ferme Assetto Corsa avant de mettre à jour le launcher");
+    if (sync.running) throw new Error('Attends la fin de la synchronisation du contenu');
+    // silent install, then the launcher restarts by itself
+    setImmediate(() => updater.quitAndInstall(true, true));
+    return true;
+  });
 
   // Admin / publishing
   handle('admin:test', async () => {
@@ -638,6 +713,7 @@ app.whenReady().then(async () => {
   createWindow();
   win.once('ready-to-show', applyBrandIcon);
   await firstRunDetection();
+  computeWhatsNew();
   send('settings:changed', settings.public());
   refreshManifest({ autoSync: true }).catch(() => {});
   setupUpdater();

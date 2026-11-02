@@ -50,12 +50,17 @@ export default function settings(root, params) {
 
     const info = store.info || {};
     const u = store.updater;
+    const stateText = u ? { idle: '', checking: 'Recherche de mise à jour…', latest: '✔ Tu as la dernière version', downloading: `Téléchargement de la v${u.version || ''}…`, ready: `La v${u.version} est prête à être installée`, error: `Impossible de vérifier : ${u.error}`, dev: 'Mode développement (pas de mise à jour)' }[u.state] || '' : '';
     const launcher = h('div.panel', h('h3', 'Launcher'),
       h('div.row.wrap',
         h('span', `Version ${info.version || '?'}`),
-        h('span.muted', u ? { checking: 'Recherche de mise à jour…', latest: 'À jour', downloading: 'Téléchargement de la mise à jour…', ready: `v${u.version} prête`, error: `Erreur : ${u.error}`, dev: 'Mode développement' }[u.state] || '' : ''),
-        h('button.btn.btn-sm.right', { on: { click: async () => { const r = await guard(() => api.call('updater:check')); if (r && r.state === 'dev') toast('Mises à jour désactivées en mode développement', 'info'); } } }, icon('refresh'), 'Vérifier les mises à jour'),
+        h('span.muted', stateText),
+        u && u.state === 'ready'
+          ? h('button.btn.btn-sm.btn-primary.right', { on: { click: () => guard(() => api.call('updater:install')) } }, icon('refresh'), 'Redémarrer et mettre à jour')
+          : h('button.btn.btn-sm.right', { disabled: u && (u.state === 'checking' || u.state === 'downloading'), on: { click: async () => { const r = await guard(() => api.call('updater:check')); if (r && r.state === 'dev') toast('Mises à jour désactivées en mode développement', 'info'); } } }, icon('refresh'), 'Vérifier les mises à jour'),
       ),
+      u && u.state === 'downloading' ? h('div.row.mt', h('div.progress', h('div.progress-fill', { style: { width: `${(u.percent || 0).toFixed(0)}%` } })), h('span.hint', `${(u.percent || 0).toFixed(0)} %`)) : null,
+      h('p.hint', 'Les mises à jour du launcher se téléchargent toutes seules en arrière-plan (uniquement les parties modifiées) et s’installent en un clic, ou automatiquement à la fermeture du launcher.'),
       h('p.hint.mt', 'Logiciel libre sous licence GPL-3.0, fourni sans aucune garantie. ', h('a.link', { on: { click: () => api.call('shell:open', 'https://github.com/Pab-69/LKS-Launcher') } }, 'Code source'), ' · Le nom, le logo et les visuels du Lowkey Syndicate restent la propriété de l’association.'),
       h('details.mt',
         h('summary.muted', { style: { cursor: 'pointer' } }, 'Avancé'),

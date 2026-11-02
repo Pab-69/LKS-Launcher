@@ -25,6 +25,8 @@ const DEFAULTS = {
   customServers: [], // [{ name, ip, httpPort }]
   favoriteServers: [],
   graphics: { preset: '', appliedAt: null },
+  lastRunVersion: '',
+  updateNotes: null,
   admin: {
     repo: appConfig.contentRepo,
     tag: appConfig.contentTag || 'content',
@@ -74,6 +76,7 @@ const DEFAULTS = {
 class Settings {
   constructor(dir) {
     this.file = path.join(dir, 'settings.json');
+    this.existed = fs.existsSync(this.file);
     this.data = deepMerge(structuredClone(DEFAULTS), this.read());
     this.migrate();
   }

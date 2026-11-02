@@ -21,6 +21,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 2. Au premier lancement, le launcher détecte Assetto Corsa (Steam) et ton pseudo Steam. Vérifie-les dans **Paramètres**.
 3. Le contenu LKS se télécharge tout seul. Pour tout lancer à la main : **Contenu → Tout synchroniser**.
 4. **Steam doit être ouvert** pour lancer le jeu.
+5. **Plus besoin de retélécharger l'installeur** : le launcher se met à jour tout seul. Il vérifie au démarrage puis toutes les 30 minutes, et ne télécharge que les parties qui ont changé. Quand une version est prête, un bandeau propose **« Redémarrer et mettre à jour »** (quelques secondes, sans avertissement Windows). Sinon, elle s'installe à la fermeture du launcher. Une fenêtre « Quoi de neuf » résume ensuite les nouveautés.
 
 Si tu as déjà des voitures LKS installées à la main, le launcher compare les fichiers au premier démarrage et ne retélécharge que ce qui est différent.
 
@@ -110,7 +111,7 @@ Modifie le dossier de l'identité visuelle (photos + `showcase.json`) et republi
 
 ### Sortir une nouvelle version du launcher
 
-1. Change `version` dans `package.json` (ex. `1.0.1`) et pousse sur `main`.
+1. Change `version` dans `package.json` (ex. `1.0.1`), ajoute la section correspondante dans [`CHANGELOG.md`](CHANGELOG.md) (elle sert de notes de version et de fenêtre « Quoi de neuf »), puis pousse sur `main`.
 2. Onglet *Actions* → *Build & release* → *Run workflow*, case **release** cochée. Pousser un tag `v1.0.1` depuis ton PC fait la même chose.
 3. GitHub Actions construit l'installeur Windows, le signe si la signature est configurée, puis publie la release. Les launchers déjà installés se mettent à jour tout seuls.
 

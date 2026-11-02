@@ -514,3 +514,15 @@ details summary::before { content: '✠ '; color: var(--accent); }
 .brand-text { font: 600 40px/1 var(--gothic); color: var(--text); text-shadow: 0 0 24px rgba(179, 18, 42, 0.5), 0 2px 0 #000; }
 .hero-brand { font-size: 58px; }
 .titlebar-name { font: 400 17px var(--gothic); color: var(--text); letter-spacing: 0.02em; }
+
+/* ---------------------------------------------------------------- launcher update banner */
+.update-banner {
+  flex: none; display: flex; align-items: center; gap: 14px; padding: 10px 20px;
+  background: linear-gradient(90deg, rgba(179, 18, 42, 0.32), rgba(20, 8, 12, 0.95) 60%); border-bottom: 1px solid var(--accent-deep);
+  animation: toastIn 0.3s ease-out;
+}
+.update-cross { width: 18px; height: 18px; flex: none; background: var(--cross) center / contain no-repeat; filter: drop-shadow(0 0 6px rgba(224, 27, 58, 0.9)); }
+.update-text { display: grid; flex: 1; min-width: 0; }
+.update-text strong { font: 700 15px var(--display); letter-spacing: 0.1em; text-transform: uppercase; }
+.update-text span { font-size: 12px; color: var(--text-2); }
+.notes { white-space: pre-line; color: var(--text-2); line-height: 1.6; user-select: text; }
