@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.1.1
+
+- Correction : la page Solo ne plante plus au premier lancement, quand le dossier d'Assetto Corsa n'est pas encore configuré.
+- Les copies du launcher installées sans l'installeur officiel n'affichent plus d'erreur de mise à jour.
+
 ## 1.1.0
 
 - **Mises à jour en un clic** : quand une nouvelle version est prête, un bandeau propose « Redémarrer et mettre à jour ». Elle s'installe en silence, sans repasser par l'installeur. Elle s'installe aussi toute seule à la fermeture du launcher.

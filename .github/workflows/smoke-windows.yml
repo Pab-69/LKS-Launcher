@@ -1,19 +1,23 @@
 name: Test Windows (application + mise à jour)
 
-# Lancé à la main (Actions > Run workflow), et automatiquement chaque lundi.
+# Lancé à la main (Actions > Run workflow).
 #  - ui     : démarre le vrai .exe Windows, vérifie le rendu, le manifeste et
 #             l'identité visuelle en ligne, et fait des captures de chaque page.
-#  - update : installe une ancienne version publiée, la laisse se mettre à jour
-#             toute seule, puis vérifie la version installée.
+#  - update : (expérimental, seulement si la case est cochée) installe une version
+#             publiée, la laisse se mettre à jour seule et vérifie la version.
+#             L'installeur NSIS plante en mode silencieux sur les machines
+#             Windows Server de GitHub : ce test n'y est pas fiable pour l'instant.
 
 on:
   workflow_dispatch:
     inputs:
+      test_update:
+        description: 'Tester aussi la mise à jour automatique (expérimental)'
+        type: boolean
+        default: false
       from_version:
         description: 'Version publiée à installer avant la mise à jour'
         default: '1.0.0'
-  schedule:
-    - cron: '17 6 * * 1'
 
 permissions:
   contents: read
@@ -41,6 +45,7 @@ jobs:
           path: smoke-shots/
 
   update:
+    if: inputs.test_update
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
