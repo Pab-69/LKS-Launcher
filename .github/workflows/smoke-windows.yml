@@ -51,8 +51,18 @@ jobs:
           $url = "https://github.com/${{ github.repository }}/releases/download/v$v/LKS-Launcher-Setup-$v.exe"
           Invoke-WebRequest $url -OutFile setup.exe
           Start-Process .\setup.exe -ArgumentList '/S' -Wait
-          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'LKS Launcher.exe' | Select-Object -First 1
-          if (-not $exe) { throw "Installation introuvable" }
+          # find the install through the uninstall registry entry (per-user or per-machine)
+          $exe = $null
+          for ($i = 0; $i -lt 30 -and -not $exe; $i++) {
+            $keys = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'LKS Launcher*' }
+            foreach ($k in $keys) {
+              $dir = if ($k.InstallLocation) { $k.InstallLocation } else { Split-Path ($k.UninstallString -replace '"', '' -replace ' /.*$', '') }
+              $candidate = Join-Path $dir 'LKS Launcher.exe'
+              if (Test-Path $candidate) { $exe = Get-Item $candidate }
+            }
+            if (-not $exe) { Start-Sleep 2 }
+          }
+          if (-not $exe) { Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue; throw "Installation introuvable" }
           "EXE=$($exe.FullName)" | Out-File -Append $env:GITHUB_ENV
           Write-Host "Installé : $($exe.FullName) — version $($exe.VersionInfo.ProductVersion)"
           if ($exe.VersionInfo.ProductVersion -ne $v) { throw "Version installée inattendue" }
@@ -71,7 +81,12 @@ jobs:
             $ready = Get-ChildItem $cache -Filter "*$latest*.exe" -ErrorAction SilentlyContinue
             if ($ready) { Write-Host "Mise à jour téléchargée : $($ready.Name)"; break }
           }
-          if (-not $ready) { Get-ChildItem "$env:LOCALAPPDATA" -Directory | Select-Object Name; throw "La mise à jour n'a pas été téléchargée" }
+          if (-not $ready) {
+            Get-ChildItem "$env:LOCALAPPDATA" -Directory | Select-Object Name
+            Get-ChildItem "$env:LOCALAPPDATA\lks-launcher-updater" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Get-Content "$env:APPDATA\LKS Launcher\logs\*" -ErrorAction SilentlyContinue | Select-Object -Last 40
+            throw "La mise à jour n'a pas été téléchargée"
+          }
           Start-Sleep 5
           # close the launcher normally: the update installs silently on exit
           taskkill /PID $p.Id /T | Out-Null

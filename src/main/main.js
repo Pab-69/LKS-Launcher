@@ -253,6 +253,11 @@ function setupUpdater() {
     updaterState = { state: 'dev' };
     return;
   }
+  // Unpacked/portable builds have no update configuration: nothing to update.
+  if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) {
+    updaterState = { state: 'unavailable' };
+    return;
+  }
   try {
     updater = require('electron-updater').autoUpdater;
   } catch {

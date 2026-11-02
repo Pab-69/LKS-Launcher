@@ -50,7 +50,7 @@ export default function settings(root, params) {
 
     const info = store.info || {};
     const u = store.updater;
-    const stateText = u ? { idle: '', checking: 'Recherche de mise à jour…', latest: '✔ Tu as la dernière version', downloading: `Téléchargement de la v${u.version || ''}…`, ready: `La v${u.version} est prête à être installée`, error: `Impossible de vérifier : ${u.error}`, dev: 'Mode développement (pas de mise à jour)' }[u.state] || '' : '';
+    const stateText = u ? { idle: '', checking: 'Recherche de mise à jour…', latest: '✔ Tu as la dernière version', downloading: `Téléchargement de la v${u.version || ''}…`, ready: `La v${u.version} est prête à être installée`, error: `Impossible de vérifier : ${u.error}`, dev: 'Mode développement (pas de mise à jour)', unavailable: 'Mises à jour automatiques indisponibles pour cette copie (réinstalle avec l’installeur officiel)' }[u.state] || '' : '';
     const launcher = h('div.panel', h('h3', 'Launcher'),
       h('div.row.wrap',
         h('span', `Version ${info.version || '?'}`),

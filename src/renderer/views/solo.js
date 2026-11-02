@@ -40,8 +40,9 @@ export default function solo(root, params) {
     const c = car();
     if (c && !c.skins.some((s) => s.id === o.skin)) o.skin = (c.skins[0] || {}).id || '';
     const t = track();
-    if (t && !t.layouts.some((l) => l.id === o.layout)) o.layout = t.layouts[0].id;
-    if (content.weathers && !content.weathers.some((w) => w.id === o.weather)) o.weather = (content.weathers.find((w) => w.id === '3_clear') || content.weathers[0]).id;
+    if (t && t.layouts.length && !t.layouts.some((l) => l.id === o.layout)) o.layout = t.layouts[0].id;
+    const weathers = content.weathers || [];
+    if (weathers.length && !weathers.some((w) => w.id === o.weather)) o.weather = (weathers.find((w) => w.id === '3_clear') || weathers[0]).id;
   }
 
   function renderLeft() {
