@@ -295,3 +295,13 @@ test('stop reason: the AC lobby refusing the server is recognised', () => {
   assert.strictEqual(serverStopReason(['listen udp :9600: bind: address already in use']), 'un port du serveur est déjà utilisé');
   assert.strictEqual(serverStopReason(['all good']), '');
 });
+
+test('default assists: no auto clutch, no auto blip, TC off, no penalties', () => {
+  const dir = tmp();
+  const { Settings } = require('../src/main/config');
+  const s = new Settings(dir);
+  assert.strictEqual(s.data.assists.autoClutch, false);
+  assert.strictEqual(s.data.assists.autoBlip, false);
+  assert.strictEqual(s.data.assists.tractionControl, 0);
+  assert.strictEqual(s.data.solo.penalties, false);
+});
