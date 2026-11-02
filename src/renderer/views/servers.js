@@ -12,10 +12,11 @@ export default function servers(root, params, { go }) {
   let password = '';
 
   const listBox = h('div');
+  const MSG_EMPTY = 'Aucune partie en cours. Lance-en une dans Héberger : elle apparaît ici pour tout le groupe.';
   const detail = h('div');
   root.append(
     h('div.view-head',
-      h('div', h('h1', 'Serveurs'), h('p', 'Les serveurs du groupe et les tiens.')),
+      h('div', h('h1', 'Serveurs'), h('p', 'Les parties lancées depuis le launcher, les serveurs du groupe et les tiens.')),
       h('div.grow'),
       h('div.actions',
         h('button.btn.btn-primary', { on: { click: joinWithCode } }, icon('play'), 'Rejoindre avec un code'),
@@ -31,10 +32,15 @@ export default function servers(root, params, { go }) {
     list = (await guard(() => api.call('servers:list'))) || [];
     if (!selected && list.length) selected = list[0].key;
     renderList();
-    await refresh(false);
+    await refresh(false, false);
   }
 
-  async function refresh(manual) {
+  async function refresh(manual, reload = true) {
+    if (reload) {
+      // games hosted from the launcher come and go
+      const fresh = await api.call('servers:list').catch(() => null);
+      if (fresh) list = fresh;
+    }
     await Promise.all(list.map(async (s) => {
       infos.set(s.key, await api.call('servers:info', s));
     }));
@@ -45,7 +51,7 @@ export default function servers(root, params, { go }) {
   function renderList() {
     clear(listBox);
     if (!list.length) {
-      listBox.append(h('div.empty', h('strong', 'Aucun serveur'), 'Aucun serveur LKS publié pour le moment. Ajoutez-en un avec son IP et son port HTTP.'));
+      listBox.append(h('div.empty', h('strong', 'Aucun serveur'), MSG_EMPTY));
       return;
     }
     for (const s of list) {
@@ -54,7 +60,7 @@ export default function servers(root, params, { go }) {
         h('div.server-row', { class: s.key === selected ? 'selected' : '', on: { click: () => { selected = s.key; carChoice = null; renderList(); renderDetail(); } } },
           h(`span.dot.${info ? (info.online ? 'on' : 'off') : ''}`),
           h('div',
-            h('div.server-name', info && info.online ? info.name : s.name, ' ', s.source === 'lks' ? h('span.tag.lks', { style: { verticalAlign: 'middle' } }, 'LKS') : null, info && info.hasPassword ? h('span.muted', { title: 'Mot de passe' }, ' 🔒') : null),
+            h('div.server-name', info && info.online ? info.name : s.name, ' ', s.source === 'lks' ? h('span.tag.lks', { style: { verticalAlign: 'middle' } }, 'LKS') : null, s.source === 'launcher' ? h('span.tag.lks', { style: { verticalAlign: 'middle' } }, s.mine ? 'Ta partie' : 'Partie LKS') : null, info && info.hasPassword ? h('span.muted', { title: 'Mot de passe' }, ' 🔒') : null),
             h('div.server-sub', s.description || `${s.ip}:${s.httpPort}`),
           ),
           h('div.server-sub', info && info.online ? `${trackLabel(info.track)} · ${info.cars.length} voiture(s)` : info ? 'Hors ligne' : 'Interrogation…'),
@@ -80,6 +86,10 @@ export default function servers(root, params, { go }) {
     const info = infos.get(server.key);
     if (!info) return;
     if (!info.online) {
+      if (info.hosted) {
+        detail.append(h('div.notice.bad.mt', `Partie injoignable : ${info.error}.`), h('div.mt', vpnCard({ highlight: true })));
+        return;
+      }
       detail.append(h('div.notice.bad.mt', `Serveur injoignable (${info.error || 'hors ligne'}). Vérifiez l'IP et le port HTTP (souvent 8081).`));
       return;
     }
@@ -103,7 +113,7 @@ export default function servers(root, params, { go }) {
 
     let entries = [];
     try {
-      entries = await api.call('servers:cars', server);
+      entries = await api.call('servers:cars', { ...server, ip: info.ip, httpPort: info.httpPort });
     } catch {
       entries = info.cars.map((m) => ({ model: m, skin: '', connected: false }));
     }
