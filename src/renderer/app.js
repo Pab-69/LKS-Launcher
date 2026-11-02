@@ -1,6 +1,6 @@
 import { api, h, clear, bytes, toast, lapTime, guard } from './ui.js';
 import { store, set, subscribe, loadContent } from './store.js';
-import { randomShowcase } from './showcase.js';
+import { randomShowcase, brandUrl, onBrand, initBrand } from './showcase.js';
 import home from './views/home.js';
 import content from './views/content.js';
 import solo from './views/solo.js';
@@ -102,10 +102,10 @@ function renderGameOverlay(info) {
   const el = document.getElementById('game-overlay');
   clear(el);
   const car = randomShowcase();
-  el.append(h('img.bg', { src: car.image, alt: '' }));
+  if (car) el.append(h('img.bg', { src: car.image, alt: '' }));
   if (store.game.running) {
     el.hidden = false;
-    el.append(h('div.inner', h('img', { src: 'img/logo.png', alt: '' }), h('h2', 'Assetto Corsa en cours'), h('p.muted', 'Bonne session. Le launcher reprend la main à la fermeture du jeu.')));
+    el.append(h('div.inner', brandUrl('logo.png') ? h('img', { src: brandUrl('logo.png'), alt: '' }) : h('div.brand-text', 'Lowkey Syndicate'), h('h2', 'Assetto Corsa en cours'), h('p.muted', 'Bonne session. Le launcher reprend la main à la fermeture du jeu.')));
     return;
   }
   if (info && (info.results || info.error)) {
@@ -161,9 +161,23 @@ api.on('game:state', (g) => {
   renderGameOverlay(g);
 });
 
+// ------------------------------------------------------------ brand (downloaded, not bundled)
+function renderBrand() {
+  const wide = brandUrl('logo-wide.png');
+  const titleImg = document.getElementById('brand-titlebar');
+  titleImg.hidden = !wide;
+  if (wide) titleImg.src = wide;
+  document.getElementById('brand-name').hidden = Boolean(wide);
+  const sigil = document.getElementById('brand-sigil');
+  const logo = brandUrl('logo.png');
+  sigil.hidden = !logo;
+  if (logo) sigil.src = logo;
+}
+onBrand(renderBrand);
+
 // ------------------------------------------------------------ boot
 (async () => {
-  const [info, s, summary] = await Promise.all([api.call('app:info'), api.call('settings:get'), api.call('sync:summary')]);
+  const [info, s, summary] = await Promise.all([api.call('app:info'), api.call('settings:get'), api.call('sync:summary'), initBrand()]);
   document.getElementById('app-version').textContent = `LKS Launcher v${info.version}`;
   set({ info, settings: s, summary });
   const first = !s.acRoot || !s.driverName;

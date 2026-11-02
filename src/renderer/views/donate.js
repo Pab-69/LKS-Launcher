@@ -1,4 +1,5 @@
 import { api, h, clear, guard, icon } from '../ui.js';
+import { brandShowcase } from '../showcase.js';
 
 const KINDS = {
   paypal: 'PayPal',
@@ -19,6 +20,11 @@ export function safeUrl(url) {
   }
 }
 
+export function heroImage(list, preferred) {
+  const pick = list[preferred] || list[0];
+  return h('div.hero-slides', pick ? h('img.on', { src: pick.image, alt: '', style: { objectPosition: pick.position || 'center' } }) : null);
+}
+
 export default function donate(root) {
   const body = h('div');
   root.append(body);
@@ -35,7 +41,7 @@ export default function donate(root) {
 
     body.append(
       h('section.hero.page-hero.donate-hero',
-        h('div.hero-slides', h('img.on', { src: 'img/cars/silvia-s15.jpg', alt: '' })),
+        heroImage(brandShowcase(), 2),
         h('div.hero-shade'),
         h('div.hero-content',
           h('div.picker-k', 'Soutenir le Syndicate'),

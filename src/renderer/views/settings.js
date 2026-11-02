@@ -56,6 +56,7 @@ export default function settings(root, params) {
         h('span.muted', u ? { checking: 'Recherche de mise à jour…', latest: 'À jour', downloading: 'Téléchargement de la mise à jour…', ready: `v${u.version} prête`, error: `Erreur : ${u.error}`, dev: 'Mode développement' }[u.state] || '' : ''),
         h('button.btn.btn-sm.right', { on: { click: async () => { const r = await guard(() => api.call('updater:check')); if (r && r.state === 'dev') toast('Mises à jour désactivées en mode développement', 'info'); } } }, icon('refresh'), 'Vérifier les mises à jour'),
       ),
+      h('p.hint.mt', 'Logiciel libre sous licence GPL-3.0, fourni sans aucune garantie. ', h('a.link', { on: { click: () => api.call('shell:open', 'https://github.com/Pab-69/LKS-Launcher') } }, 'Code source'), ' · Le nom, le logo et les visuels du Lowkey Syndicate restent la propriété de l’association.'),
       h('details.mt',
         h('summary.muted', { style: { cursor: 'pointer' } }, 'Avancé'),
         h('div.grid.mt',

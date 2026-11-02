@@ -449,7 +449,7 @@ details summary::before { content: '✠ '; color: var(--accent); }
 
 /* ---------------------------------------------------------------- graphismes */
 .oneclick { --s: 20px; position: relative; overflow: hidden; }
-.oneclick::after { content: ''; position: absolute; inset: 0; background: url(img/cars/supra-a90.jpg) right center / 55% auto no-repeat; opacity: 0.18; mask-image: linear-gradient(90deg, transparent 0%, #000 60%); -webkit-mask-image: linear-gradient(90deg, transparent 30%, #000 80%); pointer-events: none; }
+.oneclick::after { content: ''; position: absolute; inset: 0; background: var(--oneclick-bg, none) right center / 55% auto no-repeat; opacity: 0.18; mask-image: linear-gradient(90deg, transparent 0%, #000 60%); -webkit-mask-image: linear-gradient(90deg, transparent 30%, #000 80%); pointer-events: none; }
 .oneclick > * { position: relative; z-index: 1; }
 .oneclick-main { display: flex; gap: 30px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .oneclick-title { font: 600 40px/1 var(--gothic); margin-top: 6px; text-shadow: 0 0 26px rgba(179, 18, 42, 0.45); }
@@ -509,3 +509,8 @@ details summary::before { content: '✠ '; color: var(--accent); }
 .shop-lock { position: absolute; inset: 0; display: grid; place-items: center; }
 .shop-lock svg { width: 34px; height: 34px; fill: none; stroke: var(--text-2); stroke-width: 1.6; filter: drop-shadow(0 0 10px rgba(224, 27, 58, 0.7)); }
 @media (max-width: 1250px) { .shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---------------------------------------------------------------- neutral brand fallback (before the brand pack is downloaded) */
+.brand-text { font: 600 40px/1 var(--gothic); color: var(--text); text-shadow: 0 0 24px rgba(179, 18, 42, 0.5), 0 2px 0 #000; }
+.hero-brand { font-size: 58px; }
+.titlebar-name { font: 400 17px var(--gothic); color: var(--text); letter-spacing: 0.02em; }

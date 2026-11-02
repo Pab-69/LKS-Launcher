@@ -1,5 +1,6 @@
 import { api, h, clear, icon, guard, bytes, toast, confirmBox, select } from '../ui.js';
 import { store } from '../store.js';
+import { brandShowcase } from '../showcase.js';
 
 const VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x86.exe';
 
@@ -65,7 +66,7 @@ export default function graphicsView(root) {
 
     // ---------- one-click
     body.append(
-      h('div.panel.oneclick',
+      h('div.panel.oneclick', { style: brandShowcase()[1] || brandShowcase()[0] ? { '--oneclick-bg': `url("${(brandShowcase()[1] || brandShowcase()[0]).image}")` } : {} },
         h('div.oneclick-main',
           h('div',
             h('div.picker-k', 'Configuration en 1 clic'),

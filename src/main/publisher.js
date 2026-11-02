@@ -7,6 +7,8 @@ const { hashFolder, hashFile } = require('./hash');
 const { zipFolder } = require('./zip');
 const { readCar, readTrack, contentDir } = require('./acContent');
 const { normalizeManifest } = require('./sync');
+const { readBrandingFolder } = require('./branding');
+const crypto = require('crypto');
 
 const MANIFEST_NAME = 'manifest.json';
 const plural = (kind) => (kind === 'car' ? 'cars' : 'tracks');
@@ -166,16 +168,57 @@ class Publisher {
     this.log('✔ Manifeste mis à jour : tous les launchers vont se synchroniser');
   }
 
+  /**
+   * Publish the association's visual identity (logos, showcase photos) from a
+   * folder. These files are kept out of the launcher itself (all rights reserved).
+   */
+  async publishBranding(dir) {
+    if (!this.manifest) await this.open();
+    const { files, showcase } = readBrandingFolder(dir);
+    const entries = [];
+    const total = crypto.createHash('sha256');
+    for (const name of files.sort()) {
+      const buf = fs.readFileSync(path.join(dir, name));
+      const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+      total.update(`${name}\0${sha256}\n`);
+      entries.push({ name, buf, sha256 });
+    }
+    total.update(JSON.stringify(showcase));
+    const version = total.digest('hex');
+    const previous = (this.manifest.branding && this.manifest.branding.files) || [];
+    const out = [];
+    for (const e of entries) {
+      const old = previous.find((p) => p.name === e.name && p.sha256 === e.sha256);
+      if (old) {
+        out.push(old);
+        this.log(`= ${e.name} : inchangé`);
+        continue;
+      }
+      const ext = path.extname(e.name).toLowerCase();
+      const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.ico' ? 'image/x-icon' : 'image/jpeg';
+      const asset = await this.upload(`branding-${e.sha256.slice(0, 10)}-${safeName(e.name)}`, e.buf, type, e.name);
+      out.push({ name: e.name, url: asset.browser_download_url, sha256: e.sha256, size: e.buf.length });
+      this.log(`✔ ${e.name} envoyé`);
+    }
+    this.manifest.branding = { version, files: out, showcase };
+    await this.saveManifest();
+    await this.collectGarbage();
+    return { version, files: out.length, showcase: showcase.length };
+  }
+
   /** Delete archives no longer referenced by the manifest. */
   async collectGarbage() {
     const used = new Set();
+    for (const f of (this.manifest.branding && this.manifest.branding.files) || []) {
+      if (f.url) used.add(decodeURIComponent(f.url.split('/').pop()));
+    }
     for (const e of [...this.manifest.cars, ...this.manifest.tracks]) {
       if (e.url) used.add(decodeURIComponent(e.url.split('/').pop()));
       if (e.preview) used.add(decodeURIComponent(e.preview.split('/').pop()));
     }
     for (const asset of [...this.assets]) {
       if (asset.name === MANIFEST_NAME || used.has(asset.name)) continue;
-      if (!/^(car|track)-/.test(asset.name)) continue;
+      if (!/^(car|track|branding)-/.test(asset.name)) continue;
       await this.gh.deleteAsset(asset.id);
       this.assets = this.assets.filter((a) => a !== asset);
     }

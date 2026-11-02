@@ -1,6 +1,6 @@
 import { api, h, clear, icon, bytes, guard, dateFr } from '../ui.js';
 import { store, subscribe } from '../store.js';
-import { SHOWCASE, showcaseFrom } from '../showcase.js';
+import { brandShowcase, brandUrl, onBrand } from '../showcase.js';
 
 export default function home(root, _params, { go }) {
   const statusBox = h('div');
@@ -12,7 +12,8 @@ export default function home(root, _params, { go }) {
   const slidesEl = h('div.hero-slides');
   const captionEl = h('div.hero-caption');
   const garageEl = h('div.garage');
-  let slides = SHOWCASE;
+  let slides = brandShowcase();
+  const logoBox = h('div.hero-logo-box');
   let index = 0;
   let timer = null;
 
@@ -21,7 +22,7 @@ export default function home(root, _params, { go }) {
       slidesEl,
       h('div.hero-shade'),
       h('div.hero-content',
-        h('img.hero-logo', { src: 'img/logo.png', alt: 'Lowkey Syndicate' }),
+        logoBox,
         h('h1', 'Bienvenue au garage'),
         h('p', 'Le contenu du Syndicate se met à jour tout seul. Prends ta caisse, choisis ta piste, et roule.'),
         h('div.hero-actions',
@@ -32,7 +33,7 @@ export default function home(root, _params, { go }) {
       captionEl,
     ),
     statusBox,
-    h('h2.section', 'Le Garage'),
+    h('h2.section.garage-title', 'Le Garage'),
     garageEl,
     h('div.grid.grid-2',
       h('div', h('h2.section', 'Serveurs LKS'), serversBox),
@@ -43,6 +44,14 @@ export default function home(root, _params, { go }) {
   function renderShowcase() {
     clear(slidesEl);
     clear(garageEl);
+    clear(captionEl);
+    clear(logoBox);
+    const logo = brandUrl('logo.png');
+    logoBox.append(logo ? h('img.hero-logo', { src: logo, alt: 'Lowkey Syndicate' }) : h('div.brand-text.hero-brand', 'Lowkey Syndicate'));
+    const garageTitle = root.querySelector('.garage-title');
+    if (garageTitle) garageTitle.hidden = !slides.length;
+    garageEl.hidden = !slides.length;
+    if (!slides.length) return;
     slides.forEach((car, i) => {
       slidesEl.append(h('img', { src: car.image, alt: '', class: i === index ? 'on' : '', style: { objectPosition: car.position || 'center' } }));
       garageEl.append(h('button.garage-car', { on: { click: () => show(i, true) } },
@@ -53,6 +62,7 @@ export default function home(root, _params, { go }) {
   }
 
   function show(i, user) {
+    if (!slides.length) return;
     index = (i + slides.length) % slides.length;
     [...slidesEl.children].forEach((img, n) => {
       if (n === index) {
@@ -148,12 +158,6 @@ export default function home(root, _params, { go }) {
 
   async function renderNews() {
     const manifest = await guard(() => api.call('sync:manifest'));
-    const fromManifest = showcaseFrom(manifest);
-    if (fromManifest !== slides) {
-      slides = fromManifest;
-      index = 0;
-      renderShowcase();
-    }
     clear(newsBox);
     const news = (manifest && manifest.news) || [];
     if (manifest && manifest.motd) newsBox.append(h('div.notice.info', manifest.motd));
@@ -166,6 +170,11 @@ export default function home(root, _params, { go }) {
 
   renderShowcase();
   restart();
+  const offBrand = onBrand(() => {
+    slides = brandShowcase();
+    index = 0;
+    renderShowcase();
+  });
   renderStatus();
   renderServers();
   renderNews();
@@ -176,5 +185,6 @@ export default function home(root, _params, { go }) {
   return () => {
     clearInterval(timer);
     unsub();
+    offBrand();
   };
 }

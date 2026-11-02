@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage } = require('electron');
 
 const { Settings } = require('./config');
 const { detectAcRoot, detectSteamUser, isAcRoot, acDocumentsDir } = require('./paths');
@@ -17,6 +17,7 @@ const { listFiles, hashFolder } = require('./hash');
 const { contentDir } = require('./acContent');
 const { CspManager, checkVcRedist, compareVersions } = require('./csp');
 const graphics = require('./graphics');
+const { BrandingManager } = require('./branding');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -37,6 +38,7 @@ const game = new GameLauncher();
 let contentCache = null;
 let updater = null;
 let csp = null;
+let branding = null;
 
 const acRoot = () => settings.data.acRoot;
 const docsDir = () => acDocumentsDir(settings.data, app.getPath('documents'));
@@ -117,10 +119,27 @@ function lksIds() {
   };
 }
 
+function applyBrandIcon() {
+  const icon = branding.file('icon.png');
+  if (icon && win && !win.isDestroyed()) win.setIcon(nativeImage.createFromPath(icon));
+}
+
+function syncBranding() {
+  branding
+    .sync(sync.manifest.branding)
+    .then((changed) => {
+      if (!changed) return;
+      send('branding:changed', branding.status());
+      applyBrandIcon();
+    })
+    .catch(() => {});
+}
+
 async function refreshManifest({ autoSync } = {}) {
   const before = sync.manifest.updatedAt;
   await sync.loadManifest();
   send('sync:changed', sync.summary());
+  syncBranding();
   const pending = sync.summary();
   if (pending.unknown > 0 && !sync.verifying) await sync.verify(false);
   if (autoSync && settings.data.autoSync && !game.running && acRoot()) {
@@ -542,7 +561,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -583,6 +602,15 @@ function setupIpc() {
       return true;
     }),
   );
+  handle('branding:get', () => branding.status());
+  handle('admin:publishBranding', (dir) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      const r = await pub.publishBranding(dir);
+      await refreshManifest({ autoSync: false });
+      return r;
+    }),
+  );
   handle('admin:updateMeta', (patch) =>
     withAdmin(async () => {
       const pub = getPublisher();
@@ -595,10 +623,11 @@ function setupIpc() {
 
 app.whenReady().then(async () => {
   settings = new Settings(app.getPath('userData'));
+  branding = new BrandingManager({ dataDir: app.getPath('userData') });
   protocol.handle('lks-img', (request) => {
     const url = new URL(request.url);
     const rel = decodeURIComponent(`${url.hostname}${url.pathname}`);
-    const file = acRoot() ? resolveContentFile(acRoot(), rel) : null;
+    const file = url.hostname === 'branding' ? branding.file(rel.split('/').pop()) : acRoot() ? resolveContentFile(acRoot(), rel) : null;
     if (!file || !fs.existsSync(file)) return new Response('', { status: 404 });
     return net.fetch(pathToFileURL(file).toString());
   });
@@ -607,6 +636,7 @@ app.whenReady().then(async () => {
   setupGame();
   setupIpc();
   createWindow();
+  win.once('ready-to-show', applyBrandIcon);
   await firstRunDetection();
   send('settings:changed', settings.public());
   refreshManifest({ autoSync: true }).catch(() => {});

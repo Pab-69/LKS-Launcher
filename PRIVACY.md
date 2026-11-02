@@ -12,7 +12,7 @@
 
 | Service | Quand | Ce qui est envoyé |
 | --- | --- | --- |
-| **GitHub** (`github.com`, `objects.githubusercontent.com`, `api.github.com`) | Au démarrage puis toutes les 5 minutes (manifeste du contenu), lors des téléchargements de voitures et circuits, et pour les mises à jour du launcher | Requêtes de téléchargement standard (adresse IP, version du navigateur intégré). Aucune donnée personnelle. |
+| **GitHub** (`github.com`, `objects.githubusercontent.com`, `api.github.com`) | Au démarrage puis toutes les 5 minutes (manifeste du contenu), lors des téléchargements de voitures, de circuits et de l'identité visuelle (logo, photos), et pour les mises à jour du launcher | Requêtes de téléchargement standard (adresse IP, version du navigateur intégré). Aucune donnée personnelle. |
 | **Site officiel du Custom Shaders Patch** (`acstuff.club`) | Seulement quand l'utilisateur ouvre l'onglet Graphismes ou installe le CSP | Requêtes de téléchargement standard |
 | **Serveurs de jeu Assetto Corsa** choisis par le groupe ou ajoutés par l'utilisateur | Dans l'onglet Serveurs et pour rejoindre une partie | Le **Steam ID** de l'utilisateur, envoyé au serveur choisi pour connaître les places libres et se connecter, comme le font le jeu et Content Manager |
 | **API GitHub, uniquement pour les administrateurs** | Quand un administrateur publie du contenu | Les fichiers publiés et le jeton GitHub de l'administrateur, chiffré sur son PC |

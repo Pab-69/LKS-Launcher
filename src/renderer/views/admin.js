@@ -251,6 +251,21 @@ export default function admin(root) {
     const titleIn = h('input.input', { placeholder: 'Titre', on: { input: (e) => { nt = e.target.value; } } });
     const bodyIn = h('textarea.input', { placeholder: 'Message', on: { input: (e) => { nb = e.target.value; } } });
 
+    const brand = data.manifest.branding;
+    metaBox.append(
+      h('div.panel', { style: { gridColumn: '1 / -1' } }, h('h3', 'Identité visuelle (logo & vitrine)'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Le logo et les photos ne sont pas inclus dans le launcher : ils restent la propriété de l’association (tous droits réservés) et sont téléchargés par chaque launcher depuis le dépôt de contenu. Choisis le dossier du pack « identité visuelle » (logo.png, logo-wide.png, icon.png, showcase.json et les photos).'),
+        h('div.row.wrap',
+          brand ? h('span.tag.ok', `Publiée — ${brand.files.length} fichier(s), ${brand.showcase} voiture(s) en vitrine`) : h('span.tag.warn', 'Pas encore publiée : les launchers affichent un thème neutre'),
+          h('button.btn.btn-sm.btn-primary.right', { disabled: busy, on: { click: async () => {
+            const dir = await api.call('dialog:pickFolder', 'Dossier de l’identité visuelle');
+            if (!dir) return;
+            logEl.textContent = '';
+            const r = await guard(() => api.call('admin:publishBranding', dir));
+            if (r) { toast(`Identité visuelle publiée (${r.files} fichiers, ${r.showcase} voitures)`, 'success'); load(); }
+          } } }, icon('upload'), 'Publier depuis un dossier…'),
+        )),
+    );
     metaBox.append(
       h('div.panel', h('h3', 'Serveurs du Syndicate'), srvList,
         h('div.row.mt',

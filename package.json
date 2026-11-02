@@ -5,7 +5,7 @@
   "description": "Launcher Assetto Corsa du Lowkey Syndicate : synchro des voitures/circuits, solo, serveurs.",
   "main": "src/main/main.js",
   "author": "Lowkey Syndicate",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "GPL-3.0-only",
   "private": true,
   "scripts": {
     "start": "electron .",

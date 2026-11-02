@@ -1,11 +1,12 @@
 import { api, h, clear, guard, icon } from '../ui.js';
-import { safeUrl } from './donate.js';
+import { safeUrl, heroImage } from './donate.js';
+import { brandShowcase } from '../showcase.js';
 
 const TEASERS = [
-  { title: 'Hoodie Syndicate', sub: 'Brodé, logo gothique', img: 'img/cars/bmw-m2.jpg' },
-  { title: 'T-shirt Drift Team', sub: 'Noir, impression blanche', img: 'img/cars/silvia-s15.jpg' },
-  { title: 'Pack de stickers', sub: 'Pour la vraie voiture aussi', img: 'img/cars/supra-a90.jpg' },
-  { title: 'Livrée sur mesure', sub: 'Ta voiture aux couleurs LKS', img: 'img/cars/bmw-m2.jpg' },
+  { title: 'Hoodie Syndicate', sub: 'Brodé, logo gothique' },
+  { title: 'T-shirt Drift Team', sub: 'Noir, impression blanche' },
+  { title: 'Pack de stickers', sub: 'Pour la vraie voiture aussi' },
+  { title: 'Livrée sur mesure', sub: 'Ta voiture aux couleurs LKS' },
 ];
 
 export default function shop(root) {
@@ -22,7 +23,7 @@ export default function shop(root) {
     const url = s.open ? safeUrl(s.url) : null;
     body.append(
       h('section.hero.page-hero.shop-hero',
-        h('div.hero-slides', h('img.on', { src: 'img/cars/bmw-m2.jpg', alt: '', style: { objectPosition: 'center 55%' } })),
+        heroImage(brandShowcase(), 0),
         h('div.hero-shade'),
         h('div.hero-content',
           h('div.picker-k', 'Boutique officielle'),
@@ -36,10 +37,12 @@ export default function shop(root) {
       h('h2.section', url ? 'À la une' : 'Ce qui arrive'),
     );
     const grid = h('div.shop-grid');
-    for (const t of TEASERS) {
+    const photos = brandShowcase();
+    for (const [n, t] of TEASERS.entries()) {
+      const photo = photos.length ? photos[n % photos.length].image : '';
       grid.append(
         h('div.shop-item', { class: url ? '' : 'locked' },
-          h('div.shop-media', h('img', { src: t.img, alt: '', loading: 'lazy' }), url ? null : h('span.shop-lock', icon('lock'))),
+          h('div.shop-media', photo ? h('img', { src: photo, alt: '', loading: 'lazy' }) : null, url ? null : h('span.shop-lock', icon('lock'))),
           h('div.card-body', h('div.card-title', t.title), h('div.card-sub', t.sub), h('div.card-foot', h('span.tag.warn', 'Bientôt'))),
         ),
       );

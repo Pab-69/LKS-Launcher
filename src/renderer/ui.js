@@ -18,7 +18,7 @@ export function h(tag, attrs, ...children) {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'on') for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
     else if (k === 'class') el.className += ` ${v}`;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') for (const [prop, val] of Object.entries(v)) prop.startsWith('--') ? el.style.setProperty(prop, val) : (el.style[prop] = val);
     else if (k === 'html') el.innerHTML = v;
     else if (k === 'value' && (name === 'textarea' || name === 'input')) el.value = v;
     else if (k in el && typeof v !== 'string') el[k] = v;
