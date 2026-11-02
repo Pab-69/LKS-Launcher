@@ -37,6 +37,7 @@ const STACK_HINTS = [
 ];
 
 const HINTS = [
+  [/track not found/i, 'track-missing', 'Le jeu ne trouve pas ce circuit ou ce tracé. Choisis un autre tracé dans Solo ; si ça continue, vérifie le contenu (Contenu → Vérifier).'],
   [/dxgi|d3d11|swap ?chain|display mode|resolution|fullscreen|device removed|graphics card/i, 'display', 'L’affichage n’a pas pu démarrer. Va dans Graphismes → « Revenir aux réglages d’origine », puis relance.'],
   [/apps[\\/]lua[\\/]lks|lks\.lua/i, 'app', 'Souci avec l’appli en jeu LKS. Retire-la (Télémétrie → Outils) et relance pour vérifier.'],
   [/content[\\/]cars[\\/][^\\/\s]+[\\/]skins|skin/i, 'skin', 'Une livrée de la voiture pose problème. Choisis une autre livrée, ou vérifie le contenu (Contenu → Vérifier).'],
@@ -59,11 +60,23 @@ function looksLikeCrash({ code, durationMs }) {
 function diagnose(ctx) {
   const logs = path.join(ctx.docsDir, 'logs');
   const acLog = tail(path.join(logs, 'log.txt'));
-  const cspLog = tail(path.join(logs, 'custom_shaders_patch.log'));
+  // the CSP log is only about this session if it was written since the launch (CSP can be off)
+  const cspFile = path.join(logs, 'custom_shaders_patch.log');
+  let cspFresh = true;
+  try {
+    const started = Date.now() - (Number(ctx.durationMs) || 0) - 10000;
+    cspFresh = fs.statSync(cspFile).mtimeMs >= started;
+  } catch {
+    cspFresh = false;
+  }
+  const cspLog = cspFresh ? tail(cspFile) : [];
   // the log repeats race.ini: never read hints from it, only from errors and the crash stack
   const crashAt = acLog.map((l) => /CRASH in/i.test(l)).lastIndexOf(true);
   const stack = crashAt >= 0 ? acLog.slice(crashAt).filter((l) => !NOISE.test(l)) : [];
-  const errors = [...acLog, ...cspLog].filter((l) => ERROR_LINE.test(l) && !NOISE.test(l) && !/^\s*\d+\s+\S+\s+⚠️/.test(l)).slice(-15);
+  // game errors first; from the CSP log only real errors (not its many texture/mesh warnings)
+  const acErrors = acLog.filter((l) => ERROR_LINE.test(l) && !NOISE.test(l) && !/CrashGuard/i.test(l)).slice(-10);
+  const cspErrors = cspLog.filter((l) => /\berror\b|exception|❌|failed to (?:load|create|init)/i.test(l) && !/TextureLoader|⚠️|🔹/.test(l)).slice(-5);
+  const errors = [...acErrors, ...cspErrors];
   const hints = [];
   const add = (id, text) => {
     const family = id.split('-')[0];
@@ -72,6 +85,7 @@ function diagnose(ctx) {
   for (const [re, id, text] of STACK_HINTS) if (re.test(stack.join('\n'))) add(id, text);
   const haystack = errors.join('\n');
   for (const [re, id, text] of HINTS) if (re.test(haystack)) add(id, text);
+  if (!hints.length && ctx.cspEnabled) hints.push({ id: 'csp-test', text: 'Pour savoir si ça vient du Custom Shaders Patch : dans Graphismes, choisis le préréglage « Performance », relance ; si ça plante encore, désactive le CSP pour tester.' });
   if (!hints.length) hints.push({ id: 'unknown', text: 'Cause pas claire dans les journaux du jeu. Copie le rapport et envoie-le sur le Discord.' });
 
   const read = (f) => {
@@ -100,8 +114,11 @@ function diagnose(ctx) {
     '--- log.txt (fin)',
     ...acLog.slice(-60),
     '',
-    '--- custom_shaders_patch.log (fin)',
+    cspFresh ? '--- custom_shaders_patch.log (fin)' : '--- custom_shaders_patch.log : pas écrit pendant cette session (CSP désactivé ?)',
     ...cspLog.slice(-30),
+    '',
+    `--- launcher (CSP ${ctx.cspEnabled ? 'activé' : 'désactivé'})`,
+    ...(ctx.launcherLog || []),
     '',
     '--- race.ini',
     read(path.join(ctx.docsDir, 'cfg', 'race.ini')).slice(0, 4000),

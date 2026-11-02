@@ -103,24 +103,16 @@ function readTrack(acRoot, id) {
   const dir = path.join(contentDir(acRoot, 'track'), id);
   const uiOf = (sub) => readLooseJson(path.join(dir, 'ui', ...(sub ? [sub] : []), 'ui_track.json'));
   const uiDirOf = (sub) => path.join(dir, 'ui', ...(sub ? [sub] : []));
-  // layouts the game can really load (physics files present)
-  const physical = listDirs(dir).filter((sub) => sub !== 'ui' && layoutHasPhysics(dir, sub));
-  const rootPhysical = layoutHasPhysics(dir, '');
-  const layouts = [];
-  if (physical.length || rootPhysical) {
-    const uiOrder = listDirs(path.join(dir, 'ui'));
-    const ordered = [...uiOrder.filter((s) => physical.includes(s)), ...physical.filter((s) => !uiOrder.includes(s))];
-    for (const sub of ordered) layouts.push(layoutInfo(id, sub, uiOf(sub) || {}, uiDirOf(sub)));
-    if (rootPhysical) layouts.push(layoutInfo(id, '', uiOf('') || {}, uiDirOf('')));
-  } else {
-    // unusual layout of files: trust the ui folders as before
-    for (const sub of listDirs(path.join(dir, 'ui'))) {
-      const ui = uiOf(sub);
-      if (ui) layouts.push(layoutInfo(id, sub, ui, uiDirOf(sub)));
-    }
-    const rootUi = uiOf('');
-    if (rootUi && layouts.length === 0) layouts.push(layoutInfo(id, '', rootUi, uiDirOf('')));
-  }
+  // Like the game and Content Manager: the layouts are the ui/<layout> folders
+  // holding a ui_track.json (even a broken one); otherwise the track itself.
+  const uiLayouts = listDirs(path.join(dir, 'ui')).filter((sub) => fileExists(path.join(dir, 'ui', sub, 'ui_track.json')));
+  let ids;
+  if (uiLayouts.length) ids = uiLayouts;
+  else if (layoutHasPhysics(dir, '') || fileExists(path.join(dir, 'ui', 'ui_track.json'))) ids = [''];
+  else ids = listDirs(dir).filter((sub) => sub !== 'ui' && layoutHasPhysics(dir, sub)); // no ui at all: physics folders
+  const layouts = ids.map((sub) => ({ ...layoutInfo(id, sub, uiOf(sub) || {}, uiDirOf(sub)), complete: layoutHasPhysics(dir, sub) }));
+  // loadable layouts first (the first one is picked by default)
+  layouts.sort((a, b) => Number(b.complete) - Number(a.complete));
   if (layouts.length === 0) layouts.push({ id: '', name: id, preview: '', outline: '', pitboxes: 0, length: '', country: '' });
   return {
     kind: 'track',

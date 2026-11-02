@@ -19,6 +19,7 @@ const acContent = require('./acContent');
 const { CspManager, checkVcRedist, compareVersions } = require('./csp');
 const graphics = require('./graphics');
 const crashlog = require('./crashlog');
+const applog = require('./applog');
 const { BrandingManager } = require('./branding');
 const { SetupSync, localSetupCars } = require('./setups');
 const { DiscordPresence } = require('./discord');
@@ -45,6 +46,24 @@ const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
 // Dev/test hook: isolated profile folder.
 if (process.env.LKS_USER_DATA) app.setPath('userData', process.env.LKS_USER_DATA);
+
+// Launcher log + compatibility mode: when the game crashes the graphics driver
+// (it happens with heavy CSP settings), the launcher window can go down too.
+applog.init(app.getPath('userData'));
+if (applog.graphicsSafe(app.getPath('userData'))) {
+  app.disableHardwareAcceleration();
+  applog.log('start: compatibility mode (no hardware acceleration)');
+}
+process.on('uncaughtException', (err) => applog.log('uncaught', err));
+process.on('unhandledRejection', (err) => applog.log('unhandled rejection', err instanceof Error ? err : String(err)));
+let gpuCrashes = 0;
+app.on('child-process-gone', (_e, d) => {
+  applog.log('process gone', { type: d.type, reason: d.reason, exitCode: d.exitCode });
+  if (d.type === 'GPU' && d.reason !== 'clean-exit' && ++gpuCrashes >= 2 && !applog.graphicsSafe(app.getPath('userData'))) {
+    applog.setGraphicsSafe(app.getPath('userData'), true); // next start without hardware acceleration
+    applog.log('graphics process crashed twice: compatibility mode from next start');
+  }
+});
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'lks-img', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 
@@ -96,6 +115,12 @@ function createWindow() {
     },
   });
   win.once('ready-to-show', () => win.show());
+  // window content crashed (often with a graphics driver reset): reload it
+  win.webContents.on('render-process-gone', (_e, d) => {
+    applog.log('window gone', { reason: d.reason, exitCode: d.exitCode });
+    if (d.reason !== 'clean-exit' && win && !win.isDestroyed()) setTimeout(() => win && !win.isDestroyed() && win.reload(), 1500);
+  });
+  win.on('unresponsive', () => applog.log('window unresponsive'));
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
@@ -537,11 +562,12 @@ function setupGame() {
     if (settings.data.closeOnLaunch && win) win.minimize();
   });
   game.on('exited', (info) => {
+    applog.log('game exited', { code: info.code, durationMs: info.durationMs, error: info.error, launch: lastLaunch });
     if (telemetry) telemetry.source.detach();
     send('game:state', { running: false, ...info });
     if (!info.error && crashlog.looksLikeCrash(info)) {
       try {
-        lastCrash = { ...crashlog.diagnose({ ...info, launch: lastLaunch, version: app.getVersion(), docsDir: docsDir() }), launch: lastLaunch, at: new Date().toISOString(), canRestore: graphics.hasBackup(docsDir()) };
+        lastCrash = { ...crashlog.diagnose({ ...info, launch: lastLaunch, version: app.getVersion(), docsDir: docsDir(), launcherLog: applog.tail(20), cspEnabled: Boolean(csp.status().enabled) }), launch: lastLaunch, at: new Date().toISOString(), canRestore: graphics.hasBackup(docsDir()) };
         send('game:crash', lastCrash);
       } catch (err) {
         console.warn('[crash]', err.message);
@@ -886,6 +912,10 @@ function setupIpc() {
   // Game
   handle('game:status', () => ({ running: game.running }));
   handle('game:lastCrash', () => lastCrash);
+  handle('app:graphicsSafe', (on) => {
+    if (typeof on === 'boolean') applog.setGraphicsSafe(app.getPath('userData'), on);
+    return applog.graphicsSafe(app.getPath('userData'));
+  });
   handle('game:launchSolo', (opts) => {
     ensureReady();
     const s = settings.data;

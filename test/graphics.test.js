@@ -213,7 +213,10 @@ test('tracks: layouts come from the files the game needs, not only the ui folder
   mk('grip/data/surfaces.ini', '[SURFACE_0]\nKEY=ROAD\nFRICTION=0.99\n');
   mk('models_drift.ini');
   const track = readTrack(ac, 'Brooklyn Park');
-  assert.deepStrictEqual(track.layouts.map((l) => l.id), ['drift', 'grip'], 'no empty layout the game cannot load');
+  assert.deepStrictEqual(track.layouts.map((l) => l.id), ['drift'], 'layouts from ui/<layout>, even with a broken json; no empty layout');
+  // the layouts with their files come first
+  mk('ui/zz_broken/ui_track.json', '{"name":"Old"}');
+  assert.deepStrictEqual(readTrack(ac, 'Brooklyn Park').layouts.map((l) => [l.id, l.complete]), [['drift', true], ['zz_broken', false]]);
   assert.strictEqual(track.layouts[0].pitboxes, 12, 'fields read from a broken json');
   assert.strictEqual(layoutHasPhysics(t, ''), false);
   assert.strictEqual(layoutHasPhysics(t, 'drift'), true);
@@ -224,6 +227,10 @@ test('tracks: layouts come from the files the game needs, not only the ui folder
   fs.writeFileSync(path.join(u, 'data', 'surfaces.ini'), '[SURFACE_0]\n');
   fs.writeFileSync(path.join(u, 'ui', 'ui_track.json'), '{"name":"Solo"}');
   assert.deepStrictEqual(readTrack(ac, 'solo_track').layouts.map((l) => [l.id, l.name]), [['', 'Solo']]);
+  // like Calmont: a folder with a data/ inside is not a layout the game knows
+  fs.mkdirSync(path.join(u, 'Calmont', 'data'), { recursive: true });
+  fs.writeFileSync(path.join(u, 'Calmont', 'data', 'surfaces.ini'), '[SURFACE_0]\n');
+  assert.deepStrictEqual(readTrack(ac, 'solo_track').layouts.map((l) => l.id), ['']);
 });
 
 test('crash diagnosis: track surfaces (real AC crash log)', () => {
@@ -245,5 +252,34 @@ test('crash diagnosis: track surfaces (real AC crash log)', () => {
   assert.deepStrictEqual(d.hints.map((h) => h.id), ['track-surfaces'], 'no skin/car hint from the race.ini copy, one track hint');
   assert.ok(!d.errors.some((l) => /SymGetLineFromAddr64|WHEEL_LF/.test(l)), 'noise removed');
   assert.ok(d.errors.some((l) => /surfacesmanager/i.test(l)));
+  // TRACK NOT FOUND not hidden by CSP texture warnings; an old CSP log is ignored
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'Installing CrashGuard Fault Handler\r\nERROR: cfd_calmont_2023 : TRACK NOT FOUND \r\nCLEAN EXIT\r\n');
+  fs.writeFileSync(path.join(docs, 'logs', 'custom_shaders_patch.log'), '   3653  73ec 🚨 [TextureLoader] Bad texture. MIPs are missing.\n'.repeat(30));
+  let r = crashlog.diagnose({ code: 0, durationMs: 3000, docsDir: docs });
+  assert.deepStrictEqual(r.hints.map((h) => h.id), ['track-missing']);
+  assert.deepStrictEqual(r.errors, ['ERROR: cfd_calmont_2023 : TRACK NOT FOUND ']);
+  const old = new Date(Date.now() - 3600e3);
+  fs.utimesSync(path.join(docs, 'logs', 'custom_shaders_patch.log'), old, old);
+  r = crashlog.diagnose({ code: 0, durationMs: 3000, docsDir: docs });
+  assert.match(r.report, /pas écrit pendant cette session/);
   assert.match(d.report, /0xE06D7363/);
+});
+
+test('launcher log and compatibility flag; CSP hint when the cause is unclear', () => {
+  const applog = require('../src/main/applog');
+  const crashlog = require('../src/main/crashlog');
+  const dir = tmp();
+  applog.init(dir);
+  applog.log('window gone', { reason: 'crashed' });
+  assert.match(applog.tail(5)[0], /window gone .*crashed/);
+  assert.strictEqual(applog.graphicsSafe(dir), false);
+  applog.setGraphicsSafe(dir, true);
+  assert.strictEqual(applog.graphicsSafe(dir), true);
+  applog.setGraphicsSafe(dir, false);
+  assert.strictEqual(applog.graphicsSafe(dir), false);
+  const docs = tmp();
+  const d = crashlog.diagnose({ code: 3221225477, durationMs: 4000, docsDir: docs, cspEnabled: true, launcherLog: ['x process gone {"type":"GPU"}'] });
+  assert.strictEqual(d.hints[0].id, 'csp-test');
+  assert.match(d.report, /CSP activé/);
+  assert.match(d.report, /process gone/);
 });

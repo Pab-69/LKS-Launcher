@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.9.4
+
+- Correction : certains circuits ne se lançaient plus (« TRACK NOT FOUND », par exemple Calmont). La 1.9.2 prenait pour un tracé des dossiers que le jeu ne reconnaît pas. Les tracés sont repris comme le jeu et Content Manager les voient. Les tracés complets passent en premier.
+- Diagnostic des plantages : les avertissements sans gravité du CSP ne cachent plus la vraie erreur du jeu, et un ancien journal du CSP n'est plus lu.
+- Si le jeu plante la carte graphique, le launcher se relance au lieu de rester planté. Après deux plantages de ce genre, il passe en mode compatibilité de l'affichage (réglable dans Paramètres → Avancé).
+- Le launcher garde un petit journal de ses propres soucis, ajouté au rapport de plantage.
+
 ## 1.9.3
 
 - Correction : les mises à jour automatiques étaient refusées (« n'est pas signé numériquement »). Le launcher exigeait une signature que nos installeurs n'ont pas encore. En attendant la signature, une mise à jour non signée est acceptée. Elle est toujours vérifiée par son empreinte publiée avec la version.

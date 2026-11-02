@@ -53,6 +53,13 @@ export default function settings(root, params) {
     const info = store.info || {};
     const u = store.updater;
     const stateText = u ? { idle: '', checking: 'Recherche de mise à jour…', latest: '✔ Tu as la dernière version', downloading: `Téléchargement de la v${u.version || ''}…`, ready: `La v${u.version} est prête à être installée`, error: /sign/i.test(u.error || '') ? 'La mise à jour n’a pas pu s’installer toute seule : télécharge l’installeur et lance-le (une seule fois).' : `Impossible de vérifier : ${u.error}`, dev: 'Mode développement (pas de mise à jour)', unavailable: 'Mises à jour automatiques indisponibles pour cette copie (réinstalle avec l’installeur officiel)' }[u.state] || '' : '';
+    const gfxSafe = h('div');
+    api.call('app:graphicsSafe').then((on) => {
+      gfxSafe.append(toggle('Mode compatibilité de l’affichage', on, async (v) => {
+        await api.call('app:graphicsSafe', v);
+        toast('Pris en compte au prochain démarrage du launcher', 'info');
+      }, 'Si le launcher plante ou devient noir quand le jeu plante. Activé tout seul après deux plantages de ce genre.'));
+    }).catch(() => {});
     const launcher = h('div.panel', h('h3', 'Launcher'),
       h('div.row.wrap',
         h('span', `Version ${info.version || '?'}`),
@@ -68,6 +75,7 @@ export default function settings(root, params) {
       h('details.mt',
         h('summary.muted', { style: { cursor: 'pointer' } }, 'Avancé'),
         h('div.grid.mt',
+          gfxSafe,
           field('URL du manifeste de contenu', h('input.input.mono', { value: s.manifestUrl, on: { change: (e) => saveSettings({ manifestUrl: e.target.value.trim() }) } }), 'Fichier qui liste les voitures/circuits/serveurs LKS. Ne changez que si un admin vous le demande.'),
         ),
       ),
