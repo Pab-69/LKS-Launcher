@@ -8,6 +8,9 @@
  */
 
 const zlib = require('zlib');
+const { driftOf } = require('./drift');
+
+const FOLLOWER_COLS = 14; // tandem rows = follower columns + lead columns
 
 const MAX_SAMPLES = 1500;
 
@@ -50,8 +53,21 @@ class Leaderboard {
     return text ? JSON.parse(text) : null;
   }
 
-  /** Send a lap: kept only if it beats the driver's previous record. */
-  submit(lap, kind) {
+  /**
+   * Send a lap: kept only if it beats the driver's previous record.
+   * kind 'time' | 'drift' | 'tandem' ; mode for judged runs (debutant, normal, pro).
+   */
+  submit(lap, kind, mode = 'normal') {
+    const res = kind === 'time' ? null : driftOf(lap, mode, kind);
+    if (kind !== 'time' && !res) throw new Error('Run non notée');
+    let samples = lap.samples;
+    if (kind === 'tandem') {
+      const pad = (r) => [...r, ...new Array(Math.max(0, FOLLOWER_COLS - r.length)).fill(0)].slice(0, FOLLOWER_COLS);
+      samples = lap.samples.map((r, i) => [...pad(r), ...lap.tandem.leadSamples[i]]);
+    }
+    const meta = { lapMs: lap.lapMs, topSpeed: lap.topSpeed, session: lap.session, date: lap.date, mode };
+    if (kind === 'drift') meta.drift = res;
+    if (kind === 'tandem') Object.assign(meta, { tandem: res, lead: lap.tandem.lead });
     return this.request('/rest/v1/rpc/submit_lap', {
       method: 'POST',
       body: JSON.stringify({
@@ -62,16 +78,16 @@ class Leaderboard {
         p_layout: lap.layout || '',
         p_kind: kind,
         p_lap_ms: kind === 'time' ? lap.lapMs : null,
-        p_score: kind === 'drift' ? lap.drift.score : null,
-        p_rules: kind === 'drift' ? lap.drift.rules || '' : '',
-        p_samples: packSamples(lap.samples),
-        p_meta: { lapMs: lap.lapMs, topSpeed: lap.topSpeed, drift: lap.drift, session: lap.session, date: lap.date },
+        p_score: res ? res.score : null,
+        p_rules: res ? res.rules || '' : '',
+        p_samples: packSamples(samples),
+        p_meta: meta,
       }),
     });
   }
 
   list({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
-    const q = new URLSearchParams({ select: 'id,steam_id,driver,car,track,layout,kind,rules,lap_ms,score,meta,created_at', track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'drift' ? rules : ''}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
+    const q = new URLSearchParams({ select: 'id,steam_id,driver,car,track,layout,kind,rules,lap_ms,score,meta,created_at', track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'time' ? '' : rules}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
     if (car) q.set('car', `eq.${car}`);
     return this.request(`/rest/v1/lks_laps?${q}`);
   }
@@ -81,6 +97,14 @@ class Leaderboard {
     if (!rows || !rows[0]) throw new Error('Tour introuvable');
     const r = rows[0];
     const meta = r.meta || {};
+    const mode = meta.mode || 'normal';
+    let samples = unpackSamples(r.samples);
+    let tandem;
+    if (r.kind === 'tandem') {
+      tandem = { lead: meta.lead || { name: '?', car: '' }, leadSamples: samples.map((x) => x.slice(FOLLOWER_COLS)), ...(meta.tandem || {}), modes: { [mode]: meta.tandem || { score: Number(r.score) } } };
+      samples = samples.map((x) => x.slice(0, FOLLOWER_COLS));
+    }
+    const drift = meta.drift ? { ...meta.drift, modes: { [mode]: meta.drift } } : { score: 0 };
     return {
       version: 1,
       id: `remote-${r.id}`,
@@ -93,9 +117,11 @@ class Leaderboard {
       lapMs: r.lap_ms || meta.lapMs || 0,
       valid: true,
       topSpeed: meta.topSpeed || 0,
-      drift: meta.drift || { score: r.score || 0 },
+      drift,
+      tandem,
+      mode,
       date: r.created_at,
-      samples: unpackSamples(r.samples),
+      samples,
     };
   }
 }

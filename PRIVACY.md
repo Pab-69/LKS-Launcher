@@ -19,7 +19,7 @@
 | **API GitHub, uniquement pour les administrateurs** | Quand un administrateur publie du contenu | Les fichiers publiés et le jeton GitHub de l'administrateur, chiffré sur son PC |
 | **Ta box internet (UPnP)**, sur ton réseau local uniquement | Quand tu héberges une partie avec l'ouverture automatique des ports activée | Demandes d'ouverture et de fermeture des ports du serveur, et lecture de l'adresse IP publique |
 | **ZeroTier** (`download.zerotier.com` et le réseau ZeroTier), seulement si le groupe l'utilise | Quand tu cliques sur « Installer ZeroTier » ou « Rejoindre le VPN » | Téléchargement de l'installeur officiel. Ensuite, le logiciel ZeroTier relie ton PC au réseau privé du groupe ([politique de ZeroTier](https://www.zerotier.com/privacy/)) |
-| **Classement partagé** (projet Supabase du groupe), seulement si les admins l'ont configuré | Quand tu bats ton record sur une voiture et un circuit, et pour afficher le classement | Ton nom de pilote, ton Steam ID, la voiture, le circuit, ton temps ou ton score de drift et les données du tour (vitesse, pédales, rapport, angle, position sur la piste). Désactivable : Télémétrie → Outils → « Envoyer mes records au classement » ([politique de Supabase](https://supabase.com/privacy)) |
+| **Classement partagé** (projet Supabase du groupe), seulement si les admins l'ont configuré | Quand tu bats ton record sur une voiture et un circuit, et pour afficher le classement | Ton nom de pilote, ton Steam ID, la voiture, le circuit, ton temps ou ta note et les données du tour (vitesse, pédales, rapport, angle, position sur la piste). Pour un tandem, s'y ajoutent le nom du leader, sa voiture et sa trajectoire pendant la run. Désactivable : Télémétrie → Outils → « Envoyer mes records au classement » ([politique de Supabase](https://supabase.com/privacy)) |
 | **Tableau de bord sur téléphone**, sur ton réseau local uniquement | Seulement si tu l'actives | Les données de conduite en direct, servies par ton PC aux appareils de ton réseau |
 | **Liens de dons / boutique** | Seulement quand l'utilisateur clique sur un lien | Le lien s'ouvre dans le navigateur. Le launcher ne traite aucun paiement. |
 
@@ -29,7 +29,7 @@ Les services tiers ont leurs propres politiques de confidentialité : [GitHub](h
 
 - Réglages du launcher (nom de pilote, nationalité, Steam ID, dossier du jeu, préréglages) dans `%APPDATA%/LKS Launcher`.
 - Réglages du jeu et du CSP dans `Documents/Assetto Corsa/cfg`, avec une sauvegarde des fichiers d'origine.
-- Tes tours enregistrés (télémétrie) dans `%APPDATA%/LKS Launcher/telemetry`. Un tour exporté (`.lkslap`) contient ton nom, ton Steam ID et les données du tour.
+- Tes tours enregistrés (télémétrie) dans `%APPDATA%/LKS Launcher/telemetry`. Les runs tandem passent d'abord par le dossier de l'appli en jeu (`apps/lua/LKS/runs`), puis le launcher les importe et les efface. Un tour exporté (`.lkslap`) contient ton nom, ton Steam ID et les données du tour.
 
 Les **codes d'invitation** d'une partie hébergée contiennent l'adresse de ton PC (ou de ton réseau virtuel) et le mot de passe de la partie : ne les partage qu'avec les personnes que tu invites.
 

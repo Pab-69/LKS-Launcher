@@ -1,5 +1,29 @@
 # Journal des versions
 
+## 1.7.0
+
+- **Tandem** : ton chase est noté sur 100.
+  - Proximité : 35 points.
+  - Angle copié sur le leader : 25 points.
+  - Ligne du leader : 20 points.
+  - Ton drift : 20 points.
+  - Pénalités : contact, dépassement, leader perdu.
+  - C'est l'appli en jeu qui enregistre la run, car elle voit la voiture devant toi.
+- **Trois modes**, chacun avec son classement :
+  - Débutant : plus tolérant.
+  - Normal.
+  - Compétition : une faute peut mettre la run à 0.
+- **Règles sur mesure par circuit** (onglet Parcours drift). Pour chaque faute : ignorée, points en moins ou run à 0.
+  - Roues dehors (1 à 4).
+  - Regrip.
+  - Drift dans le mauvais sens.
+  - Tête-à-queue.
+  - Clip raté.
+  - Contact, dépassement et leader perdu en tandem.
+  - Plus l'angle visé, la tolérance de ligne et la taille des clips.
+- **Clips automatiques** : le launcher lit la ligne IA de chaque circuit installé et place lui-même la ligne et les clips (corde à l'apex, mur à l'entrée). Les admins peuvent les ajuster puis publier.
+- Pour les admins : relance le script SQL du classement (Publication → Classement → Copier le script).
+
 ## 1.6.0
 
 - **Drift noté comme en compétition**, sans chrono : note sur 100.

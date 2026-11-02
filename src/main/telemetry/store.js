@@ -9,11 +9,16 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { driftOf, MODE_IDS } = require('./drift');
 
 const MAX_PER_COMBO = 40; // keep the bests + the most recent laps
 
 function summary(lap) {
   const { samples, columns, ...rest } = lap;
+  if (rest.tandem) {
+    const { leadSamples, ...tandem } = rest.tandem;
+    rest.tandem = tandem;
+  }
   return { ...rest, samples: samples ? samples.length : 0 };
 }
 
@@ -33,8 +38,16 @@ function validLap(lap) {
   );
 }
 
-// drift scores only compare when judged with the same course (clips, line)
-const sameRules = (l, rules) => rules === undefined || (l.drift.rules || '') === rules;
+/**
+ * Judged result of a lap for a leaderboard: kind 'drift' or 'tandem' in a mode,
+ * only when judged with the same course and rules (version).
+ */
+function resultOf(l, kind, mode = 'normal', rules) {
+  const res = driftOf(l, mode, kind);
+  if (!res || !(res.score > 0)) return null;
+  if (rules !== undefined && (res.rules || '') !== rules) return null;
+  return res;
+}
 
 const comboKey = (l) => `${l.car}|${l.track}|${l.layout || ''}`;
 
@@ -79,9 +92,13 @@ class LapStore {
     for (const l of laps) (byDriver[l.driver.steamId || l.driver.name] = byDriver[l.driver.steamId || l.driver.name] || []).push(l);
     for (const list of Object.values(byDriver)) {
       const bestTime = list.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0];
-      const bestDrift = [...list].sort((a, b) => b.drift.score - a.drift.score)[0];
       if (bestTime) keep.add(bestTime.id);
-      if (bestDrift) keep.add(bestDrift.id);
+      for (const kind of ['drift', 'tandem']) {
+        for (const mode of MODE_IDS) {
+          const best = list.filter((l) => resultOf(l, kind, mode)).sort((a, b) => resultOf(b, kind, mode).score - resultOf(a, kind, mode).score)[0];
+          if (best) keep.add(best.id);
+        }
+      }
     }
     laps.sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).slice(0, MAX_PER_COMBO).forEach((l) => keep.add(l.id));
     for (const l of laps) {
@@ -107,24 +124,29 @@ class LapStore {
       .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   }
 
-  /** Best valid lap (time) or best drift score for a combo, optionally for one driver. */
-  best({ car, track, layout = '', kind = 'time', steamId, rules } = {}) {
+  /**
+   * Best valid lap (time) or best judged run (drift / tandem, in a mode) for a
+   * combo, optionally for one driver. Judged runs come with `result`.
+   */
+  best({ car, track, layout = '', kind = 'time', mode = 'normal', steamId, rules } = {}) {
     const laps = this.list({ car, track, layout }).filter((l) => !steamId || l.driver.steamId === steamId);
-    if (kind === 'drift') return laps.filter((l) => l.drift.score > 0 && sameRules(l, rules)).sort((a, b) => b.drift.score - a.drift.score)[0] || null;
-    return laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || null;
+    if (kind === 'time') return laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || null;
+    const judged = laps.map((l) => ({ ...l, result: resultOf(l, kind, mode, rules) })).filter((l) => l.result);
+    return judged.sort((a, b) => b.result.score - a.result.score)[0] || null;
   }
 
   /** Leaderboard from the laps on this PC (own + imported): best per driver. */
-  leaderboard({ track, layout = '', car, kind = 'time', rules }) {
+  leaderboard({ track, layout = '', car, kind = 'time', mode = 'normal', rules }) {
     const best = {};
     for (const l of this.list({ track, layout, car })) {
       if (kind === 'time' && !l.valid) continue;
-      if (kind === 'drift' && !(l.drift.score > 0 && sameRules(l, rules))) continue;
+      const result = kind === 'time' ? null : resultOf(l, kind, mode, rules);
+      if (kind !== 'time' && !result) continue;
       const key = l.driver.steamId || l.driver.name;
-      const better = !best[key] || (kind === 'time' ? l.lapMs < best[key].lapMs : l.drift.score > best[key].drift.score);
-      if (better) best[key] = l;
+      const better = !best[key] || (kind === 'time' ? l.lapMs < best[key].lapMs : result.score > best[key].result.score);
+      if (better) best[key] = result ? { ...l, result } : l;
     }
-    return Object.values(best).sort((a, b) => (kind === 'time' ? a.lapMs - b.lapMs : b.drift.score - a.drift.score));
+    return Object.values(best).sort((a, b) => (kind === 'time' ? a.lapMs - b.lapMs : b.result.score - a.result.score));
   }
 
   export(id) {
@@ -143,4 +165,4 @@ class LapStore {
   }
 }
 
-module.exports = { LapStore, validLap, comboKey };
+module.exports = { LapStore, validLap, comboKey, resultOf };

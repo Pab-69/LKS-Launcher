@@ -8,7 +8,7 @@ const path = require('path');
 const http = require('http');
 const L = require('../src/main/telemetry/layout');
 const { TelemetryRecorder, timeAt } = require('../src/main/telemetry/recorder');
-const { scoreDrift, courseVersion, referenceFrom, LiveClips } = require('../src/main/telemetry/drift');
+const { scoreDrift, scoreAllModes, scoreTandem, courseVersion, referenceFrom, rulesFor, LiveClips } = require('../src/main/telemetry/drift');
 const { LapStore } = require('../src/main/telemetry/store');
 const { Leaderboard, packSamples, unpackSamples, downsample } = require('../src/main/telemetry/leaderboard');
 const { DashServer } = require('../src/main/telemetry/dash-server');
@@ -89,8 +89,8 @@ test('drift judging: angle, speed, line, clips and penalties (not the clock)', (
   r.on('lap', (l) => laps.push(l));
   run(r, sim, 2600);
   const lap = laps[0];
-  // clip where the simulated car is sideways (a = 45°) and one it never reaches
-  const a = Math.PI / 4;
+  // clip where the simulated car is sideways (end of the oval, a = 0) and one it never reaches
+  const a = 0;
   const onLine = { x: Math.cos(a) * 300 + Math.cos(3 * a) * 40, z: Math.sin(a) * 180 };
   const course = { section: [0, 1], clips: [{ name: 'Mur', kind: 'outer', ...onLine, r: 3 }, { name: 'Loin', kind: 'inner', x: 9999, z: 9999, r: 3 }], ...referenceFrom(lap.samples) };
   const res = scoreDrift(lap.samples, course);
@@ -118,7 +118,8 @@ test('drift judging: angle, speed, line, clips and penalties (not the clock)', (
 
   // moving a clip changes the rules, so old scores don't mix
   assert.notStrictEqual(courseVersion({ ...course, clips: [{ ...course.clips[0], x: onLine.x + 2 }] }), res.rules);
-  assert.strictEqual(courseVersion(null), '');
+  assert.strictEqual(courseVersion(null), courseVersion(undefined));
+  assert.match(courseVersion(null, 'pro'), /-pro$/);
 
   // recorder uses the course and gives live clip feedback
   const r2 = new TelemetryRecorder({ getCourse: () => course });
@@ -130,6 +131,109 @@ test('drift judging: angle, speed, line, clips and penalties (not the clock)', (
   const live = new LiveClips(course);
   live.feed(onLine.x + 1, onLine.z, 30, 80);
   assert.deepStrictEqual([live.summary().hit, live.summary().total], [1, 2]);
+});
+
+test('drift modes and custom rules per track', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const r = new TelemetryRecorder();
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  run(r, sim, 2600);
+  const base = laps[0].samples;
+  assert.strictEqual(base[0].length, 13, 'signed slip recorded');
+  const all = scoreAllModes(base, null);
+  assert.ok(all.modes.debutant.score > all.modes.normal.score, 'beginner mode is more forgiving');
+  assert.ok(all.modes.normal.score >= all.modes.pro.score);
+  assert.notStrictEqual(all.modes.normal.rules, all.modes.pro.rules);
+
+  // 2 wheels off for 0.5 s
+  const off = base.map((s, i) => { const c = [...s]; if (i > 500 && i < 540) c[11] = 2; return c; });
+  assert.ok(!scoreDrift(off, null, 'normal').penalties.some((p) => p.kind === 'off'), 'normal: 3 wheels needed');
+  assert.strictEqual(scoreDrift(off, null, 'pro').score, 0, 'competition: 2 wheels off = 0');
+  const custom = { rules: { normal: { off: { wheels: 2, action: 'zero' } } } };
+  const res = scoreDrift(off, custom, 'normal');
+  assert.strictEqual(res.score, 0);
+  assert.match(res.zeroed, /2 roues dehors/);
+  assert.notStrictEqual(courseVersion(custom, 'normal'), courseVersion(null, 'normal'), 'rules change the version');
+  assert.strictEqual(rulesFor(custom, 'normal').off.wheels, 2);
+  assert.strictEqual(rulesFor(custom, 'normal').spin.points, 20, 'other rules kept');
+
+  // regrip (straightening for ~0.8 s in the middle of a corner) can be set to zero
+  const mid = base.findIndex((s) => s[0] > 0.4 && s[8] > 40);
+  const regrip = base.map((s, i) => { const c = [...s]; if (i >= mid && i < mid + 80) { c[8] = 2; c[12] = 2; } return c; });
+  assert.ok(scoreDrift(regrip, null, 'normal').penalties.some((p) => p.kind === 'straight'));
+  assert.ok(!scoreDrift(base, null, 'normal').penalties.some((p) => p.kind === 'straight'), 'long straights are not a regrip');
+  const noRegrip = { rules: { normal: { straighten: { action: 'zero' } } } };
+  assert.strictEqual(scoreDrift(regrip, noRegrip, 'normal').score, 0);
+  const ignore = { rules: { normal: { straighten: { action: 'none' } } } };
+  assert.ok(scoreDrift(regrip, ignore, 'normal').score > scoreDrift(regrip, null, 'normal').score);
+
+  // drifting the wrong way in one corner
+  const wrong = base.map((s) => [...s]);
+  const conv = Math.sign(base.find((s) => s[8] > 20)[12]);
+  let flipped = 0;
+  for (let i = 0; i < wrong.length && flipped < 120; i++) if (wrong[i][0] > 0.45 && wrong[i][8] > 20) { wrong[i][12] = -wrong[i][12]; flipped++; }
+  assert.ok(conv !== 0);
+  const rev = scoreDrift(wrong, { rules: { normal: { reverse: { action: 'zero' } } } }, 'normal');
+  assert.strictEqual(rev.score, 0);
+  assert.match(rev.zeroed, /mauvais sens/);
+});
+
+test('tandem: chase judged on proximity, angle and line', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const r = new TelemetryRecorder();
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  run(r, sim, 2600);
+  const follower = laps[0].samples.map((s) => [...s, 0]);
+  // lead 3 m ahead along the same line (sample a few rows further), same angle
+  const leadAt = (k, shift = 0) => follower.map((s, i) => { const t = follower[Math.max(0, Math.min(follower.length - 1, i + k))]; return [t[9] + shift, t[10], t[8], t[2], t[12]]; });
+  const close = scoreTandem(follower, leadAt(3), null, 'normal');
+  const far = scoreTandem(follower, leadAt(30), null, 'normal');
+  assert.ok(close.avgGap < 5 && far.avgGap > close.avgGap);
+  assert.ok(close.proximity > far.proximity && close.score > far.score);
+  assert.ok(close.angleMatch > 20, 'same angle as the lead');
+  // contact
+  const hit = follower.map((s, i) => { const c = [...s]; if (i > 300 && i < 310) c[13] = 1; return c; });
+  assert.ok(scoreTandem(hit, leadAt(3), null, 'normal').penalties.some((p) => p.kind === 'contact'));
+  assert.strictEqual(scoreTandem(hit, leadAt(3), null, 'pro').score, 0, 'contact = 0 in competition');
+  // chaser in front of the lead
+  const passed = scoreTandem(follower, leadAt(-8), null, 'normal');
+  assert.ok(passed.penalties.some((p) => p.kind === 'pass'));
+  assert.strictEqual(passed.score, 0);
+});
+
+test('automatic course from the track AI line', () => {
+  const { courseFromAiLine, parseAiLine, encodeAiLine, autoCourse } = require('../src/main/telemetry/ailine');
+  // touge: straight, left hairpin (r 30, centre 100;30), straight, right hairpin, straight
+  const pts = [];
+  let x = 0;
+  let z = 0;
+  let hd = 0;
+  const push = (inLeft) => pts.push({ x, z, sideLeft: inLeft === undefined ? 4 : inLeft ? 1 : 7, sideRight: inLeft === undefined ? 4 : inLeft ? 7 : 1 });
+  const straight = (len) => { for (let i = 0; i < len; i++) { x += Math.cos(hd); z += Math.sin(hd); push(); } };
+  const arc = (r, deg, left) => { for (let i = 0; i < Math.round((r * deg * Math.PI) / 180); i++) { hd += (left ? 1 : -1) / r; x += Math.cos(hd); z += Math.sin(hd); push(left); } };
+  straight(100); arc(30, 180, true); straight(120); arc(25, 150, false); straight(150);
+  const buf = encodeAiLine(pts);
+  const parsed = parseAiLine(buf);
+  assert.strictEqual(parsed.points.length, pts.length);
+  assert.strictEqual(parsed.points[50].sideLeft, 4);
+  const course = courseFromAiLine(parsed.points);
+  assert.deepStrictEqual(course.clips.map((c) => c.kind), ['outer', 'inner', 'outer', 'inner']);
+  const inner = course.clips[1];
+  const outer = course.clips[0];
+  const fromCentre = (c) => Math.hypot(c.x - 100, c.z - 30);
+  assert.ok(fromCentre(inner) < 30 && fromCentre(inner) > 27, 'inner clip on the inside of the apex');
+  assert.ok(fromCentre(outer) > 33, 'outer zone towards the outside wall');
+  assert.ok(course.refLine.length > 100);
+  // installed track folder
+  const ac = tmp();
+  fs.mkdirSync(path.join(ac, 'content', 'tracks', 'lks_touge', 'downhill', 'ai'), { recursive: true });
+  fs.writeFileSync(path.join(ac, 'content', 'tracks', 'lks_touge', 'downhill', 'ai', 'fast_lane.ai'), buf);
+  assert.strictEqual(autoCourse(ac, 'lks_touge', 'downhill').clips.length, 4);
+  assert.strictEqual(autoCourse(ac, 'other'), null);
+  assert.strictEqual(autoCourse(ac, '../x'), null);
+  assert.throws(() => parseAiLine(Buffer.alloc(8)), /court/);
 });
 
 test('lap store: bests, leaderboard, export/import, pruning', () => {
@@ -196,6 +300,17 @@ test('shared leaderboard client (Supabase REST)', async (t) => {
   assert.strictEqual(JSON.parse(calls[0].body).p_rules, '');
   assert.strictEqual(remote.driver.name, 'Pab');
   assert.strictEqual(remote.samples.length, 1500);
+  // tandem: lead trajectory travels with the samples
+  const tl = { ...lap, drift: {}, tandem: { lead: { name: 'Kaze', car: 'c2' }, leadSamples: lap.samples.map(() => [1, 2, 30, 80, -30]), modes: { pro: { score: 61.5, rules: 'abc-pro' } } } };
+  await board.submit(tl, 'tandem', 'pro');
+  const st = JSON.parse(calls[calls.length - 1].body);
+  assert.deepStrictEqual([st.p_kind, st.p_score, st.p_rules, st.p_meta.lead.name], ['tandem', 61.5, 'abc-pro', 'Kaze']);
+  assert.strictEqual(unpackSamples(st.p_samples)[0].length, 19);
+  rows.splice(0, rows.length - 1); // the mock returns every row
+  const remoteT = await board.lap(rows[0].id);
+  assert.strictEqual(remoteT.samples[0].length, 14);
+  assert.deepStrictEqual(remoteT.tandem.leadSamples[0], [1, 2, 30, 80, -30]);
+  assert.strictEqual(remoteT.tandem.modes.pro.score, 61.5);
   assert.throws(() => new Leaderboard({ url: 'ftp://x', anonKey: 'k' }), /invalide/);
   assert.strictEqual(downsample([1, 2, 3], 10).length, 3);
   assert.strictEqual(unpackSamples(packSamples([[1, 2]]))[0][1], 2);
@@ -236,11 +351,51 @@ test('manager: sends bests made before the leaderboard existed', async () => {
   for (let i = 0; i < 2700; i++) m1.tick(); // 2 laps, no leaderboard
   const sent = [];
   const m2 = new TelemetryManager({ dataDir: dir, source: new SimulatedSource(new Simulator({ lapMs: 20000, seed: 10 })), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}) });
-  m2.board = () => ({ submit: async (lap, kind) => sent.push(kind) });
+  m2.board = () => ({ submit: async (lap, kind, mode) => sent.push(kind === 'time' ? kind : `${kind}:${mode}`) });
   m2.tick();
   m2.tick();
   await new Promise((r) => setImmediate(r));
-  assert.deepStrictEqual(sent, ['time', 'drift'], 'existing bests sent once when driving the combo');
+  assert.strictEqual(sent[0], 'time');
+  assert.ok(sent.includes('drift:normal') && sent.includes('drift:debutant'), 'existing bests sent once per mode when driving the combo');
+});
+
+test('tandem runs from the in-game app are imported and judged', async () => {
+  const { runToLap, collectRuns } = require('../src/main/telemetry/tandem');
+  // follower 4 m behind the lead along a curve, both sideways
+  const rows = [];
+  for (let k = 0; k < 400; k++) {
+    const a = k / 60;
+    const x = Math.cos(a) * 40;
+    const z = Math.sin(a) * 40;
+    const la = a + 0.1;
+    rows.push([k * 50, k / 400, x, z, 70, 32, 1, 0, 4, 0, Math.cos(la) * 40, Math.sin(la) * 40, 30, 72, k === 200 ? 1 : 0]);
+  }
+  const run = { v: 1, track: 'lks_touge', layout: 'downhill', car: 'lks_bmw_m2', driver: 'Pab', lead: { name: 'Kaze', car: 'lks_s15' }, lapMs: 20000, rows };
+  const lap = runToLap(run, { name: 'Pab', steamId: '7656' });
+  assert.strictEqual(lap.samples[0].length, 14);
+  assert.strictEqual(lap.tandem.leadSamples.length, 400);
+  assert.throws(() => runToLap({ v: 1, track: '../x', car: 'c', rows }), /invalide/);
+
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify(run));
+  fs.writeFileSync(path.join(dir, 'b.json'), '{oops');
+  assert.strictEqual(collectRuns(dir, {}).length, 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'files removed after import');
+
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(new Simulator()), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}) });
+  const sent = [];
+  m.board = () => ({ submit: async (l, kind, mode) => sent.push(`${kind}:${mode}`) });
+  const events = [];
+  m.on('lap', (e) => events.push(e));
+  await m.addTandemRun(lap);
+  const t = m.store.load(lap.id).tandem;
+  assert.ok(t.modes.normal.score > 0 && t.modes.normal.avgGap < 6);
+  assert.ok(t.modes.normal.penalties.some((p) => p.kind === 'contact'));
+  assert.strictEqual(t.modes.pro.score, 0, 'contact = 0 in competition');
+  assert.ok(events[0].pbTandem.includes('normal'));
+  assert.ok(sent.includes('tandem:normal') && !sent.includes('tandem:pro'));
+  assert.strictEqual(m.store.leaderboard({ track: 'lks_touge', layout: 'downhill', kind: 'tandem' })[0].result.score, t.modes.normal.score);
+  assert.ok(!m.store.list()[0].tandem.leadSamples, 'index keeps no samples');
 });
 
 test('companion tools and in-game app', () => {

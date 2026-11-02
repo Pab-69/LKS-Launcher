@@ -158,6 +158,12 @@ Au drift, le chrono ne compte pas. Chaque run reçoit une note sur 100 :
 | Ligne et clips | 35 | Clips pris en glisse (plus on est près, plus ça rapporte) et écart avec la ligne de référence |
 | Pénalités | − | Tête-à-queue −20, redressement en pleine glisse −3, sortie de piste −5 |
 
+**Modes** : chaque run est notée dans les trois modes à la fois (Débutant, Normal, Compétition), avec un classement par mode. Les règles se changent par circuit dans **Parcours drift → Règles** : pour chaque faute (roues dehors, regrip, drift dans le mauvais sens, tête-à-queue, clip raté, contact, dépassement, leader perdu), choisir *Ignoré*, *Points en moins* ou *Run à 0*.
+
+**Tandem** : l'appli en jeu (CSP) enregistre la run quand une voiture roule devant toi (moins de 35 m), car la télémétrie standard du jeu ne voit que ta voiture. Le launcher importe la run et note le chase : proximité 35, angle copié 25, ligne du leader 20, drift 20, moins les pénalités.
+
+**Clips automatiques** : si un circuit installé a une ligne IA (`ai/fast_lane.ai`), le launcher en tire la ligne de référence et place une corde à l'apex et un mur à l'entrée de chaque virage serré. Ce tracé sert tant qu'aucun parcours n'est publié.
+
 Les admins placent les clips dans **Télémétrie → Parcours drift** : choisir une run propre (elle donne la ligne et la vitesse de référence), régler le départ et l'arrivée, cliquer sur la carte pour poser les clips (intérieur : la corde, extérieur : le mur), puis **Publier**. Quand un parcours change, les runs sont notées à nouveau et le classement drift de ce circuit repart avec les nouvelles règles. Sans clips, seuls l'angle et la vitesse comptent.
 
 ### Site vitrine (GitHub Pages)

@@ -8,14 +8,14 @@
  */
 
 const { EventEmitter } = require('events');
-const { driftAngle } = require('./layout');
-const { scoreDrift, courseVersion, LiveClips } = require('./drift');
+const { slipAngle } = require('./layout');
+const { scoreAllModes, LiveClips } = require('./drift');
 
 const STATUS_LIVE = 2;
 const SESSION_NAMES = { 0: 'practice', 1: 'qualify', 2: 'race', 3: 'hotlap', 4: 'timeattack', 5: 'drift', 6: 'drag' };
 
-// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z, wheels out]
-const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z', 'out'];
+// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z, wheels out, signed slip]
+const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z', 'out', 'slip'];
 
 const round = (v, n) => Math.round(v * 10 ** n) / 10 ** n;
 
@@ -80,7 +80,8 @@ class TelemetryRecorder extends EventEmitter {
       this.emit('combo', combo);
     }
     this.lastFrameAt = now;
-    const angle = driftAngle(p);
+    const slip = slipAngle(p);
+    const angle = Math.abs(slip);
     const d = g.normalizedCarPosition;
 
     if (g.status === STATUS_LIVE) {
@@ -93,7 +94,7 @@ class TelemetryRecorder extends EventEmitter {
       const last = lap.samples[lap.samples.length - 1];
       // sample by distance (or time when stopped), never backwards
       if (!last || (d > last[0] && (d - last[0] >= 0.0005 || now - lap.lastSampleAt >= 100))) {
-        lap.samples.push([round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1), p.numberOfTyresOut]);
+        lap.samples.push([round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1), p.numberOfTyresOut, round(slip, 1)]);
         lap.lastSampleAt = now;
       }
       if (p.numberOfTyresOut > 2) lap.cutFrames++;
@@ -158,7 +159,7 @@ class TelemetryRecorder extends EventEmitter {
       valid,
       cuts: lap.cutFrames,
       topSpeed: round(lap.topSpeed, 1),
-      drift: scoreDrift(s, course) || { score: 0, maxAngle: round(lap.maxAngle, 1), avgAngle: 0, driftTime: 0, clips: [], penalties: [], rules: courseVersion(course) },
+      drift: { maxAngle: round(lap.maxAngle, 1), avgAngle: 0, driftTime: 0, ...scoreAllModes(s, course) },
       date: new Date().toISOString(),
       columns: COLUMNS,
       samples: s,

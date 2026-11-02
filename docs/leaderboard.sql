@@ -1,7 +1,8 @@
 -- Classement LKS : à exécuter une fois dans Supabase (SQL Editor > New query > Run).
 -- Chaque pilote garde une seule entrée par voiture / circuit / tracé / type
--- (meilleur temps, ou meilleure note de drift sur 100 pour un parcours donné :
--- « rules » change quand les admins modifient les clips). Les launchers lisent
+-- (meilleur temps, ou meilleure note de drift / tandem sur 100 pour un parcours
+-- et un mode donnés : « rules » change quand les admins modifient les clips ou
+-- les règles, et finit par -debutant, -normal ou -pro). Les launchers lisent
 -- tout le classement et n'écrivent que via la fonction submit_lap, qui ne
 -- remplace un record que par un meilleur. Le script peut être relancé.
 
@@ -12,7 +13,7 @@ create table if not exists public.lks_laps (
   car text not null,
   track text not null,
   layout text not null default '',
-  kind text not null check (kind in ('time', 'drift')),
+  kind text not null,
   rules text not null default '',
   lap_ms integer,
   score numeric(4, 1),
@@ -23,6 +24,8 @@ create table if not exists public.lks_laps (
 
 -- mise à niveau d'une ancienne version du script
 alter table public.lks_laps add column if not exists rules text not null default '';
+alter table public.lks_laps drop constraint if exists lks_laps_kind_check;
+alter table public.lks_laps add constraint lks_laps_kind_check check (kind in ('time', 'drift', 'tandem'));
 alter table public.lks_laps alter column score type numeric(4, 1) using least(score, 100);
 alter table public.lks_laps drop constraint if exists lks_laps_steam_id_car_track_layout_kind_key;
 drop function if exists public.submit_lap(text, text, text, text, text, text, integer, integer, text, jsonb);
@@ -43,27 +46,27 @@ language plpgsql security definer set search_path = public as $$
 declare
   cur public.lks_laps%rowtype;
 begin
-  if p_kind not in ('time', 'drift')
+  if p_kind not in ('time', 'drift', 'tandem')
      or coalesce(length(p_steam_id), 0) not between 1 and 32
      or coalesce(length(p_driver), 0) not between 1 and 40
      or coalesce(length(p_car), 0) not between 1 and 80
      or coalesce(length(p_track), 0) not between 1 and 80
      or length(coalesce(p_layout, '')) > 80
-     or length(coalesce(p_rules, '')) > 16
+     or length(coalesce(p_rules, '')) > 24
      or length(coalesce(p_samples, '')) > 400000 then
     raise exception 'données invalides';
   end if;
   if p_kind = 'time' and (p_lap_ms is null or p_lap_ms < 10000 or p_lap_ms > 3600000) then
     raise exception 'temps invalide';
   end if;
-  if p_kind = 'drift' and (p_score is null or p_score <= 0 or p_score > 100) then
+  if p_kind in ('drift', 'tandem') and (p_score is null or p_score <= 0 or p_score > 100) then
     raise exception 'note invalide';
   end if;
 
   select * into cur from public.lks_laps
    where steam_id = p_steam_id and car = p_car and track = p_track
      and layout = coalesce(p_layout, '') and kind = p_kind and rules = coalesce(p_rules, '');
-  if found and ((p_kind = 'time' and cur.lap_ms <= p_lap_ms) or (p_kind = 'drift' and cur.score >= p_score)) then
+  if found and ((p_kind = 'time' and cur.lap_ms <= p_lap_ms) or (p_kind <> 'time' and cur.score >= p_score)) then
     return 'record précédent conservé';
   end if;
 

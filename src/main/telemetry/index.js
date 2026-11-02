@@ -12,7 +12,7 @@ const { TelemetryRecorder } = require('./recorder');
 const { LapStore } = require('./store');
 const { Leaderboard } = require('./leaderboard');
 const { DashServer } = require('./dash-server');
-const { courseVersion, scoreDrift } = require('./drift');
+const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
   constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse }) {
@@ -89,19 +89,37 @@ class TelemetryManager extends EventEmitter {
     }
   }
 
+  /** Does this lap need judging again (course or rules changed, older lap)? */
+  outdated(l, course) {
+    for (const m of MODE_IDS) {
+      const d = driftOf(l, m, 'drift');
+      if (!d || d.rules !== courseVersion(course, m)) return true;
+      if (l.tandem) {
+        const t = driftOf(l, m, 'tandem');
+        if (!t || t.rules !== courseVersion(course, m)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Judge a full lap (solo + tandem when there was a leader). */
+  judge(lap, course) {
+    lap.drift = { maxAngle: lap.drift ? lap.drift.maxAngle || 0 : 0, avgAngle: 0, driftTime: 0, ...scoreAllModes(lap.samples, course) };
+    if (lap.tandem && lap.tandem.leadSamples) lap.tandem = { lead: lap.tandem.lead, leadSamples: lap.tandem.leadSamples, ...scoreTandemAll(lap.samples, lap.tandem.leadSamples, course) };
+    return lap;
+  }
+
   /**
-   * Re-judge the drift of local laps whose course changed (admins moved the
-   * clips, or laps from an older version). Returns how many were updated.
+   * Re-judge local laps whose course or rules changed (admins moved the clips,
+   * changed a rule, or laps from an older version). Returns how many were updated.
    */
   rescoreAll() {
     let n = 0;
     for (const l of [...this.store.index]) {
       const course = this.getCourse(l);
-      if ((l.drift.rules || '') === courseVersion(course) && l.drift.angle !== undefined) continue;
+      if (!this.outdated(l, course)) continue;
       try {
-        const lap = this.store.load(l.id);
-        lap.drift = scoreDrift(lap.samples, course) || { score: 0, maxAngle: lap.drift.maxAngle || 0, avgAngle: 0, driftTime: 0, clips: [], penalties: [], rules: courseVersion(course) };
-        this.store.save(lap, { imported: Boolean(l.imported) });
+        this.store.save(this.judge(this.store.load(l.id), course), { imported: Boolean(l.imported) });
         n++;
       } catch {
         /* unreadable lap: leave it */
@@ -127,34 +145,58 @@ class TelemetryManager extends EventEmitter {
     this.synced.add(key);
     const { steamId } = this.recorder.getDriver() || {};
     try {
-      const mine = this.store.list({ ...combo, layout: combo.layout || '' }).filter((l) => !l.imported && (l.driver.steamId || '') === (steamId || ''));
-      const bestTime = mine.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0];
-      const rules = courseVersion(this.getCourse(combo));
-      const bestDrift = mine.filter((l) => l.drift.score > 0 && (l.drift.rules || '') === rules).sort((a, b) => b.drift.score - a.drift.score)[0];
+      const q = { car: combo.car, track: combo.track, layout: combo.layout || '', steamId: steamId || '' };
+      const own = (l) => l && !l.imported && (l.driver.steamId || '') === (steamId || '');
+      const bestTime = this.store.list(q).filter((l) => own(l) && l.valid).sort((a, b) => a.lapMs - b.lapMs)[0];
       if (bestTime) await board.submit(this.store.load(bestTime.id), 'time');
-      if (bestDrift) await board.submit(this.store.load(bestDrift.id), 'drift');
+      const course = this.getCourse(combo);
+      for (const kind of ['drift', 'tandem']) {
+        for (const mode of MODE_IDS) {
+          const best = this.store.best({ ...q, kind, mode, rules: courseVersion(course, mode) });
+          if (own(best)) await board.submit(this.store.load(best.id), kind, mode);
+        }
+      }
     } catch {
       this.synced.delete(key); // offline: try again next time
     }
   }
 
+  /** Modes in which this lap beats the driver's record (drift or tandem). */
+  newRecords(lap, kind) {
+    const out = [];
+    for (const mode of MODE_IDS) {
+      const res = driftOf(lap, mode, kind);
+      if (!res || !(res.score > 0)) continue;
+      const prev = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout || '', kind, mode, steamId: lap.driver.steamId, rules: res.rules });
+      if (!prev || res.score > prev.result.score) out.push(mode);
+    }
+    return out;
+  }
+
   async onLap(lap) {
     const prevBest = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'time', steamId: lap.driver.steamId });
-    const prevDrift = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'drift', steamId: lap.driver.steamId, rules: lap.drift.rules || '' });
+    const pbDrift = this.newRecords(lap, 'drift');
+    const pbTandem = lap.tandem ? this.newRecords(lap, 'tandem') : [];
     this.store.save(lap);
     const pbTime = lap.valid && (!prevBest || lap.lapMs < prevBest.lapMs);
-    const pbDrift = lap.drift.score > 0 && (!prevDrift || lap.drift.score > prevDrift.drift.score);
-    if (pbTime) this.recorder.setReference(lap);
-    this.emit('lap', { lap: { ...lap, samples: lap.samples.length }, pbTime, pbDrift });
+    if (pbTime && !lap.tandem) this.recorder.setReference(lap);
+    this.emit('lap', { lap: { ...lap, samples: lap.samples.length, tandem: lap.tandem ? { ...lap.tandem, leadSamples: undefined } : undefined }, pbTime, pbDrift, pbTandem });
     const board = this.getSettings().shareLaps !== false ? this.board() : null;
     if (!board) return;
     try {
       if (pbTime) await board.submit(lap, 'time');
-      if (pbDrift) await board.submit(lap, 'drift');
-      if (pbTime || pbDrift) this.emit('submitted', { pbTime, pbDrift });
+      for (const mode of pbDrift) await board.submit(lap, 'drift', mode);
+      for (const mode of pbTandem) await board.submit(lap, 'tandem', mode);
+      if (pbTime || pbDrift.length || pbTandem.length) this.emit('submitted', { pbTime, pbDrift, pbTandem });
     } catch (err) {
       this.emit('submitError', err);
     }
+  }
+
+  /** Tandem run recorded by the in-game app (it sees the other cars). */
+  addTandemRun(lap) {
+    this.judge(lap, this.getCourse(lap));
+    return this.onLap(lap);
   }
 }
 

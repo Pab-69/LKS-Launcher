@@ -50,6 +50,7 @@ function installIngame(acRoot, courses) {
   const dir = appDir(acRoot);
   fs.mkdirSync(dir, { recursive: true });
   for (const f of fs.readdirSync(SRC)) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
+  fs.mkdirSync(path.join(dir, 'runs'), { recursive: true }); // tandem runs written by the app
   writeCourses(acRoot, courses);
   return ingameStatus(acRoot);
 }

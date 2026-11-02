@@ -34,16 +34,18 @@ class Simulator {
     }
     const d = (this.t - this.lapStart) / this.duration;
     const a = d * Math.PI * 2;
-    const corner = Math.abs(Math.sin(a * 2)); // 4 corners per lap
+    // 2 tight corners per lap, at the ends of the oval (a = 0 and π, radius ≈ 50 m)
+    const da = Math.min(Math.abs(Math.atan2(Math.sin(a), Math.cos(a))), Math.abs(Math.atan2(Math.sin(a - Math.PI), Math.cos(a - Math.PI))));
+    const corner = Math.exp(-((da / 0.35) ** 2));
     const speed = 160 - corner * 80 + this.rand() * 4;
     const gear = speed > 140 ? 6 : speed > 110 ? 5 : speed > 85 ? 4 : 3;
-    const angle = this.drift && corner > 0.6 ? 20 + corner * 25 : 2;
+    const angle = this.drift && corner > 0.35 ? 20 + corner * 25 : 2;
     const v = speed / 3.6;
     const rad = (angle * Math.PI) / 180;
     const physics = encode(PHYSICS, PHYSICS_SIZE, {
       packetId: Math.floor(this.t / dt),
-      gas: corner > 0.7 ? 0.55 : 1,
-      brake: corner > 0.5 && corner < 0.7 ? 0.8 : 0,
+      gas: corner > 0.5 ? 0.55 : 1,
+      brake: corner > 0.25 && corner < 0.5 ? 0.8 : 0,
       fuel: 40,
       gear,
       rpms: 4000 + (speed % 40) * 100,

@@ -113,18 +113,26 @@ const parseStatic = (b) => parse(STATIC, b);
  * looks wrong (other game versions).
  */
 function driftAngle(p) {
+  return Math.abs(slipAngle(p));
+}
+
+/** Signed version of driftAngle: the sign tells which way the car slides. */
+function slipAngle(p) {
   const speed = p.speedKmh / 3.6;
   if (speed < 3) return 0;
   const [lx, , lz] = p.localVelocity || [0, 0, 0];
   const local = Math.hypot(lx, lz);
   if (local > 0 && Math.abs(local - speed) / speed < 0.2) {
-    return Math.abs((Math.atan2(lx, lz) * 180) / Math.PI);
+    return (Math.atan2(lx, lz) * 180) / Math.PI;
   }
   const [vx, , vz] = p.velocity || [0, 0, 0];
   const course = Math.atan2(vx, vz);
-  let a = Math.abs(((course - p.heading) * 180) / Math.PI) % 360;
-  if (a > 180) a = 360 - a;
-  return a > 90 ? 180 - a : a;
+  let a = (((course - p.heading) * 180) / Math.PI) % 360;
+  if (a > 180) a -= 360;
+  if (a < -180) a += 360;
+  if (a > 90) return 180 - a;
+  if (a < -90) return -180 - a;
+  return a;
 }
 
-module.exports = { PHYSICS, GRAPHICS, STATIC, PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE, parsePhysics, parseGraphics, parseStatic, encode, driftAngle };
+module.exports = { PHYSICS, GRAPHICS, STATIC, PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE, parsePhysics, parseGraphics, parseStatic, encode, driftAngle, slipAngle };

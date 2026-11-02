@@ -32,7 +32,9 @@ const { Simulator } = require('./telemetry/simulator');
 const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
 const { Leaderboard } = require('./telemetry/leaderboard');
-const { courseVersion, referenceFrom } = require('./telemetry/drift');
+const { courseVersion, referenceFrom, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
+const { autoCourse } = require('./telemetry/ailine');
+const { collectRuns } = require('./telemetry/tandem');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -332,6 +334,9 @@ function setupSync() {
     const ko = results.length - ok;
     if (results.length) send('toast', { kind: ko ? 'warn' : 'success', text: ko ? `${ok} installé(s), ${ko} en erreur` : `Contenu LKS à jour (${ok} installé(s))` });
     send('content:changed');
+    autoCourses.clear(); // tracks may have changed
+    driftSignature = null;
+    applyDriftCourses();
   });
   setInterval(() => refreshManifest({ autoSync: true }).catch(() => {}), MANIFEST_POLL_MS);
 }
@@ -354,10 +359,44 @@ async function applyDash() {
   } else if (!t.dashEnabled && telemetry.dash.running) telemetry.dash.stop();
 }
 
-/** Drift course (clips, reference line) published by the admins for a track/layout. */
-function driftCourse(c) {
+/**
+ * Drift course (clips, reference line, rules) for a track/layout: the one
+ * published by the admins, otherwise the one generated from the installed
+ * track's AI line.
+ */
+const autoCourses = new Map();
+function autoDriftCourse(track, layout = '') {
+  const key = `${track}|${layout}`;
+  if (!autoCourses.has(key)) {
+    let course = null;
+    try {
+      course = autoCourse(acRoot(), track, layout);
+    } catch (err) {
+      console.warn('[drift] ligne IA illisible', key, err.message);
+    }
+    autoCourses.set(key, course);
+  }
+  return autoCourses.get(key);
+}
+function driftCourseInfo(c) {
   const all = (sync && sync.manifest && sync.manifest.drift) || {};
-  return all[`${c.track}|${c.layout || ''}`] || null;
+  const published = all[`${c.track}|${c.layout || ''}`];
+  if (published) return { course: published, source: 'published' };
+  const auto = autoDriftCourse(c.track, c.layout || '');
+  return { course: auto, source: auto ? 'auto' : null };
+}
+const driftCourse = (c) => driftCourseInfo(c).course;
+
+/** Courses for the in-game app: published ones + automatic ones for the group's tracks. */
+function allDriftCourses() {
+  const out = {};
+  for (const t of (sync.manifest && sync.manifest.tracks) || []) {
+    for (const l of t.layouts && t.layouts.length ? t.layouts : [{ id: '' }]) {
+      const c = driftCourse({ track: t.id, layout: l.id || '' });
+      if (c) out[`${t.id}|${l.id || ''}`] = c;
+    }
+  }
+  return { ...out, ...((sync.manifest && sync.manifest.drift) || {}) };
 }
 
 let driftSignature = null;
@@ -369,9 +408,50 @@ function applyDriftCourses() {
   driftSignature = sig;
   try {
     if (telemetry.rescoreAll()) send('telemetry:lap', null);
-    if (acRoot()) ingame.writeCourses(acRoot(), sync.manifest.drift || {});
+    if (acRoot()) ingame.writeCourses(acRoot(), allDriftCourses());
   } catch (err) {
     console.warn('[drift]', err.message);
+  }
+}
+
+/** Keep only known rule fields with sane values (admins' custom rules). */
+function cleanRules(rules) {
+  const out = {};
+  const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
+  const rule = (r) => (r ? { action: ['none', 'points', 'zero'].includes(r.action) ? r.action : 'points', points: num(r.points, 0, 100) } : undefined);
+  for (const m of MODE_IDS) {
+    const r = rules[m];
+    if (!r || typeof r !== 'object') continue;
+    const o = {};
+    if (r.angleTarget !== undefined) o.angleTarget = num(r.angleTarget, 10, 80);
+    if (Array.isArray(r.lineTol)) o.lineTol = [num(r.lineTol[0], 0, 30), num(r.lineTol[1], 1, 60)];
+    if (r.clipScale !== undefined) o.clipScale = num(r.clipScale, 0.3, 3);
+    if (r.weights) o.weights = { angle: num(r.weights.angle, 0, 100), speed: num(r.weights.speed, 0, 100), line: num(r.weights.line, 0, 100) };
+    for (const k of ['spin', 'reverse', 'missedClip']) if (r[k]) o[k] = rule(r[k]);
+    if (r.off) o.off = { ...rule(r.off), wheels: num(r.off.wheels, 1, 4) };
+    if (r.straighten) o.straighten = { ...rule(r.straighten), minMs: num(r.straighten.minMs, 100, 3000) };
+    if (r.tandem) {
+      const t = r.tandem;
+      o.tandem = {};
+      if (Array.isArray(t.gap)) o.tandem.gap = [num(t.gap[0], 0, 30), num(t.gap[1], 1, 60)];
+      for (const k of ['contact', 'pass', 'lost']) if (t[k]) o.tandem[k] = rule(t[k]);
+    }
+    out[m] = o;
+  }
+  return out;
+}
+
+/** Tandem runs saved by the in-game app (it sees the car in front). */
+async function importTandemRuns() {
+  if (!telemetry || !acRoot() || settings.data.telemetry.enabled === false) return;
+  const dir = path.join(ingame.appDir(acRoot()), 'runs');
+  if (!fs.existsSync(dir)) return;
+  for (const lap of collectRuns(dir, { name: settings.data.driverName || '', steamId: settings.data.steamId || '' })) {
+    try {
+      await telemetry.addTandemRun(lap);
+    } catch (err) {
+      console.warn('[tandem]', err.message);
+    }
   }
 }
 
@@ -386,15 +466,18 @@ function setupTelemetry() {
     getCourse: driftCourse,
   });
   applyDriftCourses();
-  telemetry.on('lap', ({ lap, pbTime, pbDrift }) => {
+  telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
     send('telemetry:lap', lap);
-    if (pbTime) send('toast', { kind: 'success', text: `Record perso : ${fmtLap(lap.lapMs)}` });
-    else if (pbDrift) send('toast', { kind: 'success', text: `Record de drift : ${lap.drift.score}/100` });
+    const label = (modes) => (modes.includes('normal') ? '' : ` (${MODE_LABELS[modes[0]]})`);
+    if (pbTandem && pbTandem.length) send('toast', { kind: 'success', text: `Record de tandem : ${(lap.tandem.modes[pbTandem.includes('normal') ? 'normal' : pbTandem[0]] || {}).score}/100${label(pbTandem)}` });
+    else if (pbDrift && pbDrift.length) send('toast', { kind: 'success', text: `Record de drift : ${(lap.drift.modes[pbDrift.includes('normal') ? 'normal' : pbDrift[0]] || {}).score}/100${label(pbDrift)}` });
+    else if (pbTime) send('toast', { kind: 'success', text: `Record perso : ${fmtLap(lap.lapMs)}` });
   });
   telemetry.on('submitted', () => send('toast', { kind: 'info', text: 'Envoyé au classement' }));
   telemetry.on('submitError', (err) => send('toast', { kind: 'warn', text: err.message }));
   telemetry.on('warning', (err) => console.warn('[telemetry]', err.message));
   telemetry.start();
+  setInterval(importTandemRuns, 5000);
   setInterval(() => {
     const live = telemetry.live();
     if (live) send('telemetry:live', live);
@@ -1021,11 +1104,18 @@ function setupIpc() {
     return telemetry.store.load(id);
   });
   handle('drift:course', ({ track, layout }) => {
-    const course = driftCourse({ track, layout });
-    return { course, version: courseVersion(course) };
+    const { course, source } = driftCourseInfo({ track, layout });
+    return { course, source, version: courseVersion(course) };
   });
+  handle('drift:autoCourse', ({ track, layout }) => {
+    autoCourses.delete(`${track}|${layout || ''}`);
+    const course = autoDriftCourse(track, layout || '');
+    if (!course) throw new Error('Pas de ligne IA (ai/fast_lane.ai) pour ce circuit : place les clips à la main.');
+    return course;
+  });
+  handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
   handle('telemetry:board', async (q) => {
-    if (q.kind === 'drift') q.rules = courseVersion(driftCourse(q));
+    if (q.kind !== 'time') q.rules = courseVersion(driftCourse(q), q.mode || 'normal');
     const local = telemetry.store.leaderboard(q);
     const board = telemetry.board();
     if (!board) return { local, remote: null };
@@ -1057,7 +1147,7 @@ function setupIpc() {
   handle('ingame:status', () => (acRoot() ? ingame.ingameStatus(acRoot()) : { installed: null }));
   handle('ingame:install', () => {
     if (!acRoot()) throw new Error("Dossier d'Assetto Corsa non configuré");
-    return ingame.installIngame(acRoot(), sync.manifest.drift || {});
+    return ingame.installIngame(acRoot(), allDriftCourses());
   });
   handle('ingame:remove', () => ingame.removeIngame(acRoot()));
   handle('admin:testLeaderboard', async (cfg) => {
@@ -1097,7 +1187,7 @@ function setupIpc() {
       return r;
     }),
   );
-  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, remove }) =>
+  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, remove }) =>
     withAdmin(async () => {
       const pub = getPublisher();
       if (!pub.manifest) await pub.open();
@@ -1112,7 +1202,9 @@ function setupIpc() {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
           Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
-        } else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver });
+        } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: 'ligne IA' });
+        else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
+        if (rules) course.rules = cleanRules(rules);
         all[key] = course;
       }
       await pub.updateMeta({ drift: all });
