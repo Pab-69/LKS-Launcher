@@ -13,7 +13,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 
 ## Pour les membres
 
-1. Télécharger `LKS-Launcher-Setup-x.y.z.exe` dans les [Releases](https://github.com/pab-69/lks-launcher/releases) et l'installer.
+1. Télécharger `LKS-Launcher-Setup-x.y.z.exe` dans les [Releases](https://github.com/pab-69/lks-launcher/releases) et l'installer. Si Windows affiche « Windows a protégé votre ordinateur », cliquer sur **Informations complémentaires → Exécuter quand même** (l'installeur n'est pas encore signé, voir plus bas).
 2. Au premier lancement, le launcher détecte Assetto Corsa (Steam) et ton pseudo Steam. Vérifie-les dans **Paramètres**.
 3. Le contenu LKS se télécharge tout seul. Pour tout lancer à la main : **Contenu → Tout synchroniser**.
 4. **Steam doit être ouvert** pour lancer le jeu.
@@ -109,6 +109,34 @@ Les photos affichées sur l'accueil (diaporama et « Le Garage ») et pendant le
 1. Change `version` dans `package.json` (ex. `1.0.1`).
 2. `git tag v1.0.1 && git push --tags`
 3. GitHub Actions construit l'installeur Windows et publie la release. Les launchers déjà installés se mettent à jour tout seuls.
+
+### Construire l'installeur
+
+- **Sans release** : onglet *Actions* du dépôt → *Build & release* → *Run workflow*. L'installeur `LKS-Launcher-Setup-x.y.z.exe` est téléchargeable dans les *Artifacts* du run.
+- **Avec release** (les membres reçoivent la mise à jour) : pousser un tag `vX.Y.Z` (voir plus haut).
+
+### Signer l'installeur (message « Windows a protégé votre ordinateur »)
+
+Windows SmartScreen affiche ce message pour tout `.exe` téléchargé qui n'est pas signé par un éditeur dont l'identité a été vérifiée. Un certificat **auto-signé ne sert à rien** : Windows ne lui fait pas confiance, sauf à l'installer à la main sur chaque PC, ce qui est à déconseiller. Il faut un certificat délivré à ton nom (ou à celui d'une structure) après vérification d'identité. Personne d'autre ne peut l'obtenir à ta place.
+
+Options, de la moins chère à la plus chère :
+
+| Option | Coût indicatif | Remarques |
+| --- | --- | --- |
+| **Azure Trusted Signing** (Microsoft) | ~10 $/mois | Le plus simple avec GitHub Actions. Vérifier les conditions d'éligibilité (pays, ancienneté) sur la page Microsoft. |
+| **SignPath Foundation** | gratuit | Seulement pour les projets open source (dépôt public + licence libre). |
+| **Certificat OV** (Certum, Sectigo…) | ~100–400 €/an | Livré sur clé USB ou HSM cloud. Certum propose une offre « Open Source » moins chère. |
+| **Certificat EV** | ~300–600 €/an | Ne supprime plus automatiquement l'avertissement depuis 2024 : la réputation se construit avec les téléchargements. |
+| **Microsoft Store** | gratuit (compte développeur individuel) | Microsoft signe l'application, pas d'avertissement ; demande un empaquetage MSIX et des mises à jour par le Store. |
+
+Même signé, un tout nouveau certificat peut encore déclencher SmartScreen pendant quelques jours, le temps qu'il gagne en réputation.
+
+Le workflow est déjà prêt à signer : ajoute les secrets dans *Settings → Secrets and variables → Actions* :
+
+- certificat `.pfx` : `WIN_CSC_LINK` (le fichier encodé en base64) et `WIN_CSC_KEY_PASSWORD` ;
+- Azure Trusted Signing : secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` et variables `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, `AZURE_SIGN_PUBLISHER`.
+
+En attendant, les membres font **« Informations complémentaires → Exécuter quand même »** une seule fois. Les mises à jour suivantes s'installent ensuite toutes seules, sans repasser par ce message.
 
 ### Architecture
 

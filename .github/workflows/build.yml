@@ -1,5 +1,14 @@
 name: Build & release
 
+# - Pousser un tag vX.Y.Z  -> construit l'installeur ET publie la release (mise à jour auto des membres)
+# - Lancer à la main (onglet Actions > Run workflow) -> construit l'installeur, téléchargeable dans "Artifacts"
+#
+# Signature de code (optionnelle, voir README > « Signer l'installeur ») :
+#   Certificat .pfx      : secrets WIN_CSC_LINK (pfx en base64) + WIN_CSC_KEY_PASSWORD
+#   Azure Trusted Signing : secrets AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+#                          + variables AZURE_SIGN_ENDPOINT, AZURE_SIGN_ACCOUNT, AZURE_SIGN_PROFILE, AZURE_SIGN_PUBLISHER
+# Sans secrets, l'installeur est construit sans signature.
+
 on:
   push:
     tags: ['v*']
@@ -19,11 +28,38 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - name: Build installer (and publish the release when a tag is pushed)
-        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+
+      - name: Signing mode
+        id: sign
+        shell: bash
+        env:
+          HAS_PFX: ${{ secrets.WIN_CSC_LINK != '' }}
+          HAS_AZURE: ${{ secrets.AZURE_CLIENT_SECRET != '' && vars.AZURE_SIGN_ENDPOINT != '' }}
+        run: |
+          if [ "$HAS_AZURE" = "true" ]; then
+            echo "args=-c.win.azureSignOptions.endpoint=${{ vars.AZURE_SIGN_ENDPOINT }} -c.win.azureSignOptions.codeSigningAccountName=${{ vars.AZURE_SIGN_ACCOUNT }} -c.win.azureSignOptions.certificateProfileName=${{ vars.AZURE_SIGN_PROFILE }} -c.win.azureSignOptions.publisherName=\"${{ vars.AZURE_SIGN_PUBLISHER }}\"" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signature via Azure Trusted Signing"
+          elif [ "$HAS_PFX" = "true" ]; then
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signature via certificat .pfx"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "::warning::Aucun certificat configuré : installeur NON signé (Windows SmartScreen affichera un avertissement)"
+          fi
+
+      - name: Build installer (publish the release when a tag is pushed)
+        shell: bash
+        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }} ${{ steps.sign.outputs.args }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: LKS-Launcher-Setup
           path: dist/*.exe
+          if-no-files-found: error
