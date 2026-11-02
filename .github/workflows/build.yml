@@ -53,15 +53,18 @@ jobs:
           HAS_PFX: ${{ secrets.WIN_CSC_LINK != '' }}
           HAS_AZURE: ${{ secrets.AZURE_CLIENT_SECRET != '' && vars.AZURE_SIGN_ENDPOINT != '' }}
         run: |
+          # signer required for updates: only when the installer is really signed (variable WIN_PUBLISHER_NAME)
+          PUB=""
+          if [ -n "${{ vars.WIN_PUBLISHER_NAME }}" ]; then PUB="-c.win.signtoolOptions.publisherName=\"${{ vars.WIN_PUBLISHER_NAME }}\""; fi
           if [ "$HAS_SIGNPATH" = "true" ]; then
-            echo "mode=signpath" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"
+            echo "mode=signpath" >> "$GITHUB_OUTPUT"; echo "args=$PUB" >> "$GITHUB_OUTPUT"
             echo "::notice::Signature via SignPath (approbation manuelle requise dans SignPath)"
           elif [ "$HAS_AZURE" = "true" ]; then
             echo "mode=azure" >> "$GITHUB_OUTPUT"
             echo "args=-c.win.azureSignOptions.endpoint=${{ vars.AZURE_SIGN_ENDPOINT }} -c.win.azureSignOptions.codeSigningAccountName=${{ vars.AZURE_SIGN_ACCOUNT }} -c.win.azureSignOptions.certificateProfileName=${{ vars.AZURE_SIGN_PROFILE }} -c.win.azureSignOptions.publisherName=\"${{ vars.AZURE_SIGN_PUBLISHER }}\"" >> "$GITHUB_OUTPUT"
             echo "::notice::Signature via Azure Trusted Signing"
           elif [ "$HAS_PFX" = "true" ]; then
-            echo "mode=pfx" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"
+            echo "mode=pfx" >> "$GITHUB_OUTPUT"; echo "args=$PUB" >> "$GITHUB_OUTPUT"
             echo "::notice::Signature via certificat .pfx"
           else
             echo "mode=none" >> "$GITHUB_OUTPUT"; echo "args=" >> "$GITHUB_OUTPUT"

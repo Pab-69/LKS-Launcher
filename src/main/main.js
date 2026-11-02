@@ -652,6 +652,20 @@ function setupUpdater() {
   } catch {
     return;
   }
+  // Signature check of the downloaded installer. Until the installers are signed
+  // (SignPath), an unsigned update is accepted: the updater still checks its
+  // SHA-512 from the GitHub release. A signed one must come from the right publisher.
+  // TODO: remove once the installers are signed.
+  try {
+    const { verifySignature } = require('electron-updater/out/windowsExecutableCodeSignatureVerifier');
+    updater.verifyUpdateCodeSignature = async (publisherNames, file) => {
+      const problem = await verifySignature(publisherNames, file, updater.logger || console);
+      if (problem && /"Status"\s*:\s*2\b/.test(problem)) return null; // 2 = NotSigned
+      return problem;
+    };
+  } catch {
+    /* older updater: default check */
+  }
   updater.autoDownload = true; // only the changed blocks are downloaded (blockmap)
   updater.autoInstallOnAppQuit = true; // installed silently when the launcher is closed
   updater.on('checking-for-update', () => updaterState.state !== 'ready' && setUpdater({ state: 'checking' }));

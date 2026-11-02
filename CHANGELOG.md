@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.9.3
+
+- Correction : les mises à jour automatiques étaient refusées (« n'est pas signé numériquement »). Le launcher exigeait une signature que nos installeurs n'ont pas encore. En attendant la signature, une mise à jour non signée est acceptée. Elle est toujours vérifiée par son empreinte publiée avec la version.
+- **Si ta mise à jour a échoué, installe cette version à la main une fois** (Paramètres → « Télécharger l'installeur »). Les suivantes s'installeront de nouveau toutes seules.
+
 ## 1.9.2
 
 - Correction : certains circuits faisaient planter le jeu au chargement (par exemple Brooklyn Park). Le launcher lançait un tracé « vide » qui n'existe pas. Les tracés viennent maintenant des fichiers que le jeu charge vraiment, même quand les fichiers d'affichage du circuit sont mal écrits.

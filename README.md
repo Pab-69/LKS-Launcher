@@ -258,7 +258,8 @@ Ce qu'il reste à faire, et que toi seul peux faire :
    - **secret** `SIGNPATH_API_TOKEN` : le jeton d'API ;
    - **variable** `SIGNPATH_ORGANIZATION_ID` : l'identifiant de l'organisation SignPath ;
    - variables facultatives `SIGNPATH_PROJECT_SLUG` (par défaut `lks-launcher`), `SIGNPATH_POLICY_SLUG` (par défaut `release-signing`) et `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`.
-5. Lancer *Run workflow* avec **release** cochée, puis **approuver la demande dans SignPath**. Chaque release doit être approuvée à la main ; le workflow attend jusqu'à 2 h. L'installeur signé est ensuite publié, et `latest.yml` est recalculé pour que la mise à jour automatique accepte le fichier signé.
+5. Ajouter la **variable** `WIN_PUBLISHER_NAME` avec le nom exact du signataire du certificat (pour SignPath Foundation : `SignPath Foundation`). Le launcher exigera alors ce signataire pour ses mises à jour. Retirer aussi l'acceptation des mises à jour non signées dans `src/main/main.js` (commentaire `TODO` dans `setupUpdater`).
+6. Lancer *Run workflow* avec **release** cochée, puis **approuver la demande dans SignPath**. Chaque release doit être approuvée à la main ; le workflow attend jusqu'à 2 h. L'installeur signé est ensuite publié, et `latest.yml` est recalculé pour que la mise à jour automatique accepte le fichier signé.
 
 ### Identité visuelle (logo, vitrine)
 
