@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.10.0
+
+- Hébergement plus fiable :
+  - **fermer le launcher ne coupe plus la partie sans prévenir** : tu peux réduire le launcher, le serveur continue ;
+  - si le serveur s'arrête tout seul, il **redémarre automatiquement** avec les mêmes réglages (3 fois au plus en 15 minutes) ;
+  - la page Héberger affiche alors la cause probable et la fin du journal du serveur, et le diagnostic l'inclut ;
+  - les ports ouverts à la main sont retenus : plus besoin de recliquer à chaque lancement.
+
 ## 1.9.9
 
 - Hébergement :

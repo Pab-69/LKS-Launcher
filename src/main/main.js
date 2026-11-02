@@ -88,6 +88,20 @@ const notifiedEvents = new Set();
 const host = new ServerHost();
 let hostState = null; // { name, ports, password, track, layout, upnp: {state, error, externalIp}, invites: [] }
 let hostTrace = []; // what the box search did, for the diagnostic
+let hostOpts = null; // settings of the running server (for an automatic restart)
+let hostStopRequested = false;
+let hostRestarts = []; // times of the automatic restarts
+let lastHostStop = null; // why the server stopped, shown on the Héberger page
+let appQuitting = false;
+
+/** Why acServer stopped, from the end of its log (Go panic, port taken, missing content…). */
+function serverStopReason(log) {
+  const text = log.slice(-60).join('\n');
+  if (/bind: (?:only one usage|address already in use)|address already in use|Only one usage of each socket/i.test(text)) return 'un port du serveur est déjà utilisé';
+  if (/panic:|goroutine \d+/i.test(text)) return 'le serveur a planté';
+  if (/cannot find|not found|no such file/i.test(text)) return 'un fichier du circuit ou d’une voiture manque';
+  return '';
+}
 let gateway = null;
 let telemetry = null;
 let mappedPorts = [];
@@ -123,6 +137,27 @@ function createWindow() {
     if (d.reason !== 'clean-exit' && win && !win.isDestroyed()) setTimeout(() => win && !win.isDestroyed() && win.reload(), 1500);
   });
   win.on('unresponsive', () => applog.log('window unresponsive'));
+  // closing the window would stop the hosted game for everyone: ask first
+  win.on('close', (e) => {
+    if (appQuitting || !host.running) return;
+    e.preventDefault();
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      title: 'Serveur en cours',
+      message: 'Ton serveur tourne encore.',
+      detail: 'Fermer le launcher arrête la partie pour tout le monde. Tu peux le réduire : le serveur continue.',
+      buttons: ['Réduire', 'Arrêter le serveur et quitter', 'Annuler'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice === 0) win.minimize();
+    if (choice === 1) {
+      hostStopRequested = true;
+      appQuitting = true;
+      app.quit();
+    }
+  });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
@@ -336,6 +371,21 @@ async function openPorts() {
   send('host:changed');
 }
 
+/** Ports opened by hand in the box: internet invitation with the public address. */
+async function useManualPorts() {
+  let ip = hostState.upnp && hostState.upnp.externalIp;
+  if (!ip || isPrivateIp(ip)) {
+    const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(6000) }).catch(() => null);
+    ip = res && res.ok ? (await res.json().catch(() => ({}))).ip : null;
+  }
+  if (!ip) throw new Error('Adresse publique introuvable : vérifie ta connexion internet');
+  if (isPrivateIp(ip)) throw new Error('Ta connexion n’a pas d’adresse publique à elle (IP partagée) : passe par le VPN.');
+  hostState.upnp = { state: 'manual', externalIp: ip };
+  hostTrace.push(`ports ouverts à la main, adresse publique ${ip}`);
+  hostState.invites = computeInvites();
+  send('host:changed');
+}
+
 /** Does the Windows firewall let the players reach the server? */
 async function checkFirewall() {
   if (!hostState) return;
@@ -357,7 +407,7 @@ function closePorts() {
 }
 
 async function hostStatus() {
-  const s = { running: host.running, serverFound: Boolean(acRoot() && serverExe(acRoot())), log: host.log.slice(-120), networks: networkAddresses(), state: hostState };
+  const s = { running: host.running, serverFound: Boolean(acRoot() && serverExe(acRoot())), log: host.log.slice(-120), networks: networkAddresses(), state: hostState, lastStop: lastHostStop };
   if (hostState) hostState.invites = computeInvites(); // VPN may have been joined meanwhile
   if (host.running && hostState) {
     const info = await getServerInfo({ ip: '127.0.0.1', httpPort: hostState.ports.http, name: hostState.name });
@@ -587,10 +637,77 @@ function setupTelemetry() {
   applyDash();
 }
 
+/** Start the hosted server (also used to restart it after an unexpected stop). */
+function startHost(opts) {
+  if (!acRoot() || !isAcRoot(acRoot())) throw new Error("Dossier d'Assetto Corsa introuvable : configure-le dans les Paramètres");
+  const content = scanContent(true);
+  const track = content.tracks.find((t) => t.id === opts.track);
+  if (!track) throw new Error('Circuit non installé');
+  const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
+  const cars = (opts.cars || []).map((id) => content.cars.find((c) => c.id === id)).filter(Boolean);
+  if (!cars.length) throw new Error('Choisis au moins une voiture installée');
+  assertGroupContent({ cars: cars.map((c) => c.id), track: track.id });
+  const maxSlots = Math.max(2, layout.pitboxes || 24);
+  const slots = Math.min(Number(opts.slots) || 12, maxSlots);
+  const config = buildServerConfig({
+    ...opts,
+    layout: layout.id,
+    slots,
+    cars: cars.map((c) => ({ id: c.id, skins: c.skins.map((k) => k.id) })),
+    ports: opts.ports,
+  });
+  host.start({ acRoot: acRoot(), config, pack: { cars: cars.map((c) => c.id), track: track.id, layout: layout.id }, label: `${track.name}` });
+  hostState = { name: opts.name || 'Partie LKS', ports: config.ports, password: opts.password || '', track: track.name, layout: layout.name, slots, cars: cars.map((c) => c.id), upnp: { state: opts.upnp === false ? 'off' : 'working' }, invites: [] };
+  hostState.invites = computeInvites();
+  settings.update({ host: { ...opts, manualPorts: Boolean(settings.data.host && settings.data.host.manualPorts) } });
+  if (!game.running) setPresence({ details: 'Héberge une partie', state: `${track.name} — ${slots} places`, startedAt: Date.now() });
+  if (settings.data.host && settings.data.host.manualPorts) useManualPorts().catch((err) => {
+    hostState.upnp = { state: 'failed', error: err.message };
+    send('host:changed');
+  });
+  else if (opts.upnp !== false) openPorts();
+  checkFirewall();
+  hostOpts = opts;
+  hostStopRequested = false;
+  lastHostStop = null;
+  send('host:changed');
+}
+
 function setupHosting() {
-  host.on('stopped', () => {
-    closePorts();
+  host.on('stopped', (info = {}) => {
+    const unexpected = !hostStopRequested && !appQuitting;
+    const uptime = host.info ? Date.now() - host.info.startedAt : 0;
+    lastHostStop = { at: new Date().toISOString(), code: info.code === undefined ? null : info.code, error: info.error || null, byUser: !unexpected, uptimeMs: uptime, log: host.log.slice(-25), reason: serverStopReason(host.log) };
+    applog.log('server stopped', { code: lastHostStop.code, unexpected, uptimeMs: uptime, reason: lastHostStop.reason });
     hostState = null;
+    // stopped on its own: start it again with the same settings (3 times in 15 min at most)
+    const now = Date.now();
+    hostRestarts = hostRestarts.filter((t) => now - t < 15 * 60 * 1000);
+    if (unexpected && hostOpts && hostRestarts.length < 3) {
+      hostRestarts.push(now);
+      lastHostStop.restarted = true;
+      send('toast', { kind: 'warn', text: `Le serveur s’est arrêté tout seul${lastHostStop.reason ? ` (${lastHostStop.reason})` : ''} : redémarrage…` });
+      setTimeout(() => {
+        try {
+          const keep = lastHostStop;
+          startHost(hostOpts);
+          lastHostStop = keep; // still shown on the page
+          send('host:changed');
+        } catch (err) {
+          lastHostStop.restarted = false;
+          lastHostStop.error = err.message;
+          closePorts();
+          send('host:changed');
+        }
+      }, 3000);
+      send('host:changed');
+      return;
+    }
+    closePorts();
+    if (unexpected) {
+      send('toast', { kind: 'error', text: `Le serveur s’est arrêté${lastHostStop.reason ? ` : ${lastHostStop.reason}` : ''}` });
+      if (Notification.isSupported()) new Notification({ title: 'Serveur arrêté', body: lastHostStop.reason || 'Le serveur Assetto Corsa s’est arrêté tout seul.' }).show();
+    }
     if (!game.running) setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
     send('host:changed');
   });
@@ -1190,31 +1307,8 @@ function setupIpc() {
   });
   handle('host:status', () => hostStatus());
   handle('host:start', async (opts) => {
-    if (!acRoot() || !isAcRoot(acRoot())) throw new Error("Dossier d'Assetto Corsa introuvable : configure-le dans les Paramètres");
-    const content = scanContent(true);
-    const track = content.tracks.find((t) => t.id === opts.track);
-    if (!track) throw new Error('Circuit non installé');
-    const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
-    const cars = (opts.cars || []).map((id) => content.cars.find((c) => c.id === id)).filter(Boolean);
-    if (!cars.length) throw new Error('Choisis au moins une voiture installée');
-    assertGroupContent({ cars: cars.map((c) => c.id), track: track.id });
-    const maxSlots = Math.max(2, layout.pitboxes || 24);
-    const slots = Math.min(Number(opts.slots) || 12, maxSlots);
-    const config = buildServerConfig({
-      ...opts,
-      layout: layout.id,
-      slots,
-      cars: cars.map((c) => ({ id: c.id, skins: c.skins.map((k) => k.id) })),
-      ports: opts.ports,
-    });
-    host.start({ acRoot: acRoot(), config, pack: { cars: cars.map((c) => c.id), track: track.id, layout: layout.id }, label: `${track.name}` });
-    hostState = { name: opts.name || 'Partie LKS', ports: config.ports, password: opts.password || '', track: track.name, layout: layout.name, slots, cars: cars.map((c) => c.id), upnp: { state: opts.upnp === false ? 'off' : 'working' }, invites: [] };
-    hostState.invites = computeInvites();
-    settings.update({ host: { ...opts } });
-    if (!game.running) setPresence({ details: 'Héberge une partie', state: `${track.name} — ${slots} places`, startedAt: Date.now() });
-    if (opts.upnp !== false) openPorts();
-    checkFirewall();
-    send('host:changed');
+    hostRestarts = [];
+    startHost(opts);
     return hostStatus();
   });
   handle('host:diagnostic', async () => {
@@ -1231,6 +1325,8 @@ function setupIpc() {
       `Réseaux détectés : ${st.networks.map((n) => `${n.kind}=${n.address}`).join(', ') || 'aucun'}`,
       `Cartes : ${Object.entries(net).map(([k, v]) => `${k}=${(v || []).filter((a) => a.family === 'IPv4').map((a) => a.address).join('/')}`).join(', ')}`,
       `Codes d'invitation : ${(s.invites || []).map((i) => i.kind).join(', ') || 'aucun'}`,
+      `Dernier arrêt : ${lastHostStop ? `${lastHostStop.at} · ${lastHostStop.byUser ? 'demandé' : 'tout seul'} · code ${lastHostStop.code} · après ${Math.round(lastHostStop.uptimeMs / 60000)} min · ${lastHostStop.reason || 'cause inconnue'}${lastHostStop.restarted ? ' · relancé' : ''}` : 'aucun'}`,
+      ...(lastHostStop && !lastHostStop.byUser ? ['--- journal au moment de l’arrêt', ...lastHostStop.log] : []),
       '--- journal du serveur',
       ...(st.log || []).slice(-40),
     ];
@@ -1239,30 +1335,25 @@ function setupIpc() {
   // ports opened by hand in the box: give the internet invitation code
   handle('host:manualPorts', async () => {
     if (!hostState) throw new Error('Aucun serveur lancé');
-    let ip = hostState.upnp && hostState.upnp.externalIp;
-    if (!ip || isPrivateIp(ip)) {
-      const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(6000) }).catch(() => null);
-      ip = res && res.ok ? (await res.json().catch(() => ({}))).ip : null;
-    }
-    if (!ip) throw new Error('Adresse publique introuvable : vérifie ta connexion internet');
-    if (isPrivateIp(ip)) throw new Error('Ta connexion n’a pas d’adresse publique à elle (IP partagée) : passe par le VPN.');
-    hostState.upnp = { state: 'manual', externalIp: ip };
-    hostTrace.push(`ports ouverts à la main, adresse publique ${ip}`);
-    hostState.invites = computeInvites();
-    send('host:changed');
+    await useManualPorts();
+    settings.update({ host: { ...(settings.data.host || {}), manualPorts: true } }); // the box keeps them: remember
     return hostStatus();
   });
   handle('host:retryPorts', async () => {
     if (!hostState) throw new Error('Aucun serveur lancé');
+    settings.update({ host: { ...(settings.data.host || {}), manualPorts: false } });
     await openPorts();
     return hostStatus();
   });
+
+
   handle('host:fixFirewall', async () => {
     await fixFirewall(serverExe(acRoot()));
     await checkFirewall();
     return hostStatus();
   });
   handle('host:stop', async () => {
+    hostStopRequested = true;
     host.stop();
     await closePorts();
     return true;
@@ -1528,6 +1619,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  appQuitting = true;
   // never leave a server running or ports open behind us
   if (host.running) host.stop();
   closePorts();

@@ -68,9 +68,24 @@ export default function hostView(root, _params, { go }) {
     if (!st.serverFound) {
       body.append(h('div.notice.bad', h('span.grow', "Le serveur d'Assetto Corsa est introuvable (dossier assettocorsa/server). Dans Steam : clic droit sur Assetto Corsa → Propriétés → Fichiers installés → Vérifier l'intégrité des fichiers.")));
     }
+    const ls = st.lastStop;
+    if (ls && !ls.byUser) body.append(stopNotice(ls, st.running));
     if (st.running) renderRunning();
     else renderForm();
     renderHelp();
+  }
+
+  /** The server stopped on its own: why, and what the launcher did. */
+  function stopNotice(ls, running) {
+    const mins = Math.round((ls.uptimeMs || 0) / 60000);
+    const title = running && ls.restarted
+      ? `Le serveur s’est arrêté tout seul après ${mins} min et a été relancé automatiquement.`
+      : `Le serveur s’est arrêté tout seul après ${mins} min${ls.code !== null && ls.code !== undefined ? ` (code ${ls.code})` : ''}.`;
+    return h('div.notice.mt-s',
+      h('div.grow',
+        h('strong', title), ls.reason ? ` Cause probable : ${ls.reason}.` : '',
+        h('details.mt-s', h('summary.muted', { style: { cursor: 'pointer' } }, 'Fin du journal du serveur'), h('div.log.mt', (ls.log || []).join('\n') || '…'))),
+      h('button.btn.btn-sm', { on: { click: async () => { const t = await guard(() => api.call('host:diagnostic')); if (t) { await api.call('clipboard:write', t); toast('Diagnostic copié', 'success'); } } } }, 'Copier le diagnostic'));
   }
 
   /** Windows firewall: allowed, or blocking the players (with a fix). */
@@ -128,7 +143,9 @@ export default function hostView(root, _params, { go }) {
     body.append(
       h('h2.section', 'Inviter'),
       h('div.panel',
-        upText[0] ? h(`span.tag.${upText[1]}`, upText[0]) : null,
+        h('div.row.wrap',
+          upText[0] ? h(`span.tag.${upText[1]}`, upText[0]) : null,
+          up.state === 'manual' ? h('button.btn.btn-sm.btn-ghost', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, 'Repasser en ouverture automatique') : null),
         h('p.hint', 'Envoie un code. Il se colle dans Serveurs → Rejoindre avec un code (mot de passe inclus).'),
         inv),
       portsKo ? h('div.notice.mt', h('span.grow', 'Ports non ouverts : les joueurs hors de chez toi ne peuvent pas se connecter. Passez par le VPN et envoie le code VPN.')) : null,
