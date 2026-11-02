@@ -2,7 +2,7 @@
 
 ## 1.10.2
 
-- Nouveaux réglages par défaut pour rouler en Solo : embrayage auto, talon-pointe auto et pénalités désactivés, antipatinage sur Off. Si tu as déjà joué, tes réglages enregistrés sont conservés.
+- Nouveaux réglages par défaut pour rouler en Solo : embrayage auto, talon-pointe auto et pénalités désactivés, antipatinage sur Off. Ces réglages passent aussi sur ces valeurs chez ceux qui avaient encore les anciens réglages par défaut. Le changement ne se fait qu'une fois : tu peux les réactiver ensuite.
 
 ## 1.10.1
 

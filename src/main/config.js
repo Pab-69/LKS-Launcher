@@ -91,6 +91,25 @@ class Settings {
     const legacy = appConfig.legacy || {};
     if ((legacy.manifestUrl || []).includes(this.data.manifestUrl)) this.data.manifestUrl = appConfig.manifestUrl;
     if ((legacy.contentRepo || []).includes(this.data.admin.repo)) this.data.admin.repo = appConfig.contentRepo;
+    // 1.10.2: new driving defaults. Once, and only where the old default is still set.
+    if (!this.data.migrated) this.data.migrated = {};
+    if (!this.data.migrated.assists1102) {
+      const a = this.data.assists;
+      const was = { ...a };
+      if (a.autoClutch === true) a.autoClutch = false;
+      if (a.autoBlip === true) a.autoBlip = false;
+      if (a.tractionControl === 1) a.tractionControl = 0;
+      if (this.data.solo.penalties === true) this.data.solo.penalties = false;
+      if (['autoClutch', 'autoBlip', 'tractionControl'].some((k) => a[k] !== was[k])) a.preset = 'custom';
+      this.data.migrated.assists1102 = true;
+      if (this.existed) {
+        try {
+          this.save();
+        } catch {
+          /* saved with the next change */
+        }
+      }
+    }
   }
 
   read() {

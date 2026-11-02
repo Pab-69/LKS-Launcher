@@ -305,3 +305,15 @@ test('default assists: no auto clutch, no auto blip, TC off, no penalties', () =
   assert.strictEqual(s.data.assists.tractionControl, 0);
   assert.strictEqual(s.data.solo.penalties, false);
 });
+
+test('settings migration 1.10.2: old assist defaults switched off once, choices kept after', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ assists: { preset: 'normal', autoClutch: true, autoBlip: true, tractionControl: 1, abs: 2 }, solo: { penalties: true } }));
+  const { Settings } = require('../src/main/config');
+  const s = new Settings(dir);
+  assert.deepStrictEqual([s.data.assists.autoClutch, s.data.assists.autoBlip, s.data.assists.tractionControl, s.data.solo.penalties, s.data.assists.abs, s.data.assists.preset], [false, false, 0, false, 2, 'custom']);
+  s.update({ assists: { autoClutch: true, tractionControl: 2 } }); // chosen again afterwards: kept
+  const again = new Settings(dir);
+  assert.strictEqual(again.data.assists.autoClutch, true);
+  assert.strictEqual(again.data.assists.tractionControl, 2);
+});
