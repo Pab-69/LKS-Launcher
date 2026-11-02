@@ -2,6 +2,7 @@ name: Build & release
 
 # - Pousser un tag vX.Y.Z  -> construit l'installeur ET publie la release (mise à jour auto des membres)
 # - Lancer à la main (onglet Actions > Run workflow) -> construit l'installeur, téléchargeable dans "Artifacts"
+#   (cocher « release » pour publier la release et créer le tag automatiquement)
 #
 # Signature de code (optionnelle, voir README > « Signer l'installeur ») :
 #   Certificat .pfx      : secrets WIN_CSC_LINK (pfx en base64) + WIN_CSC_KEY_PASSWORD
@@ -13,6 +14,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publier la release (crée le tag v<version de package.json> et la release GitHub)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -49,7 +55,7 @@ jobs:
 
       - name: Build installer (publish the release when a tag is pushed)
         shell: bash
-        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }} ${{ steps.sign.outputs.args }}
+        run: npx electron-builder --win --publish ${{ (startsWith(github.ref, 'refs/tags/') || inputs.release) && 'always' || 'never' }} ${{ steps.sign.outputs.args }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
