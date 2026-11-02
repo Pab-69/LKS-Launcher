@@ -87,6 +87,7 @@ const startedAt = Date.now();
 const notifiedEvents = new Set();
 const host = new ServerHost();
 let hostState = null; // { name, ports, password, track, layout, upnp: {state, error, externalIp}, invites: [] }
+let hostTrace = []; // what the box search did, for the diagnostic
 let gateway = null;
 let telemetry = null;
 let mappedPorts = [];
@@ -292,15 +293,22 @@ async function openPorts() {
   const ports = hostState.ports;
   hostState.upnp = { state: 'working' };
   send('host:changed');
+  const trace = [];
+  hostTrace = trace;
   try {
-    gateway = await findGateway();
+    gateway = await findGateway({ trace });
     const wanted = [[ports.tcp, 'TCP'], [ports.udp, 'UDP'], [ports.http, 'TCP']];
     for (const [port, proto] of wanted) {
       if (mappedPorts.some((m) => m[0] === port && m[1] === proto)) continue;
       await gateway.map(port, proto, `LKS Launcher ${proto} ${port}`);
       mappedPorts.push([port, proto]);
+      trace.push(`port ${proto} ${port} : ouvert`);
     }
-    const externalIp = await gateway.externalIp().catch(() => null);
+    const externalIp = await gateway.externalIp().catch((e) => {
+      trace.push(`adresse publique : ${e.message}`);
+      return null;
+    });
+    trace.push(`adresse publique : ${externalIp || 'inconnue'}`);
     if (externalIp && isPrivateIp(externalIp)) {
       hostState.upnp = { state: 'cgnat', externalIp, error: "Ta box n'a pas d'adresse publique (IP partagée / 4G) : passe par Radmin VPN ou ZeroTier." };
     } else {
@@ -308,6 +316,7 @@ async function openPorts() {
     }
   } catch (err) {
     hostState.upnp = { state: 'failed', error: err.message };
+    trace.push(`échec : ${err.message}${err.code ? ` (code ${err.code})` : ''}`);
     applog.log('upnp failed', err.message, err.code || '');
   }
   if (!hostState) return;
@@ -1198,6 +1207,25 @@ function setupIpc() {
     checkFirewall();
     send('host:changed');
     return hostStatus();
+  });
+  handle('host:diagnostic', async () => {
+    const st = await hostStatus();
+    const s = hostState || {};
+    const net = require('os').networkInterfaces();
+    const lines = [
+      `LKS Launcher ${app.getVersion()} — diagnostic hébergement (${new Date().toISOString()})`,
+      `Serveur : ${st.running ? 'lancé' : 'arrêté'} · trouvé : ${st.serverFound ? 'oui' : 'non'} · joueurs : ${st.info ? `${st.info.clients}/${st.info.maxClients}` : 'pas de réponse locale'}`,
+      `Ports : TCP ${s.ports && s.ports.tcp} · UDP ${s.ports && s.ports.udp} · HTTP ${s.ports && s.ports.http}`,
+      `UPnP : ${(s.upnp && s.upnp.state) || '—'}${s.upnp && s.upnp.error ? ` — ${s.upnp.error}` : ''}${s.upnp && s.upnp.externalIp ? ` — IP publique ${s.upnp.externalIp}` : ''}`,
+      ...hostTrace.map((l) => `  · ${l}`),
+      `Pare-feu Windows : ${s.firewall ? JSON.stringify(s.firewall) : 'non vérifié'}`,
+      `Réseaux détectés : ${st.networks.map((n) => `${n.kind}=${n.address}`).join(', ') || 'aucun'}`,
+      `Cartes : ${Object.entries(net).map(([k, v]) => `${k}=${(v || []).filter((a) => a.family === 'IPv4').map((a) => a.address).join('/')}`).join(', ')}`,
+      `Codes d'invitation : ${(s.invites || []).map((i) => i.kind).join(', ') || 'aucun'}`,
+      '--- journal du serveur',
+      ...(st.log || []).slice(-40),
+    ];
+    return lines.join('\n');
   });
   handle('host:retryPorts', async () => {
     if (!hostState) throw new Error('Aucun serveur lancé');

@@ -228,14 +228,23 @@ async function gatewayAt(location, opts = {}) {
 
 /** The box: the first device that answered and really offers port opening. */
 async function findGateway(opts = {}) {
+  const trace = opts.trace || [];
+  const ifaces = opts.interfaces || localIPv4().map((i) => i.address);
+  trace.push(`cartes réseau : ${localIPv4().map((i) => `${i.name}=${i.address}`).join(', ') || 'aucune'}`);
+  trace.push(`recherche directe : ${(opts.unicast || likelyGateways(ifaces)).join(', ') || 'aucune'}`);
   const locations = await discoverAll(opts);
+  trace.push(`réponses UPnP : ${locations.join(' | ') || 'aucune'}`);
   if (!locations.length) throw new Error('Aucune box compatible UPnP trouvée');
   for (const location of locations) {
     try {
       const gw = await gatewayAt(location, opts);
-      if (gw) return gw;
-    } catch {
-      /* another device (TV, NAS…): try the next one */
+      if (gw) {
+        trace.push(`box retenue : ${location} (${gw.serviceType.split(':').slice(-2).join(':')}, ce PC = ${gw.localAddress})`);
+        return gw;
+      }
+      trace.push(`${location} : pas de service d'ouverture de ports`);
+    } catch (err) {
+      trace.push(`${location} : ${err.message}`);
     }
   }
   throw new Error("La box a répondu mais ne propose pas l'ouverture automatique des ports (UPnP IGD)");

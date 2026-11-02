@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.9.8
+
+- Héberger : bouton « Copier le diagnostic ». Il copie ce que le launcher a essayé avec ta box (cartes réseau, réponses UPnP, ports, adresse publique), l'état du pare-feu Windows et le journal du serveur. À envoyer quand l'hébergement ne marche pas.
+
 ## 1.9.7
 
 - **Contenu du groupe uniquement** : Solo, Héberger et Rejoindre un serveur n'acceptent plus que les voitures et circuits publiés sur le launcher. Les admins peuvent lever cette limite dans Publication → Contenu autorisé, par exemple pour tester une voiture avant de la publier.

@@ -140,7 +140,9 @@ export default function hostView(root, _params, { go }) {
       firewallBox(s.firewall) || '',
       h('div.mt', (() => { vpnEl = vpnEl || vpnCard(); vpnEl.classList.toggle('vpn-highlight', portsKo); return vpnEl; })()),
     );
-    body.append(h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Journal du serveur'), h('div.log.mt', (st.log || []).join('\n') || '…')));
+    body.append(
+      h('div.row.mt', h('button.btn.btn-sm', { on: { click: async () => { const t = await guard(() => api.call('host:diagnostic')); if (t) { await api.call('clipboard:write', t); toast('Diagnostic copié : colle-le dans ton message', 'success'); } } } }, 'Copier le diagnostic'), h('span.hint', 'Ce que le launcher a essayé avec ta box et le pare-feu, à envoyer si ça ne marche pas.')),
+      h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Journal du serveur'), h('div.log.mt', (st.log || []).join('\n') || '…')));
   }
 
   // ---------------------------------------------------------------- configuration form
