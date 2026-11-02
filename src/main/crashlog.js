@@ -25,6 +25,16 @@ function tail(file, maxBytes = 96 * 1024) {
 }
 
 const ERROR_LINE = /error|exception|crash|could not|cannot|can't|failed|not found|missing|access violation|unhandled/i;
+// lines that look like errors but say nothing (the crash handler failing to read symbols)
+const NOISE = /SymGetLineFromAddr64|filename not available|RtlUserThreadStart|BaseThreadInitThunk/i;
+
+// Where the game was when it crashed (its own call stack, written after « CRASH in: »)
+const STACK_HINTS = [
+  [/surfacesmanager|loadsurfacedefinitions/i, 'track-surfaces', 'Le circuit n’a pas pu charger ses surfaces (data/surfaces.ini manquant ou abîmé). Souvent le mauvais tracé : choisis un autre tracé du circuit, sinon réinstalle-le.'],
+  [/sim::loadtrack|trackavatar|track(?:manager|loader)/i, 'track', 'Le jeu a planté en chargeant le circuit. Choisis un autre tracé, ou vérifie / réinstalle le circuit.'],
+  [/caravatar|loadcar|carphysics|suspension|tyres?model|drivetrain/i, 'car', 'Le jeu a planté en chargeant la voiture. Vérifie le contenu (Contenu → Vérifier) ou essaie une autre voiture.'],
+  [/d3d|dxgi|swapchain|graphicsmanager|rendertarget/i, 'display', 'L’affichage n’a pas pu démarrer. Va dans Graphismes → « Revenir aux réglages d’origine », puis relance.'],
+];
 
 const HINTS = [
   [/dxgi|d3d11|swap ?chain|display mode|resolution|fullscreen|device removed|graphics card/i, 'display', 'L’affichage n’a pas pu démarrer. Va dans Graphismes → « Revenir aux réglages d’origine », puis relance.'],
@@ -50,10 +60,18 @@ function diagnose(ctx) {
   const logs = path.join(ctx.docsDir, 'logs');
   const acLog = tail(path.join(logs, 'log.txt'));
   const cspLog = tail(path.join(logs, 'custom_shaders_patch.log'));
-  const errors = [...acLog, ...cspLog].filter((l) => ERROR_LINE.test(l)).slice(-15);
-  const haystack = [...errors, ...acLog.slice(-20)].join('\n');
+  // the log repeats race.ini: never read hints from it, only from errors and the crash stack
+  const crashAt = acLog.map((l) => /CRASH in/i.test(l)).lastIndexOf(true);
+  const stack = crashAt >= 0 ? acLog.slice(crashAt).filter((l) => !NOISE.test(l)) : [];
+  const errors = [...acLog, ...cspLog].filter((l) => ERROR_LINE.test(l) && !NOISE.test(l) && !/^\s*\d+\s+\S+\s+⚠️/.test(l)).slice(-15);
   const hints = [];
-  for (const [re, id, text] of HINTS) if (re.test(haystack) && !hints.some((h) => h.id === id)) hints.push({ id, text });
+  const add = (id, text) => {
+    const family = id.split('-')[0];
+    if (!hints.some((h) => h.id.split('-')[0] === family)) hints.push({ id, text });
+  };
+  for (const [re, id, text] of STACK_HINTS) if (re.test(stack.join('\n'))) add(id, text);
+  const haystack = errors.join('\n');
+  for (const [re, id, text] of HINTS) if (re.test(haystack)) add(id, text);
   if (!hints.length) hints.push({ id: 'unknown', text: 'Cause pas claire dans les journaux du jeu. Copie le rapport et envoie-le sur le Discord.' });
 
   const read = (f) => {
@@ -88,7 +106,7 @@ function diagnose(ctx) {
     '--- race.ini',
     read(path.join(ctx.docsDir, 'cfg', 'race.ini')).slice(0, 4000),
   ].join('\n');
-  return { hints, errors, report };
+  return { hints, errors: [...errors, ...stack.filter((l) => /\.cpp \(\d+\)/.test(l)).slice(0, 6)], report };
 }
 
 module.exports = { diagnose, looksLikeCrash, tail };

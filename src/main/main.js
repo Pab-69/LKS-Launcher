@@ -15,6 +15,7 @@ const { GitHub } = require('./github');
 const { Publisher, isOfficial } = require('./publisher');
 const { listFiles, hashFolder } = require('./hash');
 const { contentDir } = require('./acContent');
+const acContent = require('./acContent');
 const { CspManager, checkVcRedist, compareVersions } = require('./csp');
 const graphics = require('./graphics');
 const crashlog = require('./crashlog');
@@ -555,6 +556,17 @@ function setupGame() {
   });
 }
 
+/** The game crashes while loading a layout without its physics file: say it before launching. */
+function checkTrackFiles(track, layoutId) {
+  const dir = path.join(acRoot(), 'content', 'tracks', track.id);
+  if (acContent.layoutHasPhysics(dir, layoutId)) return;
+  const others = track.layouts.filter((l) => l.id !== layoutId && acContent.layoutHasPhysics(dir, l.id));
+  const where = layoutId ? `${track.id}/${layoutId}/data/surfaces.ini` : `${track.id}/data/surfaces.ini`;
+  throw new Error(others.length
+    ? `Ce tracé de ${track.name} est incomplet (il manque ${where}). Choisis un autre tracé : ${others.map((l) => l.name).join(', ')}.`
+    : `${track.name} est incomplet (il manque ${where}) : le jeu planterait au chargement. Réinstalle le circuit.`);
+}
+
 let lastLaunch = null;
 let lastCrash = null;
 
@@ -869,6 +881,7 @@ function setupIpc() {
     if (!car) throw new Error('Voiture introuvable : choisissez une voiture installée');
     if (!track) throw new Error('Circuit introuvable : choisissez un circuit installé');
     const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
+    checkTrackFiles(track, layout.id);
     const maxCars = layout.pitboxes || 24;
     const raceIni = buildSoloRaceIni({
       ...opts,
@@ -894,6 +907,7 @@ function setupIpc() {
     if (!content.cars.some((c) => c.id === opts.car)) throw new Error(`Voiture ${opts.car} non installée`);
     const { track, layout } = resolveTrack(opts.track, content.tracks);
     if (!content.tracks.some((t) => t.id === track)) throw new Error(`Circuit ${track} non installé`);
+    checkTrackFiles(content.tracks.find((t) => t.id === track), layout || '');
     const raceIni = buildOnlineRaceIni({
       ...opts,
       track,

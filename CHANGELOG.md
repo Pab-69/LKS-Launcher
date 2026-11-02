@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 1.9.2
+
+- Correction : certains circuits faisaient planter le jeu au chargement (par exemple Brooklyn Park). Le launcher lançait un tracé « vide » qui n'existe pas. Les tracés viennent maintenant des fichiers que le jeu charge vraiment, même quand les fichiers d'affichage du circuit sont mal écrits.
+- Avant de lancer, le launcher vérifie que le tracé est complet. Sinon, il propose un autre tracé au lieu de laisser le jeu planter.
+- Diagnostic des plantages plus précis : il reconnaît les plantages au chargement du circuit, de la voiture ou de l'affichage, et ignore les lignes sans intérêt.
+
 ## 1.9.1
 
 - Correction : le jeu pouvait s'ouvrir puis planter juste après. Avec la mise à l'échelle de Windows (125 %, 150 %…), les réglages graphiques pouvaient écrire une résolution d'écran impossible (par exemple 2561 × 1440).

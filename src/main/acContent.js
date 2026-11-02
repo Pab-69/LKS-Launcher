@@ -3,19 +3,38 @@
 const fs = require('fs');
 const path = require('path');
 
-/** AC ui_*.json files are often slightly invalid (BOM, raw tabs/newlines, trailing commas). */
+/**
+ * AC ui_*.json files are often invalid (BOM, raw tabs/newlines, trailing
+ * commas, comments, unescaped quotes). Last resort: pick the simple fields.
+ */
 function readLooseJson(file) {
+  let text;
   try {
-    let text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
-    try {
-      return JSON.parse(text);
-    } catch {
-      text = text.replace(/[\r\n\t]+/g, ' ').replace(/,\s*([}\]])/g, '$1');
-      return JSON.parse(text);
-    }
+    text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
   } catch {
     return null;
   }
+  try {
+    return JSON.parse(text);
+  } catch {
+    /* try harder */
+  }
+  try {
+    const cleaned = text
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(cleaned);
+  } catch {
+    /* fields one by one */
+  }
+  const out = {};
+  for (const key of ['name', 'country', 'length', 'pitboxes', 'description', 'brand', 'class']) {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*("((?:[^"\\\\]|\\\\.)*)"|-?\\d+(?:\\.\\d+)?)`, 'i'));
+    if (m) out[key] = m[2] !== undefined ? m[2] : m[1];
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 function listDirs(dir) {
@@ -71,15 +90,37 @@ function readCar(acRoot, id) {
   };
 }
 
+/**
+ * Does the game have what it needs to load this layout? AC reads
+ * <track>/data/surfaces.ini (single layout) or <track>/<layout>/data/surfaces.ini,
+ * and crashes while loading when it is missing.
+ */
+function layoutHasPhysics(trackDir, layoutId) {
+  return fileExists(path.join(trackDir, ...(layoutId ? [layoutId] : []), 'data', 'surfaces.ini'));
+}
+
 function readTrack(acRoot, id) {
   const dir = path.join(contentDir(acRoot, 'track'), id);
+  const uiOf = (sub) => readLooseJson(path.join(dir, 'ui', ...(sub ? [sub] : []), 'ui_track.json'));
+  const uiDirOf = (sub) => path.join(dir, 'ui', ...(sub ? [sub] : []));
+  // layouts the game can really load (physics files present)
+  const physical = listDirs(dir).filter((sub) => sub !== 'ui' && layoutHasPhysics(dir, sub));
+  const rootPhysical = layoutHasPhysics(dir, '');
   const layouts = [];
-  for (const sub of listDirs(path.join(dir, 'ui'))) {
-    const ui = readLooseJson(path.join(dir, 'ui', sub, 'ui_track.json'));
-    if (ui) layouts.push(layoutInfo(id, sub, ui, path.join(dir, 'ui', sub)));
+  if (physical.length || rootPhysical) {
+    const uiOrder = listDirs(path.join(dir, 'ui'));
+    const ordered = [...uiOrder.filter((s) => physical.includes(s)), ...physical.filter((s) => !uiOrder.includes(s))];
+    for (const sub of ordered) layouts.push(layoutInfo(id, sub, uiOf(sub) || {}, uiDirOf(sub)));
+    if (rootPhysical) layouts.push(layoutInfo(id, '', uiOf('') || {}, uiDirOf('')));
+  } else {
+    // unusual layout of files: trust the ui folders as before
+    for (const sub of listDirs(path.join(dir, 'ui'))) {
+      const ui = uiOf(sub);
+      if (ui) layouts.push(layoutInfo(id, sub, ui, uiDirOf(sub)));
+    }
+    const rootUi = uiOf('');
+    if (rootUi && layouts.length === 0) layouts.push(layoutInfo(id, '', rootUi, uiDirOf('')));
   }
-  const rootUi = readLooseJson(path.join(dir, 'ui', 'ui_track.json'));
-  if (rootUi && layouts.length === 0) layouts.push(layoutInfo(id, '', rootUi, path.join(dir, 'ui')));
   if (layouts.length === 0) layouts.push({ id: '', name: id, preview: '', outline: '', pitboxes: 0, length: '', country: '' });
   return {
     kind: 'track',
@@ -95,7 +136,7 @@ function layoutInfo(trackId, layoutId, ui, uiDir) {
   const rel = layoutId ? `track/${trackId}/ui/${layoutId}` : `track/${trackId}/ui`;
   return {
     id: layoutId,
-    name: ui.name || layoutId || trackId,
+    name: String(ui.name || layoutId || trackId),
     country: ui.country || '',
     length: ui.length || '',
     pitboxes: parseInt(ui.pitboxes, 10) || 0,
@@ -154,4 +195,4 @@ function resolveContentFile(acRoot, rel) {
   return file;
 }
 
-module.exports = { readLooseJson, readCar, readTrack, scanCars, scanTracks, scanWeathers, contentDir, resolveContentFile, listDirs };
+module.exports = { readLooseJson, readCar, readTrack, scanCars, scanTracks, scanWeathers, contentDir, resolveContentFile, listDirs, layoutHasPhysics };

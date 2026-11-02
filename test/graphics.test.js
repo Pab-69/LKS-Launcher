@@ -200,3 +200,50 @@ test('crash diagnosis from the game logs', () => {
   fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'all good\n');
   assert.strictEqual(crashlog.diagnose({ code: 1, durationMs: 3000, docsDir: tmp() }).hints[0].id, 'unknown');
 });
+
+test('tracks: layouts come from the files the game needs, not only the ui folder', () => {
+  const { readTrack, layoutHasPhysics } = require('../src/main/acContent');
+  const ac = tmp();
+  const t = path.join(ac, 'content', 'tracks', 'Brooklyn Park');
+  const mk = (rel, text = '') => { fs.mkdirSync(path.dirname(path.join(t, rel)), { recursive: true }); fs.writeFileSync(path.join(t, rel), text); };
+  // like the crash report: a root ui_track.json, layouts in sub-folders whose ui json is broken
+  mk('ui/ui_track.json', '{"name":"Brooklyn Park"}');
+  mk('ui/drift/ui_track.json', '{"name":"Brooklyn Park "Drift", "pitboxes": 12,}');
+  mk('drift/data/surfaces.ini', '[SURFACE_0]\nKEY=ROAD\nFRICTION=0.99\n');
+  mk('grip/data/surfaces.ini', '[SURFACE_0]\nKEY=ROAD\nFRICTION=0.99\n');
+  mk('models_drift.ini');
+  const track = readTrack(ac, 'Brooklyn Park');
+  assert.deepStrictEqual(track.layouts.map((l) => l.id), ['drift', 'grip'], 'no empty layout the game cannot load');
+  assert.strictEqual(track.layouts[0].pitboxes, 12, 'fields read from a broken json');
+  assert.strictEqual(layoutHasPhysics(t, ''), false);
+  assert.strictEqual(layoutHasPhysics(t, 'drift'), true);
+  // single-layout track
+  const u = path.join(ac, 'content', 'tracks', 'solo_track');
+  fs.mkdirSync(path.join(u, 'data'), { recursive: true });
+  fs.mkdirSync(path.join(u, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(u, 'data', 'surfaces.ini'), '[SURFACE_0]\n');
+  fs.writeFileSync(path.join(u, 'ui', 'ui_track.json'), '{"name":"Solo"}');
+  assert.deepStrictEqual(readTrack(ac, 'solo_track').layouts.map((l) => [l.id, l.name]), [['', 'Solo']]);
+});
+
+test('crash diagnosis: track surfaces (real AC crash log)', () => {
+  const crashlog = require('../src/main/crashlog');
+  const docs = tmp();
+  fs.mkdirSync(path.join(docs, 'logs'), { recursive: true });
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), [
+    '[CAR_0]', 'SKIN=e46_denis', '[RACE]', 'TRACK=Brooklyn Park', 'CONFIG_TRACK=', '-----------END RACE INI-----------',
+    'Creating physics track: Brooklyn Park []', 'CRASH in:', 'OS-Version: 6.2.9200 () 0x100-0x1',
+    'ERROR: SymGetLineFromAddr64, GetLastError: 487 (Address: 00007FFFBE11408A)',
+    '00007FFF93C90976 (MSVCP120): (filename not available): std::_Xinvalid_argument',
+    'd:\\dev\\dev_pc_master_race\\kscommon\\inireader.cpp (253): INIReader::getFloat',
+    'd:\\dev\\dev_pc_master_race\\acs\\surfacesmanager.cpp (63): SurfacesManager::loadSurfaceDefinitions',
+    'd:\\dev\\dev_pc_master_race\\acs\\trackavatar.cpp (47): TrackAvatar::TrackAvatar',
+    'd:\\dev\\dev_pc_master_race\\acs\\sim.cpp (1066): Sim::loadTrack',
+  ].join('\n'));
+  fs.writeFileSync(path.join(docs, 'logs', 'custom_shaders_patch.log'), '   3579     M ⚠️ No tyre meshes found: WHEEL_LF\n');
+  const d = crashlog.diagnose({ code: 3765269347, durationMs: 3000, docsDir: docs });
+  assert.deepStrictEqual(d.hints.map((h) => h.id), ['track-surfaces'], 'no skin/car hint from the race.ini copy, one track hint');
+  assert.ok(!d.errors.some((l) => /SymGetLineFromAddr64|WHEEL_LF/.test(l)), 'noise removed');
+  assert.ok(d.errors.some((l) => /surfacesmanager/i.test(l)));
+  assert.match(d.report, /0xE06D7363/);
+});
