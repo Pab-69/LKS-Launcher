@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen } = require('electron');
 
 const { Settings } = require('./config');
 const { detectAcRoot, detectSteamUser, isAcRoot, acDocumentsDir } = require('./paths');
@@ -15,6 +15,8 @@ const { GitHub } = require('./github');
 const { Publisher, isOfficial } = require('./publisher');
 const { listFiles, hashFolder } = require('./hash');
 const { contentDir } = require('./acContent');
+const { CspManager, checkVcRedist, compareVersions } = require('./csp');
+const graphics = require('./graphics');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -34,6 +36,7 @@ let sync = null;
 const game = new GameLauncher();
 let contentCache = null;
 let updater = null;
+let csp = null;
 
 const acRoot = () => settings.data.acRoot;
 const docsDir = () => acDocumentsDir(settings.data, app.getPath('documents'));
@@ -192,6 +195,66 @@ function setupUpdater() {
   updater.on('error', (e) => send('updater:status', { state: 'error', error: e.message }));
   updater.checkForUpdates().catch(() => {});
   setInterval(() => updater.checkForUpdates().catch(() => {}), 60 * 60 * 1000);
+}
+
+// ---------------------------------------------------------------- graphics / CSP
+async function gpuName() {
+  try {
+    const info = await app.getGPUInfo('complete');
+    const aux = info.auxAttributes || {};
+    const devices = (info.gpuDevice || []).filter((d) => d.active !== false);
+    const parts = [aux.glRenderer, ...devices.map((d) => d.deviceString), aux.glVendor].filter(Boolean);
+    return parts.join(' | ').replace(/ANGLE \(|Direct3D.*$/g, '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function displayInfo() {
+  const d = screen.getPrimaryDisplay();
+  return {
+    width: Math.round(d.size.width * d.scaleFactor),
+    height: Math.round(d.size.height * d.scaleFactor),
+    refresh: Math.round(d.displayFrequency || 60),
+  };
+}
+
+function cspTarget() {
+  const pinned = sync.manifest.csp && sync.manifest.csp.version;
+  if (pinned) return { version: String(pinned), source: 'lks' };
+  if (csp.versions && csp.versions.recommended) return { version: csp.versions.recommended, source: 'recommended' };
+  return { version: null, source: null };
+}
+
+async function graphicsStatus() {
+  if (!csp.versions) await csp.available().catch(() => null);
+  const name = await gpuName();
+  const target = cspTarget();
+  const status = csp.status();
+  return {
+    csp: status,
+    target,
+    versions: csp.versions,
+    needsUpdate: Boolean(target.version && (!status.installed || compareVersions(status.version, target.version) < 0)),
+    vcRedist: await checkVcRedist(),
+    gpu: { name, recommended: graphics.recommendPreset(name) },
+    display: displayInfo(),
+    presets: graphics.presetList(),
+    preset: settings.data.graphics.preset || '',
+    hasBackup: graphics.hasBackup(docsDir()),
+    gameRunning: game.running,
+  };
+}
+
+function ensureGameClosed() {
+  if (!acRoot() || !isAcRoot(acRoot())) throw new Error("Dossier d'Assetto Corsa introuvable : configurez-le dans les Paramètres");
+  if (game.running) throw new Error("Fermez Assetto Corsa d'abord");
+}
+
+function setupCsp() {
+  csp = new CspManager({ dataDir: app.getPath('userData'), getAcRoot: acRoot, pageUrl: process.env.LKS_CSP_PAGE || undefined });
+  csp.on('progress', (p) => send('csp:progress', p));
+  csp.on('changed', () => send('csp:changed'));
 }
 
 // ---------------------------------------------------------------- admin
@@ -407,6 +470,46 @@ function setupIpc() {
     };
   });
 
+  // Graphics / CSP
+  handle('graphics:status', () => graphicsStatus());
+  handle('csp:status', () => ({ ...csp.status(), preset: settings.data.graphics.preset || '' }));
+  handle('csp:install', async (version) => {
+    ensureGameClosed();
+    const v = version || cspTarget().version || (await csp.available()).recommended;
+    const result = await csp.install(v);
+    send('toast', { kind: 'success', text: `Custom Shaders Patch v${result.version} installé` });
+    return result;
+  });
+  handle('csp:cancel', () => csp.cancel());
+  handle('csp:setEnabled', (enabled) => {
+    ensureGameClosed();
+    return csp.setEnabled(Boolean(enabled));
+  });
+  handle('graphics:apply', (presetId) => {
+    ensureGameClosed();
+    const written = graphics.applyPreset(docsDir(), presetId, { display: displayInfo() });
+    settings.update({ graphics: { preset: presetId, appliedAt: new Date().toISOString() } });
+    return written;
+  });
+  handle('graphics:restore', () => {
+    ensureGameClosed();
+    const n = graphics.restoreBackup(docsDir());
+    settings.update({ graphics: { preset: '' } });
+    return n;
+  });
+  // Beginner path: install / update CSP, then apply the preset matching the GPU.
+  handle('graphics:oneClick', async (presetId) => {
+    ensureGameClosed();
+    const st = await graphicsStatus();
+    if (st.needsUpdate || !st.csp.installed) await csp.install(st.target.version || st.versions.recommended);
+    if (!csp.status().enabled) csp.setEnabled(true);
+    const preset = presetId || st.gpu.recommended;
+    graphics.applyPreset(docsDir(), preset, { display: displayInfo() });
+    settings.update({ graphics: { preset, appliedAt: new Date().toISOString() } });
+    send('toast', { kind: 'success', text: `Jeu configuré : CSP + préréglage ${graphics.PRESETS[preset].label}` });
+    return preset;
+  });
+
   // Updater
   handle('updater:check', async () => {
     if (!updater) return { state: app.isPackaged ? 'error' : 'dev' };
@@ -439,7 +542,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { name: pub.manifest.name, motd: pub.manifest.motd || '', servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -500,6 +603,7 @@ app.whenReady().then(async () => {
     return net.fetch(pathToFileURL(file).toString());
   });
   setupSync();
+  setupCsp();
   setupGame();
   setupIpc();
   createWindow();

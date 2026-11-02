@@ -24,6 +24,7 @@ const DEFAULTS = {
   closeOnLaunch: false,
   customServers: [], // [{ name, ip, httpPort }]
   favoriteServers: [],
+  graphics: { preset: '', appliedAt: null },
   admin: {
     repo: appConfig.contentRepo,
     tag: appConfig.contentTag || 'content',

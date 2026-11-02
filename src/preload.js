@@ -22,6 +22,8 @@ const EVENTS = [
   'admin:progress',
   'admin:busy',
   'admin:hashed',
+  'csp:progress',
+  'csp:changed',
 ];
 
 contextBridge.exposeInMainWorld('lks', {

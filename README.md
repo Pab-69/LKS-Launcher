@@ -6,6 +6,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Solo** : entraînement, course contre l'IA ou hotlap, avec choix de la voiture, de la livrée, du circuit et du tracé, de l'heure, de la météo, des températures, du grip, des aides et des dégâts.
 - **Serveurs** : liste des serveurs LKS avec joueurs et ping en direct, choix d'une voiture libre et connexion en un clic. Le launcher vérifie aussi qu'il ne manque pas de contenu pour le serveur.
 - **Publication (admins)** : on coche ses voitures et circuits modifiés, on clique sur « Publier », et tout le monde reçoit la nouvelle version.
+- **Graphismes en 1 clic** : installe le Custom Shaders Patch officiel et applique un préréglage adapté à ta carte graphique (Performance, Équilibré, Qualité, Ultra).
 - **Mise à jour automatique du launcher** via les releases GitHub.
 
 ---
@@ -18,6 +19,26 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 4. **Steam doit être ouvert** pour lancer le jeu.
 
 Si tu as déjà des voitures LKS installées à la main, le launcher compare les fichiers au premier démarrage et ne retélécharge que ce qui est différent.
+
+### Graphismes (Custom Shaders Patch)
+
+Onglet **Graphismes** → **Tout configurer pour moi**. Le launcher :
+
+1. télécharge le **Custom Shaders Patch** (CSP) depuis son site officiel [acstuff.club/patch](https://acstuff.club/patch/), exactement comme Content Manager. Rien n'est hébergé par LKS, et seules les versions publiques gratuites sont utilisées ;
+2. détecte ta carte graphique et ton écran, puis applique le préréglage conseillé :
+
+| Préréglage | Pour qui | Points clés |
+| --- | --- | --- |
+| Performance | PC portable, carte graphique intégrée | Météo dynamique, ombres 2048, upscaling AMD FSR |
+| Équilibré | La plupart des PC de jeu | TAA + netteté AMD, réflexions SSLR, ombres 4096 |
+| Qualité | RTX 2070 / 3060 Ti / RX 6700 et plus | Occlusion ambiante, rayons volumétriques, ombres des phares, MSAA 4x |
+| Ultra | RTX 3080 / 4070 et plus, RX 6800 et plus | Réflexions Hi-Z, ombres des nuages, herbe avec ombres, détails lointains |
+
+Les réglages sont écrits dans `Documents/Assetto Corsa/cfg/video.ini` et `cfg/extension/*.ini`, au même endroit que Content Manager. Seules les options gérées par le préréglage sont modifiées : le mode caméra (VR, triple écran), la limite d'images par seconde et tes autres réglages sont conservés. Les fichiers d'origine sont sauvegardés une première fois et le bouton **Restaurer mes réglages d'origine** les remet en place. Tout reste modifiable en jeu dans le menu du CSP.
+
+Le CSP a besoin du *Visual C++ Redistributable (x86)* de Microsoft. Le launcher vérifie s'il est installé et donne le lien de téléchargement s'il manque.
+
+Côté admins, l'onglet Publication permet d'imposer une **version de CSP** à tout le groupe, utile si un serveur exige une version précise. Sinon, chacun reçoit la version recommandée par acstuff.
 
 ---
 
@@ -97,6 +118,7 @@ Les photos affichées sur l'accueil (diaporama et « Le Garage ») et pendant le
 | `src/main/publisher.js` / `github.js` | Publication admin vers les releases GitHub, nettoyage des anciennes archives |
 | `src/main/launch.js` | Génération de `race.ini` / `assists.ini`, lancement de `acs.exe`, résultats (`race_out.json`) |
 | `src/main/servers.js` | Requêtes `/INFO` et `/JSON` des serveurs AC |
+| `src/main/csp.js` / `graphics.js` | Installation du CSP officiel, préréglages graphiques, sauvegarde / restauration |
 | `src/main/acContent.js` | Lecture des voitures, livrées, circuits, tracés et météos installés |
 | `src/main/paths.js` | Détection de Steam, d'Assetto Corsa et du compte Steam |
 | `src/renderer/` | Interface (HTML/CSS/JS, sans framework) |

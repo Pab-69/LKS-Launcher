@@ -155,7 +155,7 @@ class Publisher {
   /** Replace servers / news / group name. */
   async updateMeta(patch) {
     if (!this.manifest) await this.open();
-    for (const key of ['servers', 'news', 'name', 'motd']) if (patch[key] !== undefined) this.manifest[key] = patch[key];
+    for (const key of ['servers', 'news', 'name', 'motd', 'csp', 'showcase']) if (patch[key] !== undefined) this.manifest[key] = patch[key];
     await this.saveManifest();
   }
 

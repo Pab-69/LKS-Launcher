@@ -7,8 +7,9 @@ import solo from './views/solo.js';
 import servers from './views/servers.js';
 import settings from './views/settings.js';
 import admin from './views/admin.js';
+import graphics from './views/graphics.js';
 
-const routes = { home, content, solo, servers, settings, admin };
+const routes = { home, content, solo, servers, graphics, settings, admin };
 const viewEl = document.getElementById('view');
 let current = null;
 let cleanup = null;
@@ -44,6 +45,17 @@ function renderChrome() {
   badge.textContent = pending;
   renderSyncbar();
 }
+
+async function refreshGraphicsBadge() {
+  try {
+    const s = await api.call('csp:status');
+    document.getElementById('badge-graphics').hidden = Boolean(s.installed && s.preset) || !store.settings || !store.settings.acRoot;
+  } catch {
+    /* ignore */
+  }
+}
+api.on('csp:changed', refreshGraphicsBadge);
+setInterval(refreshGraphicsBadge, 15000);
 
 function renderSyncbar() {
   const bar = document.getElementById('syncbar');
@@ -154,5 +166,6 @@ api.on('game:state', (g) => {
   set({ info, settings: s, summary });
   const first = !s.acRoot || !s.driverName;
   go(first ? 'settings' : 'home', first ? { welcome: true } : {});
+  refreshGraphicsBadge();
   guard(() => loadContent());
 })();

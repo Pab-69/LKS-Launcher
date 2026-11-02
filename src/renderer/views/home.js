@@ -4,6 +4,8 @@ import { SHOWCASE, showcaseFrom } from '../showcase.js';
 
 export default function home(root, _params, { go }) {
   const statusBox = h('div');
+  let cspState = null;
+  api.call('csp:status').then((s) => { cspState = s; renderStatus(); }).catch(() => {});
   const serversBox = h('div');
   const newsBox = h('div.panel');
 
@@ -93,6 +95,14 @@ export default function home(root, _params, { go }) {
         h('div.notice.info.mt',
           h('span.grow', `${s.pending} élément(s) à installer ou mettre à jour${s.downloadSize ? ` (${bytes(s.downloadSize)})` : ''}.`),
           h('button.btn.btn-primary.btn-sm', { on: { click: () => guard(() => api.call('sync:start')) } }, icon('download'), 'Synchroniser'),
+        ),
+      );
+    }
+    if (cspState && settings.acRoot && (!cspState.installed || !cspState.preset)) {
+      statusBox.append(
+        h('div.notice.info.mt',
+          h('span.grow', !cspState.installed ? 'Le Custom Shaders Patch n’est pas installé : ton jeu peut être bien plus beau.' : 'Applique un préréglage graphique LKS pour profiter pleinement du CSP.'),
+          h('button.btn.btn-primary.btn-sm', { on: { click: () => go('graphics') } }, 'Rendre mon jeu magnifique'),
         ),
       );
     }

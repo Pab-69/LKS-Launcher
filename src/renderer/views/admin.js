@@ -203,6 +203,7 @@ export default function admin(root) {
     const servers = (data.manifest.servers || []).map((s) => ({ ...s }));
     const news = (data.manifest.news || []).map((n) => ({ ...n }));
     let motd = data.manifest.motd || '';
+    let cspPin = (data.manifest.csp && data.manifest.csp.version) || '';
 
     const srvList = h('div.grid');
     const drawServers = () => {
@@ -249,6 +250,15 @@ export default function admin(root) {
           h('button.btn.btn-sm.btn-primary.right', { on: { click: () => guard(() => api.call('admin:updateMeta', { news, motd }), 'Actus publiées') } }, 'Enregistrer les actus'),
         ),
         h('div.mt', newsList)),
+      h('div.panel', h('h3', 'Custom Shaders Patch du groupe'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Laisse vide pour que chacun reçoive la version recommandée par acstuff. Indique une version (ex. 0.2.11) pour que tout le Syndicate ait exactement la même, utile si un serveur exige une version précise.'),
+        h('div.input-row',
+          h('input.input.mono', { value: cspPin, placeholder: 'recommandée (auto)', on: { input: (e) => { cspPin = e.target.value.trim(); } } }),
+          h('button.btn.btn-primary', { on: { click: () => {
+            if (cspPin && !/^\d+\.\d+\.\d+$/.test(cspPin)) return toast('Format attendu : 0.2.11', 'warn');
+            guard(() => api.call('admin:updateMeta', { csp: cspPin ? { version: cspPin } : null }), 'Version CSP publiée');
+          } } }, 'Enregistrer'),
+        )),
     );
   }
 
