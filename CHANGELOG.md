@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.9.5
+
+- **Correction importante** : le launcher pouvait se fermer d'un coup dès que le jeu démarrait vraiment (surtout avec le Custom Shaders Patch). La lecture de la télémétrie utilisait un accès mémoire interdit par Electron, qui arrête alors tout le programme. Les données du jeu sont maintenant copiées de façon sûre.
+- Quand le jeu ne trouve pas un circuit alors que le CSP est désactivé, le launcher te dit que le circuit en a sûrement besoin, avec un bouton « Réactiver le CSP ».
+
 ## 1.9.4
 
 - Correction : certains circuits ne se lançaient plus (« TRACK NOT FOUND », par exemple Calmont). La 1.9.2 prenait pour un tracé des dossiers que le jeu ne reconnaît pas. Les tracés sont repris comme le jeu et Content Manager les voient. Les tracés complets passent en premier.

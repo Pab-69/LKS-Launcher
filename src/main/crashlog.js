@@ -85,6 +85,9 @@ function diagnose(ctx) {
   for (const [re, id, text] of STACK_HINTS) if (re.test(stack.join('\n'))) add(id, text);
   const haystack = errors.join('\n');
   for (const [re, id, text] of HINTS) if (re.test(haystack)) add(id, text);
+  // recent mod tracks only load with the CSP: « TRACK NOT FOUND » while it is off
+  const missing = hints.findIndex((h) => h.id === 'track-missing');
+  if (missing >= 0 && ctx.cspEnabled === false) hints[missing] = { id: 'track-missing-csp', text: 'Ce circuit a sûrement besoin du Custom Shaders Patch, qui est désactivé. Réactive-le dans Graphismes, puis relance.' };
   if (!hints.length && ctx.cspEnabled) hints.push({ id: 'csp-test', text: 'Pour savoir si ça vient du Custom Shaders Patch : dans Graphismes, choisis le préréglage « Performance », relance ; si ça plante encore, désactive le CSP pour tester.' });
   if (!hints.length) hints.push({ id: 'unknown', text: 'Cause pas claire dans les journaux du jeu. Copie le rapport et envoie-le sur le Discord.' });
 

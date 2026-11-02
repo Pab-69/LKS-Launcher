@@ -544,3 +544,17 @@ test('companion tools and in-game app', () => {
   assert.ok(fs.existsSync(path.join(ac, 'apps', 'lua', 'LKS', 'ghosts')));
   assert.strictEqual(removeIngame(ac).installed, null);
 });
+
+test('shared memory: copied into our own buffer, never viewed (Electron kills the process)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'telemetry', 'source.js'), 'utf8');
+  assert.ok(!/\.view\(/.test(src), 'no koffi.view: Electron forbids external buffers and aborts');
+  const { SharedMemorySource } = require('../src/main/telemetry/source');
+  const s = new SharedMemorySource();
+  const game = Buffer.from('ACPMF'.padEnd(32, '-'));
+  s.api = { copy: (dst, ptr, len) => ptr.copy(dst, 0, 0, len) }; // stands in for RtlMoveMemory
+  const out = s.copy({ ptr: game, size: 16 });
+  assert.strictEqual(out.length, 16);
+  assert.strictEqual(out.toString(), 'ACPMF-----------');
+  game[0] = 0x5a;
+  assert.strictEqual(out[0], 0x41, 'a copy, not a view');
+});

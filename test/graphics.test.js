@@ -283,3 +283,12 @@ test('launcher log and compatibility flag; CSP hint when the cause is unclear', 
   assert.match(d.report, /CSP activé/);
   assert.match(d.report, /process gone/);
 });
+
+test('crash diagnosis: track not found while the CSP is off', () => {
+  const crashlog = require('../src/main/crashlog');
+  const docs = tmp();
+  fs.mkdirSync(path.join(docs, 'logs'), { recursive: true });
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'ERROR: cfd_calmont_2023 : TRACK NOT FOUND \r\nCLEAN EXIT\r\n');
+  assert.strictEqual(crashlog.diagnose({ code: 0, durationMs: 2000, docsDir: docs, cspEnabled: false }).hints[0].id, 'track-missing-csp');
+  assert.strictEqual(crashlog.diagnose({ code: 0, durationMs: 2000, docsDir: docs, cspEnabled: true }).hints[0].id, 'track-missing');
+});

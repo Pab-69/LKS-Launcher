@@ -27,6 +27,9 @@ class SharedMemorySource {
       map: k32.func('void *MapViewOfFile(void *handle, uint32_t access, uint32_t high, uint32_t low, size_t bytes)'),
       unmap: k32.func('bool UnmapViewOfFile(void *addr)'),
       close: k32.func('bool CloseHandle(void *handle)'),
+      // copy into a buffer we own: Electron forbids buffers pointing at outside memory
+      // (koffi.view would build one, and the V8 memory cage kills the whole process)
+      copy: k32.func('void RtlMoveMemory(void *dst, void *src, size_t len)'),
     };
     return this.api;
   }
@@ -64,10 +67,11 @@ class SharedMemorySource {
     return true;
   }
 
+  /** Copy of a page of the game's memory (never a view on it: see load()). */
   copy(m) {
-    const k = this.koffi;
-    if (typeof k.view === 'function') return Buffer.from(new Uint8Array(k.view(m.ptr, m.size)));
-    return Buffer.from(k.decode(m.ptr, 'uint8_t', m.size));
+    const out = Buffer.alloc(m.size);
+    this.api.copy(out, m.ptr, m.size);
+    return out;
   }
 
   /** { physics, graphics, static } buffers, or null when the game isn't running. */

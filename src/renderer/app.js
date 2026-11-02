@@ -201,7 +201,8 @@ function showCrash(c) {
     actions.push(h('button.btn.btn-primary', { on: { click: async () => { if (await guard(() => api.call('graphics:restore'), 'Réglages graphiques d’origine remis')) ref.close(); } } }, 'Revenir aux réglages graphiques d’origine'));
   }
   if (ids.has('app')) actions.push(h('button.btn', { on: { click: async () => { if (await guard(() => api.call('ingame:remove'), 'Appli en jeu retirée')) ref.close(); } } }, 'Retirer l’appli en jeu'));
-  if (ids.has('track') && c.launch && c.launch.kind === 'solo') actions.push(h('button.btn.btn-primary', { on: { click: () => { ref.close(); go('solo'); } } }, 'Choisir un autre tracé'));
+  if (c.hints.some((x) => x.id === 'track-missing-csp')) actions.push(h('button.btn.btn-primary', { on: { click: async () => { if (await guard(() => api.call('csp:setEnabled', true), 'Custom Shaders Patch réactivé')) ref.close(); } } }, 'Réactiver le CSP'));
+  else if (ids.has('track') && c.launch && c.launch.kind === 'solo') actions.push(h('button.btn.btn-primary', { on: { click: () => { ref.close(); go('solo'); } } }, 'Choisir un autre tracé'));
   if (ids.has('car') || ids.has('track') || ids.has('skin')) actions.push(h('button.btn', { on: { click: () => { ref.close(); go('content'); api.call('sync:verify', true); } } }, 'Vérifier le contenu'));
   ref = modal({
     title: 'Le jeu s’est fermé',
