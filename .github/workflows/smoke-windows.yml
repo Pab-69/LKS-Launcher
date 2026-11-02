@@ -51,8 +51,12 @@ jobs:
           $url = "https://github.com/${{ github.repository }}/releases/download/v$v/LKS-Launcher-Setup-$v.exe"
           Invoke-WebRequest $url -OutFile setup.exe
           Write-Host "Téléchargé : $((Get-Item setup.exe).Length) octets"
-          $inst = Start-Process .\setup.exe -ArgumentList '/S', '/currentuser' -Wait -PassThru
-          Write-Host "Code de sortie de l'installeur : $($inst.ExitCode)"
+          # don't use -Wait: it also waits for the launcher the installer may start
+          $inst = Start-Process .\setup.exe -ArgumentList '/S', '/currentuser' -PassThru
+          if (-not $inst.WaitForExit(240000)) { Write-Host "L'installeur tourne encore après 4 min"; Get-Process | Where-Object { $_.ProcessName -match 'setup|LKS|nsis|Un_' } | Format-Table ProcessName, Id, MainWindowTitle | Out-String | Write-Host }
+          else { Write-Host "Code de sortie de l'installeur : $($inst.ExitCode)" }
+          Start-Sleep 3
+          Get-Process -Name 'LKS Launcher' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "Launcher démarré par l'installeur (PID $($_.Id)), fermeture"; Stop-Process $_ -Force }
           Get-ChildItem "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles" -Directory -ErrorAction SilentlyContinue | Where-Object Name -like '*lks*' | ForEach-Object { Write-Host "Dossier : $($_.FullName)"; Get-ChildItem $_.FullName | Select-Object -First 8 Name }
           # find the install through the uninstall registry entry (per-user or per-machine)
           $exe = $null
