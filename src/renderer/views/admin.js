@@ -330,6 +330,38 @@ export default function admin(root) {
     // ---------- Discord
     const discord = { clientId: '', inviteUrl: '', ...(data.manifest.discord || {}) };
 
+    // ---------- VPN du Syndicate
+    const vpnCfg = { provider: '', networkId: '', networkName: '', password: '', ...(data.manifest.vpn || {}) };
+    const vpnBox = h('div.mt');
+    const drawVpn = async () => {
+      clear(vpnBox);
+      if (vpnCfg.provider === 'zerotier') {
+        const rules = await api.call('vpn:rules');
+        vpnBox.append(
+          h('ol.vpn-steps',
+            h('li', 'Crée un compte gratuit sur ', h('a.link', { on: { click: () => api.call('shell:open', 'https://my.zerotier.com') } }, 'my.zerotier.com'), ', puis « Create A Network ».'),
+            h('li', 'Dans les réglages du réseau, passe « Access Control » sur ', h('strong', 'Public'), ' : les membres rejoignent sans validation et sans compte.'),
+            h('li', 'Dans « Flow Rules », colle ces règles pour que seul le jeu passe par le réseau (le reste des PC reste invisible) :'),
+          ),
+          h('div.row', h('pre.log', { style: { flex: 1, margin: 0 } }, rules), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', rules); toast('Règles copiées', 'success'); } } }, 'Copier')),
+          h('div.mt', field('Network ID (16 caractères)', h('input.input.mono', { value: vpnCfg.networkId, placeholder: '8056c2e21c000001', on: { input: (e) => { vpnCfg.networkId = e.target.value.trim().toLowerCase(); } } }))),
+          h('p.hint', 'L’offre gratuite de ZeroTier est limitée à 10 appareils. Au-delà, préfère Radmin VPN.'),
+        );
+      } else if (vpnCfg.provider === 'radmin') {
+        vpnBox.append(
+          h('ol.vpn-steps',
+            h('li', 'Installe ', h('a.link', { on: { click: () => api.call('shell:open', 'https://www.radmin-vpn.com/fr/') } }, 'Radmin VPN'), ', puis Réseau → Créer un réseau.'),
+            h('li', 'Indique ici le nom et le mot de passe choisis : chaque membre les verra dans son launcher, avec un bouton pour les copier.'),
+          ),
+          h('div.grid.grid-2',
+            field('Nom du réseau', h('input.input.mono', { value: vpnCfg.networkName, on: { input: (e) => { vpnCfg.networkName = e.target.value.trim(); } } })),
+            field('Mot de passe du réseau', h('input.input.mono', { value: vpnCfg.password, on: { input: (e) => { vpnCfg.password = e.target.value; } } }))),
+          h('p.hint', 'Le mot de passe est visible par tous ceux qui ont le launcher (le manifeste est public) : n’en réutilise pas un important.'),
+        );
+      }
+    };
+    drawVpn();
+
     // ---------- history
     const history = data.manifest.history || [];
 
@@ -358,6 +390,17 @@ export default function admin(root) {
           if (discord.clientId && !/^\d{15,25}$/.test(discord.clientId)) return toast('L’Application ID est un nombre de 17 à 20 chiffres', 'warn');
           if (discord.inviteUrl && !/^https:\/\//.test(discord.inviteUrl)) return toast('Le lien doit commencer par https://', 'warn');
           guard(() => api.call('admin:updateMeta', { discord }), 'Réglages Discord publiés');
+        } } }, 'Enregistrer'))),
+      h('div.panel', h('h3', 'VPN du Syndicate'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Quand la box d’un hôte ne peut pas ouvrir ses ports (IP partagée, 4G, 5G), tout le monde passe par ce réseau privé. Deux choix gratuits :'),
+        field('Type', h('select.input', { on: { change: (e) => { vpnCfg.provider = e.target.value; drawVpn(); } } },
+          [['', 'Aucun'], ['zerotier', 'ZeroTier : connexion en un clic dans le launcher (10 appareils max, gratuit)'], ['radmin', 'Radmin VPN : sans limite, les membres rejoignent à la main']].map(([v, l]) => h('option', { value: v, selected: (vpnCfg.provider || '') === v }, l)))),
+        vpnBox,
+        h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
+          if (vpnCfg.provider === 'zerotier' && !/^[0-9a-f]{16}$/.test(vpnCfg.networkId || '')) return toast('L’identifiant ZeroTier fait 16 caractères (0-9, a-f)', 'warn');
+          if (vpnCfg.provider === 'radmin' && !vpnCfg.networkName) return toast('Indique le nom du réseau Radmin VPN', 'warn');
+          const value = vpnCfg.provider === 'zerotier' ? { provider: 'zerotier', networkId: vpnCfg.networkId } : vpnCfg.provider === 'radmin' ? { provider: 'radmin', networkName: vpnCfg.networkName, password: vpnCfg.password || '' } : null;
+          guard(() => api.call('admin:updateMeta', { vpn: value }), 'VPN du Syndicate publié');
         } } }, 'Enregistrer'))),
       h('div.panel', h('h3', 'Historique des publications'),
         history.length

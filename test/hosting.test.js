@@ -139,10 +139,40 @@ test('network detection and invitation codes', () => {
     lo: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
   });
   assert.deepStrictEqual(nets.map((n) => [n.kind, n.address]), [['radmin', '26.12.34.56'], ['zerotier', '10.147.17.5'], ['lan', '192.168.1.42']]);
-  const code = encodeInvite({ name: 'Partie de Pab', address: '26.12.34.56', tcpPort: 9600, httpPort: 8081, password: 'drift' });
+  const code = encodeInvite({ name: 'Partie de Pab', address: '26.12.34.56', tcpPort: 9600, httpPort: 8081, password: 'drift', kind: 'radmin' });
   assert.match(code, /^LKS-[A-Za-z0-9_-]+$/);
-  assert.deepStrictEqual(decodeInvite(`  ${code} `), { name: 'Partie de Pab', address: '26.12.34.56', tcpPort: 9600, httpPort: 8081, password: 'drift' });
+  assert.deepStrictEqual(decodeInvite(`  ${code} `), { name: 'Partie de Pab', address: '26.12.34.56', tcpPort: 9600, httpPort: 8081, password: 'drift', kind: 'radmin' });
+  assert.strictEqual(decodeInvite(encodeInvite({ name: 'x', address: '1.2.3.4', tcpPort: 1, httpPort: 2 })).kind, '', 'codes without network kind still work');
   assert.throws(() => decodeInvite('hello'), /LKS-/);
   const evil = `LKS-${Buffer.from(JSON.stringify({ a: 'x;rm -rf', t: 1, h: 2 })).toString('base64url')}`;
   assert.throws(() => decodeInvite(evil), /invalide/);
+});
+
+test('VPN du Syndicate: status, elevated ZeroTier commands, rules', async () => {
+  const vpn = require('../src/main/vpn');
+  const env = { 'ProgramFiles(x86)': 'C:\\PF86', ProgramFiles: 'C:\\PF', ProgramData: 'C:\\PD' };
+  const zt = { provider: 'zerotier', networkId: '8056c2e21c000001' };
+  const none = () => false;
+  const onlyService = (f) => f.endsWith('zerotier-one_x64.exe');
+  const off = vpn.vpnStatus(zt, { ifaces: { Ethernet: [{ family: 'IPv4', address: '192.168.1.2', internal: false }] }, exists: none, env });
+  assert.deepStrictEqual([off.configured, off.installed, off.connected], [true, false, false]);
+  const on = vpn.vpnStatus(zt, { ifaces: { 'ZeroTier One [8056c2e21c000001]': [{ family: 'IPv4', address: '10.147.20.3', internal: false }] }, exists: onlyService, env });
+  assert.deepStrictEqual([on.installed, on.connected, on.address], [true, true, '10.147.20.3']);
+  const radmin = vpn.vpnStatus({ provider: 'radmin', networkName: 'LKS-Syndicate', password: 'x' }, { ifaces: { 'Radmin VPN': [{ family: 'IPv4', address: '26.1.2.3', internal: false }] }, exists: none, env });
+  assert.deepStrictEqual([radmin.configured, radmin.connected, radmin.networkName], [true, true, 'LKS-Syndicate']);
+  assert.strictEqual(vpn.vpnStatus(null).configured, false);
+
+  // elevated command: values are quoted for PowerShell, the network id is validated first
+  const cmd = vpn.elevatedCommand("C:\\PD\\ZeroTier\\One\\zerotier-one_x64.exe", ['-q', 'join', '8056c2e21c000001']);
+  assert.match(cmd, /Start-Process -FilePath 'C:\\PD\\ZeroTier\\One\\zerotier-one_x64\.exe' -ArgumentList '-q','join','8056c2e21c000001' -Verb RunAs/);
+  assert.strictEqual(vpn.elevatedCommand("C:\\it's", ['a']).includes("'C:\\it''s'"), true);
+  if (process.platform === 'win32') {
+    await assert.rejects(() => vpn.zerotierCommand('join', "x'; rm", { exists: onlyService, env }), /invalide/);
+  } else {
+    await assert.rejects(() => vpn.zerotierCommand('join', '8056c2e21c000001'), /Windows/);
+  }
+  const rules = vpn.zerotierRules();
+  assert.match(rules, /accept ipprotocol udp and dport 9600;/);
+  assert.match(rules, /accept ipprotocol tcp and dport 8081;/);
+  assert.match(rules.trim(), /drop;$/);
 });

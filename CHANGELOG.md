@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 1.4.0
+
+- **VPN du Syndicate** : quand la box de l'hôte ne peut pas ouvrir ses ports (IP partagée, 4G, 5G), tout le monde passe par un réseau privé commun.
+  - **ZeroTier** : installation et connexion en un clic depuis le launcher.
+  - **Radmin VPN** : rejoindre le réseau est guidé, avec le nom et le mot de passe à copier.
+- Le launcher détecte la connexion au VPN et crée un code d'invitation pour ce réseau. Il met le VPN en avant quand l'ouverture des ports échoue.
+- « Rejoindre avec un code » propose de rejoindre le VPN si le code en a besoin.
+- Pour les admins : réglage du VPN dans Publication, avec des règles ZeroTier qui ne laissent passer que le jeu.
+
 ## 1.3.0
 
 - **Héberger une partie** (nouvel onglet) : lance gratuitement ta propre partie depuis ton PC, avec le serveur inclus dans Assetto Corsa. Choix du circuit, des voitures, des places, du mode libre ou course, de la météo et du mot de passe.

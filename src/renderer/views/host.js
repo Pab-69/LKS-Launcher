@@ -1,5 +1,6 @@
 import { api, h, clear, icon, guard, field, select, seg, toggle, range, toast, localImg, modal } from '../ui.js';
 import { store, loadContent } from '../store.js';
+import { vpnCard } from './vpnCard.js';
 
 const TIME_FMT = (v) => `${String(Math.floor(v)).padStart(2, '0')}:${v % 1 ? '30' : '00'}`;
 const NET_HELP = {
@@ -41,6 +42,7 @@ export default function hostView(root, _params, { go }) {
   let content = store.content;
   let busy = false;
   let carQuery = '';
+  let vpnEl = null; // kept across refreshes (an install can take a while)
   const body = h('div');
   root.append(
     h('div.view-head', h('div', h('h1', 'Héberger'), h('p', 'Lance ta propre partie depuis ton PC, gratuitement, avec le serveur inclus dans Assetto Corsa.'))),
@@ -107,12 +109,15 @@ export default function hostView(root, _params, { go }) {
         h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', i.code); toast('Code copié : colle-le sur Discord', 'success'); } } }, 'Copier')));
     }
     if (!(s.invites || []).length) inv.append(h('p.muted', { style: { margin: 0 } }, 'Aucun réseau détecté.'));
+    const portsKo = up.state === 'failed' || up.state === 'cgnat';
     body.append(
       h('h2.section', 'Inviter tes potes'),
       h('div.panel',
         upText[0] ? h(`span.tag.${upText[1]}`, upText[0]) : null,
         h('p.hint', 'Envoie un code à tes potes : dans leur launcher, Serveurs → « Rejoindre avec un code ». Le code contient le mot de passe.'),
         inv),
+      portsKo ? h('div.notice.mt', h('span.grow', 'Les ports de ta box ne sont pas ouverts : tes potes hors de chez toi ne pourront pas se connecter par internet. Passez tous par le VPN du Syndicate, puis envoie le code du VPN.')) : null,
+      h('div.mt', (() => { vpnEl = vpnEl || vpnCard(); vpnEl.classList.toggle('vpn-highlight', portsKo); return vpnEl; })()),
     );
     body.append(h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Journal du serveur'), h('div.log.mt', (st.log || []).join('\n') || '…')));
   }
@@ -201,7 +206,7 @@ export default function hostView(root, _params, { go }) {
       h('div.grid.grid-3',
         h('div.panel', h('h3', '1. Pare-feu Windows'), h('p.muted', { style: { margin: 0 } }, 'Au premier lancement, Windows demande d’autoriser « acServer ». Coche « Réseaux privés » et « Réseaux publics », puis Autoriser.')),
         h('div.panel', h('h3', '2. Ta box'), h('p.muted', { style: { margin: 0 } }, 'Active l’UPnP dans l’interface de ta box (souvent activé par défaut). Avec une IP partagée, la 4G ou la 5G, ça ne suffit pas : passe à l’étape 3.')),
-        h('div.panel', h('h3', '3. Réseau virtuel gratuit'), h('p.muted', { style: { margin: 0 } }, 'Installez tous ',
+        h('div.panel', h('h3', '3. VPN gratuit'), h('p.muted', { style: { margin: 0 } }, 'Utilisez le VPN du Syndicate (bloc ci-dessus quand ton serveur tourne), ou installez tous ',
           h('a.link', { on: { click: () => api.call('shell:open', 'https://www.radmin-vpn.com/fr/') } }, 'Radmin VPN'), ' ou ',
           h('a.link', { on: { click: () => api.call('shell:open', 'https://www.zerotier.com/download/') } }, 'ZeroTier'),
           ' et rejoignez le même réseau : le launcher affiche alors un code pour ce réseau.')),

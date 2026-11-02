@@ -17,6 +17,7 @@
 | **Serveurs de jeu Assetto Corsa** choisis par le groupe ou ajoutés par l'utilisateur | Dans l'onglet Serveurs et pour rejoindre une partie | Le **Steam ID** de l'utilisateur, envoyé au serveur choisi pour connaître les places libres et se connecter, comme le font le jeu et Content Manager |
 | **API GitHub, uniquement pour les administrateurs** | Quand un administrateur publie du contenu | Les fichiers publiés et le jeton GitHub de l'administrateur, chiffré sur son PC |
 | **Ta box internet (UPnP)**, sur ton réseau local uniquement | Quand tu héberges une partie avec l'ouverture automatique des ports activée | Demandes d'ouverture et de fermeture des ports du serveur, et lecture de l'adresse IP publique |
+| **ZeroTier** (`download.zerotier.com` et le réseau ZeroTier), seulement si le Syndicate l'utilise | Quand tu cliques sur « Installer ZeroTier » ou « Rejoindre le VPN du Syndicate » | Téléchargement de l'installeur officiel. Ensuite, le logiciel ZeroTier relie ton PC au réseau privé du Syndicate ([politique de ZeroTier](https://www.zerotier.com/privacy/)) |
 | **Liens de dons / boutique** | Seulement quand l'utilisateur clique sur un lien | Le lien s'ouvre dans le navigateur. Le launcher ne traite aucun paiement. |
 
 Les services tiers ont leurs propres politiques de confidentialité : [GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement), acstuff.club (Custom Shaders Patch), et celle des services de dons choisis par l'administrateur.

@@ -25,6 +25,7 @@ const { buildServerConfig, ServerHost, serverExe } = require('./hosting');
 const { findGateway, isPrivateIp } = require('./upnp');
 const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
 const { encodeInvite, decodeInvite } = require('../shared/invite');
+const vpn = require('./vpn');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -218,7 +219,7 @@ function computeInvites() {
     kind,
     label: NET_LABELS[kind] || kind,
     address,
-    code: encodeInvite({ name: hostState.name, address, tcpPort: hostState.ports.tcp, httpPort: hostState.ports.http, password: hostState.password }),
+    code: encodeInvite({ name: hostState.name, address, tcpPort: hostState.ports.tcp, httpPort: hostState.ports.http, password: hostState.password, kind }),
   });
   const ext = hostState.upnp && hostState.upnp.externalIp;
   if (ext && hostState.upnp.state === 'open' && !isPrivateIp(ext)) invites.push(make('internet', ext));
@@ -261,6 +262,7 @@ function closePorts() {
 
 async function hostStatus() {
   const s = { running: host.running, serverFound: Boolean(acRoot() && serverExe(acRoot())), log: host.log.slice(-120), networks: networkAddresses(), state: hostState };
+  if (hostState) hostState.invites = computeInvites(); // VPN may have been joined meanwhile
   if (host.running && hostState) {
     const info = await getServerInfo({ ip: '127.0.0.1', httpPort: hostState.ports.http, name: hostState.name });
     s.info = info.online ? { clients: info.clients, maxClients: info.maxClients, track: info.track } : null;
@@ -812,7 +814,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -891,6 +893,28 @@ function setupIpc() {
     return true;
   });
   handle('host:decodeInvite', (code) => decodeInvite(code));
+  handle('vpn:status', () => ({ ...vpn.vpnStatus(sync.manifest.vpn), platform: process.platform }));
+  handle('vpn:installZerotier', async () => {
+    await vpn.installZerotier({ fetchImpl: net.fetch.bind(net) });
+    send('toast', { kind: 'success', text: 'ZeroTier installé' });
+    return vpn.vpnStatus(sync.manifest.vpn);
+  });
+  handle('vpn:join', async () => {
+    const cfg = sync.manifest.vpn || {};
+    if (cfg.provider !== 'zerotier') throw new Error("Le Syndicate n'utilise pas ZeroTier");
+    await vpn.zerotierCommand('join', cfg.networkId);
+    // the virtual network card takes a few seconds to get its address
+    for (let i = 0; i < 15 && !vpn.vpnStatus(cfg).connected; i++) await new Promise((r) => setTimeout(r, 1000));
+    send('host:changed');
+    return vpn.vpnStatus(cfg);
+  });
+  handle('vpn:leave', async () => {
+    const cfg = sync.manifest.vpn || {};
+    await vpn.zerotierCommand('leave', cfg.networkId);
+    send('host:changed');
+    return vpn.vpnStatus(cfg);
+  });
+  handle('vpn:rules', (ports) => vpn.zerotierRules(ports || undefined));
   handle('setups:status', () => setupsSync.status());
   handle('discord:status', () => ({ configured: Boolean(presence.clientId), enabled: settings.data.discordPresence !== false, connected: presence.connected }));
   handle('admin:localSetups', () => {

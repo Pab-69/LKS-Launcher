@@ -108,6 +108,21 @@ Si personne n'arrive à se connecter :
 - **Box** : active l'UPnP. Avec une IP partagée, la 4G ou la 5G, l'ouverture des ports ne suffit pas.
 - **Réseau virtuel gratuit** : installez tous Radmin VPN ou ZeroTier et rejoignez le même réseau. Le launcher affiche alors un code pour ce réseau.
 
+#### VPN du Syndicate (quand l'ouverture des ports ne marche pas)
+
+Avec une IP partagée, la 4G ou la 5G, la box ne peut pas ouvrir de ports. Tout le monde passe alors par un réseau privé commun, configuré une fois par un admin dans **Publication → VPN du Syndicate** :
+
+| | ZeroTier | Radmin VPN |
+| --- | --- | --- |
+| Prix | Gratuit (offre « Personal ») | Gratuit |
+| Limite | 10 appareils, 1 réseau | Pas de limite gênante |
+| Côté membre | **Un clic** dans le launcher : installation officielle et connexion (autorisation administrateur Windows) | Installation et connexion guidées : nom et mot de passe du réseau à copier |
+| Compte | Seulement pour l'admin (my.zerotier.com) | Aucun |
+
+Pour ZeroTier, passe le réseau en « Public » et colle les règles proposées par le launcher : seuls les ports du jeu passent par le réseau, les PC des membres restent invisibles les uns pour les autres.
+
+Le launcher détecte la connexion au VPN et ajoute un code d'invitation pour ce réseau. Quand les ports de la box n'ont pas pu s'ouvrir, la carte VPN est mise en avant. Si un pote colle un code VPN sans être connecté au VPN, le launcher lui propose de le rejoindre.
+
 Le PC de l'hôte doit rester allumé pendant la partie. L'hôte peut jouer en même temps : le serveur consomme très peu.
 
 ### Events, sessions, setups, Discord

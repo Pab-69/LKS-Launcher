@@ -1,5 +1,6 @@
 import { api, h, clear, icon, guard, img, localImg, field, modal, toast, confirmBox } from '../ui.js';
 import { store, saveSettings, loadContent } from '../store.js';
+import { vpnCard } from './vpnCard.js';
 
 const SESSION_NAMES = { 0: 'Réservation', 1: 'Essais', 2: 'Qualif', 3: 'Course' };
 
@@ -196,6 +197,19 @@ export default function servers(root, params, { go }) {
         customServers.push({ name: inv.name, ip: inv.address, httpPort: inv.httpPort, password: inv.password, private: true });
         await saveSettings({ customServers });
         m.close();
+        // VPN code: make sure this member is on the Syndicate's VPN too
+        if (inv.kind === 'zerotier' || inv.kind === 'radmin') {
+          const vs = await api.call('vpn:status').catch(() => null);
+          if (vs && vs.configured && vs.provider === inv.kind && !vs.connected) {
+            modal({
+              title: 'Rejoins d’abord le VPN',
+              small: true,
+              body: h('div.grid',
+                h('p.muted', { style: { margin: 0 } }, 'Ce code passe par le VPN du Syndicate. Connecte-toi au VPN, puis clique sur Rejoindre dans la liste des serveurs.'),
+                vpnCard({ highlight: true })),
+            });
+          }
+        }
         selected = `${inv.address}:${inv.httpPort}`;
         password = inv.password;
         carChoice = null;
