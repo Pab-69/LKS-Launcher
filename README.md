@@ -11,7 +11,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
 - **Mise à jour automatique du launcher** via les releases GitHub.
 
-> **About (English):** LKS Launcher is an open source launcher for the racing game Assetto Corsa, made for the Lowkey Syndicate community. It keeps the group's cars and tracks in sync, starts single-player sessions, joins the group's servers, installs the official Custom Shaders Patch with optimized graphics presets, and lets admins publish content updates. Windows installer: see [Releases](https://github.com/Pab-69/LKS-Launcher/releases).
+> **About (English):** LKS Launcher is a launcher for the racing game Assetto Corsa, made for the Lowkey Syndicate community. It keeps the group's cars and tracks in sync, starts single-player sessions, joins the group's servers, installs the official Custom Shaders Patch with optimized graphics presets, and lets admins publish content updates. Windows installer: see [Releases](https://github.com/Pab-69/LKS-Launcher/releases).
 
 ---
 
@@ -143,38 +143,15 @@ Le workflow est déjà prêt à signer : ajoute les secrets dans *Settings → S
 
 En attendant, les membres font **« Informations complémentaires → Exécuter quand même »** une seule fois. Les mises à jour suivantes s'installent ensuite toutes seules, sans repasser par ce message.
 
-### Signature gratuite avec SignPath Foundation
+### Signature gratuite avec SignPath Foundation (en suspens)
 
-Le dépôt est prêt pour [SignPath Foundation](https://signpath.org/) : licence MIT, [politique de confidentialité](PRIVACY.md), section « Code signing policy » ci-dessous, configuration d'artefact dans [`.signpath/artifact-configuration.xml`](.signpath/artifact-configuration.xml) et étapes de signature dans le workflow.
+SignPath Foundation ne signe gratuitement que les projets **open source** (licence approuvée par l'OSI, qui permet à n'importe qui de réutiliser le code). Le launcher est pour l'instant en « tous droits réservés » : cette option est donc en suspens.
 
-Ce qu'il reste à faire, et que toi seul peux faire :
-
-1. **Activer la double authentification** sur ton compte GitHub. SignPath l'exige pour tous les membres de l'équipe.
-2. **Postuler** sur [signpath.org/apply](https://signpath.org/apply) avec l'adresse du dépôt. La réponse prend en général quelques jours à quelques semaines.
-3. Une fois accepté, dans SignPath :
-   - activer la double authentification sur ton compte SignPath ;
-   - dans le projet (slug `lks-launcher`), coller le contenu de `.signpath/artifact-configuration.xml` comme configuration d'artefact par défaut ;
-   - relier le projet au dépôt GitHub (*Trusted Build System* « GitHub.com ») et vérifier que la politique de signature s'appelle `release-signing`, avec toi comme approbateur ;
-   - créer un jeton d'API pour un utilisateur CI qui a le droit de soumettre des demandes de signature.
-4. Dans GitHub (*Settings → Secrets and variables → Actions*) :
-   - **secret** `SIGNPATH_API_TOKEN` : le jeton d'API ;
-   - **variable** `SIGNPATH_ORGANIZATION_ID` : l'identifiant de l'organisation SignPath ;
-   - variables facultatives `SIGNPATH_PROJECT_SLUG` (par défaut `lks-launcher`), `SIGNPATH_POLICY_SLUG` (par défaut `release-signing`) et `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`.
-5. Lancer *Run workflow* avec **release** cochée, puis **approuver la demande dans SignPath**. Chaque release doit être approuvée à la main ; le workflow attend jusqu'à 2 h. L'installeur signé est ensuite publié, et `latest.yml` est recalculé pour que la mise à jour automatique accepte le fichier signé.
+Tout reste prêt si l'association change d'avis, par exemple en passant le code sous GPL-3.0 et en déposant la marque : configuration d'artefact dans [`.signpath/artifact-configuration.xml`](.signpath/artifact-configuration.xml), étapes de signature dans le workflow (activées par le secret `SIGNPATH_API_TOKEN` et la variable `SIGNPATH_ORGANIZATION_ID`), et [politique de confidentialité](PRIVACY.md). Il faudrait alors aussi ajouter sur cette page une section « Code signing policy » avec la phrase et les rôles exigés par SignPath ([conditions](https://signpath.org/terms)).
 
 ### Licence
 
-Le code source est sous licence [MIT](LICENSE). Les polices sont sous licence SIL Open Font License (voir `src/renderer/fonts/`). Les logos et visuels du Lowkey Syndicate (`assets/`, `src/renderer/img/`) appartiennent au Lowkey Syndicate.
-
-## Politique de signature de code / Code signing policy
-
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
-> Candidature en cours : tant qu'elle n'a pas été acceptée, les installeurs publiés ne sont pas signés. *(Application pending: releases are unsigned until it is approved.)*
-
-- Committers and reviewers: [Pab-69](https://github.com/Pab-69)
-- Approvers: [Pab-69](https://github.com/Pab-69)
-- Privacy policy: see [PRIVACY.md](PRIVACY.md). The launcher has no telemetry; it only contacts the services listed there (GitHub for content and updates, the official Custom Shaders Patch site when the user installs it, and the game servers the user chooses).
+**Tous droits réservés** — voir [LICENSE](LICENSE). Le code est visible publiquement pour permettre la distribution et les mises à jour du launcher, mais personne ne peut le copier, le modifier, le redistribuer ou le réutiliser sans l'accord écrit du Lowkey Syndicate. Il en va de même pour le nom, le logo et les visuels. Les polices (SIL Open Font License) et les dépendances tierces restent sous leurs propres licences.
 
 ### Architecture
 
