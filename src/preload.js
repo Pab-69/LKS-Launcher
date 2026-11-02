@@ -29,7 +29,7 @@ const EVENTS = [
   'host:changed',
   'host:log',
   'telemetry:live',
-  'telemetry:lap',
+  'telemetry:lap', 'game:crash',
 ];
 
 contextBridge.exposeInMainWorld('lks', {

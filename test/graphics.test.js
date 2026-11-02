@@ -149,3 +149,54 @@ test('CSP install from the (mocked) official page, enable/disable', async (t) =>
   // Not a CSP archive -> refused
   await assert.rejects(() => m.install('9.9.9'), /CSP|ressemble|zip|end of central/i);
 });
+
+test('screen mode: Windows scaling never gives an impossible fullscreen mode', () => {
+  // 2560 at 150 %: Electron gives 1707 × 1.5 = 2560.5
+  assert.deepStrictEqual(graphics.snapResolution(2561, 1440), { width: 2560, height: 1440 });
+  assert.deepStrictEqual(graphics.snapResolution(1366, 768), { width: 1366, height: 768 });
+  assert.deepStrictEqual(graphics.snapResolution(1921, 1081), { width: 1920, height: 1080 });
+  assert.deepStrictEqual(graphics.snapResolution(2133, 1201), { width: 2134, height: 1202 }, 'unknown size: even numbers');
+  assert.strictEqual(graphics.snapRefresh(59.94), 60);
+  assert.strictEqual(graphics.snapRefresh(143.9), 144);
+  assert.strictEqual(graphics.snapRefresh(0), 60);
+  const files = graphics.presetFiles('balanced', { width: 2561, height: 1441, refresh: 164.8 });
+  assert.deepStrictEqual([files['video.ini'].VIDEO.WIDTH, files['video.ini'].VIDEO.HEIGHT, files['video.ini'].VIDEO.REFRESH], [2560, 1440, 165]);
+  assert.strictEqual(files['video.ini'].REFRESH, undefined, 'no bogus [REFRESH] section');
+
+  // a working screen mode chosen by the player is never changed
+  const docs = tmp();
+  fs.mkdirSync(path.join(docs, 'cfg'), { recursive: true });
+  fs.writeFileSync(path.join(docs, 'cfg', 'video.ini'), '[VIDEO]\nWIDTH=1920\nHEIGHT=1080\nFULLSCREEN=0\nREFRESH=60\n');
+  graphics.applyPreset(docs, 'quality', { display: { width: 2560, height: 1440, refresh: 144 } });
+  let video = ini.parse(fs.readFileSync(path.join(docs, 'cfg', 'video.ini'), 'utf8'));
+  assert.deepStrictEqual([video.VIDEO.WIDTH, video.VIDEO.HEIGHT, video.VIDEO.FULLSCREEN], ['1920', '1080', '0']);
+
+  // a bad mode written by an older version is repaired before launching
+  fs.writeFileSync(path.join(docs, 'cfg', 'video.ini'), '[VIDEO]\nWIDTH=2561\nHEIGHT=1440\nFULLSCREEN=1\n[REFRESH]\nVALUE=144\n');
+  assert.strictEqual(graphics.repairVideoIni(docs), true);
+  video = ini.parse(fs.readFileSync(path.join(docs, 'cfg', 'video.ini'), 'utf8'));
+  assert.deepStrictEqual([video.VIDEO.WIDTH, video.VIDEO.FULLSCREEN, video.REFRESH], ['2560', '1', undefined]);
+  assert.strictEqual(graphics.repairVideoIni(docs), false, 'nothing to do the second time');
+});
+
+test('crash diagnosis from the game logs', () => {
+  const crashlog = require('../src/main/crashlog');
+  assert.ok(crashlog.looksLikeCrash({ code: 3221225477, durationMs: 400000 }));
+  assert.ok(crashlog.looksLikeCrash({ code: 0, durationMs: 6000 }));
+  assert.ok(!crashlog.looksLikeCrash({ code: 0, durationMs: 600000 }));
+  const docs = tmp();
+  fs.mkdirSync(path.join(docs, 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(docs, 'cfg'), { recursive: true });
+  fs.writeFileSync(path.join(docs, 'cfg', 'video.ini'), '[VIDEO]\nWIDTH=2561\nHEIGHT=1440\n[CAMERA]\nMODE=DEFAULT\n');
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'Loading engine\nINIT DIRECTX\nERROR: CreateSwapChain FAILED, display mode not supported\nCRASH\n');
+  const d = crashlog.diagnose({ code: 3221225477, durationMs: 5000, docsDir: docs, version: '1.9.1', launch: { kind: 'solo', mode: 'practice', car: 'lks_bmw_m2', track: 'lks_touge_haruna', layout: 'downhill' } });
+  assert.strictEqual(d.hints[0].id, 'display');
+  assert.ok(d.errors.some((l) => /CreateSwapChain/.test(l)));
+  assert.match(d.report, /0xC0000005/);
+  assert.match(d.report, /WIDTH=2561/);
+  assert.match(d.report, /lks_touge_haruna \(downhill\)/);
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'ERROR: cannot load content/tracks/lks_touge_haruna/downhill/models.ini\n');
+  assert.strictEqual(crashlog.diagnose({ code: 1, durationMs: 3000, docsDir: docs }).hints[0].id, 'track');
+  fs.writeFileSync(path.join(docs, 'logs', 'log.txt'), 'all good\n');
+  assert.strictEqual(crashlog.diagnose({ code: 1, durationMs: 3000, docsDir: tmp() }).hints[0].id, 'unknown');
+});

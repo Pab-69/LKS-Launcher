@@ -191,6 +191,33 @@ api.on('game:state', (g) => {
   renderGameOverlay(g);
 });
 
+// ------------------------------------------------------------ game closed right away: say why
+function showCrash(c) {
+  if (!c) return;
+  let ref = null;
+  const actions = [];
+  const ids = new Set(c.hints.map((x) => x.id));
+  if (ids.has('display') && c.canRestore) {
+    actions.push(h('button.btn.btn-primary', { on: { click: async () => { if (await guard(() => api.call('graphics:restore'), 'Réglages graphiques d’origine remis')) ref.close(); } } }, 'Revenir aux réglages graphiques d’origine'));
+  }
+  if (ids.has('app')) actions.push(h('button.btn', { on: { click: async () => { if (await guard(() => api.call('ingame:remove'), 'Appli en jeu retirée')) ref.close(); } } }, 'Retirer l’appli en jeu'));
+  if (ids.has('car') || ids.has('track') || ids.has('skin')) actions.push(h('button.btn', { on: { click: () => { ref.close(); go('content'); api.call('sync:verify', true); } } }, 'Vérifier le contenu'));
+  ref = modal({
+    title: 'Le jeu s’est fermé',
+    body: [
+      h('p', { style: { marginTop: 0 } }, c.launch ? 'Assetto Corsa s’est arrêté juste après le lancement.' : 'Assetto Corsa s’est arrêté.'),
+      h('ul.crash-hints', ...c.hints.map((x) => h('li', x.text))),
+      c.errors.length ? h('details.crash-details', h('summary', 'Ce que dit le jeu'), h('pre.log', c.errors.join('\n'))) : null,
+    ],
+    foot: [
+      ...actions,
+      h('button.btn', { on: { click: async () => { await api.call('clipboard:write', c.report); toast('Rapport copié : colle-le sur le Discord', 'success'); } } }, 'Copier le rapport'),
+      h('button.btn.btn-ghost', { on: { click: () => api.call('shell:open', 'logs') } }, 'Ouvrir les journaux'),
+    ],
+  });
+}
+api.on('game:crash', showCrash);
+
 // ------------------------------------------------------------ brand (downloaded, not bundled)
 function renderBrand() {
   const wide = brandUrl('logo-wide.png');

@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.9.1
+
+- Correction : le jeu pouvait s'ouvrir puis planter juste après. Avec la mise à l'échelle de Windows (125 %, 150 %…), les réglages graphiques pouvaient écrire une résolution d'écran impossible (par exemple 2561 × 1440).
+  - La résolution est maintenant calée sur un vrai mode d'écran.
+  - Elle est corrigée toute seule avant chaque lancement.
+  - Une résolution qui marche déjà n'est plus jamais modifiée.
+- Si le jeu se ferme juste après le lancement, le launcher lit les journaux du jeu et du CSP et dit quoi faire. Il propose aussi de copier un rapport à envoyer.
+
 ## 1.9.0
 
 - **Fantôme** : une voiture translucide rejoue un tour pour que tu la suives.

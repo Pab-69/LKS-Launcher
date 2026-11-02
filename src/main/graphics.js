@@ -238,17 +238,36 @@ function deepMergePatch(a, b) {
   return out;
 }
 
+// Real screen modes: Windows scaling (125 %, 150 %…) can turn 2560 into 2561
+// once multiplied back, and the game crashes on a fullscreen mode that does not exist.
+const RESOLUTIONS = [
+  [1280, 720], [1280, 800], [1280, 1024], [1360, 768], [1366, 768], [1440, 900], [1600, 900], [1680, 1050],
+  [1920, 1080], [1920, 1200], [2048, 1152], [2560, 1080], [2560, 1440], [2560, 1600], [2880, 1800], [3200, 1800],
+  [3440, 1440], [3840, 1080], [3840, 1600], [3840, 2160], [5120, 1440], [5120, 2160], [7680, 4320],
+];
+const REFRESH_RATES = [50, 59, 60, 75, 85, 90, 100, 120, 144, 160, 165, 170, 175, 180, 200, 240, 280, 300, 360];
+
+/** Closest real screen mode (± 8 px), else the size rounded to an even number. */
+function snapResolution(width, height) {
+  const dist = ([w, h]) => Math.abs(w - width) + Math.abs(h - height);
+  const hit = RESOLUTIONS.filter(([w, h]) => Math.abs(w - width) <= 8 && Math.abs(h - height) <= 8).sort((a, b) => dist(a) - dist(b))[0];
+  if (hit) return { width: hit[0], height: hit[1] };
+  return { width: Math.round(width / 2) * 2, height: Math.round(height / 2) * 2 };
+}
+
+function snapRefresh(hz) {
+  const n = Number(hz) || 60;
+  return REFRESH_RATES.reduce((best, r) => (Math.abs(r - n) < Math.abs(best - n) ? r : best), 60);
+}
+
 /** Files written by a preset, relative to Documents/Assetto Corsa/cfg */
 function presetFiles(presetId, display) {
   const preset = PRESETS[presetId];
   if (!preset) throw new Error(`Préréglage inconnu : ${presetId}`);
   const video = deepMergePatch({ v: VIDEO_BASE }, { v: preset.video }).v;
   if (display && display.width && display.height) {
-    video.VIDEO = { ...video.VIDEO, WIDTH: display.width, HEIGHT: display.height, FULLSCREEN: 1 };
-    if (display.refresh) {
-      video.VIDEO.REFRESH = display.refresh;
-      video.REFRESH = { VALUE: display.refresh };
-    }
+    const { width, height } = snapResolution(display.width, display.height);
+    video.VIDEO = { ...video.VIDEO, WIDTH: width, HEIGHT: height, FULLSCREEN: 1, REFRESH: snapRefresh(display.refresh) };
   }
   const csp = deepMergePatch(CSP_BASE, preset.csp);
   const files = { 'video.ini': video };
@@ -269,12 +288,50 @@ function applyPreset(docsDir, presetId, { display, withCsp = true } = {}) {
     if (!withCsp && rel.startsWith('extension/')) continue;
     const file = path.join(cfg, ...rel.split('/'));
     const current = readIni(file);
-    if (rel === 'video.ini' && !(current.CAMERA && current.CAMERA.MODE)) sections.CAMERA = { MODE: 'DEFAULT' };
+    if (rel === 'video.ini') {
+      if (!(current.CAMERA && current.CAMERA.MODE)) sections.CAMERA = { MODE: 'DEFAULT' };
+      // never change a screen mode the game already uses: only fill it in when missing
+      const v = current.VIDEO || {};
+      const w = Number(v.WIDTH);
+      const h = Number(v.HEIGHT);
+      const snapped = snapResolution(w, h);
+      if (w > 0 && h > 0 && snapped.width === w && snapped.height === h && sections.VIDEO) {
+        for (const k of ['WIDTH', 'HEIGHT', 'FULLSCREEN', 'REFRESH']) delete sections.VIDEO[k];
+      }
+      delete current.REFRESH; // bad section written by older versions
+    }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, ini.stringify(merge(current, sections)));
     written.push(rel);
   }
   return written;
+}
+
+/**
+ * Before each launch: fix a screen mode that cannot exist (written by an older
+ * launcher version, or by hand): 2561×1440 → 2560×1440. Returns true if changed.
+ */
+function repairVideoIni(docsDir) {
+  const file = path.join(docsDir, 'cfg', 'video.ini');
+  if (!fs.existsSync(file)) return false;
+  const current = readIni(file);
+  const v = current.VIDEO || {};
+  const w = Number(v.WIDTH);
+  const h = Number(v.HEIGHT);
+  let changed = false;
+  if (w > 0 && h > 0) {
+    const snapped = snapResolution(w, h);
+    if (snapped.width !== w || snapped.height !== h) {
+      current.VIDEO = { ...v, WIDTH: String(snapped.width), HEIGHT: String(snapped.height) };
+      changed = true;
+    }
+  }
+  if (current.REFRESH) {
+    delete current.REFRESH;
+    changed = true;
+  }
+  if (changed) fs.writeFileSync(file, ini.stringify(current));
+  return changed;
 }
 
 const BACKUP_DIR = '.lks-backup-original';
@@ -321,4 +378,4 @@ function presetList() {
   return PRESET_ORDER.map((id) => ({ id, label: PRESETS[id].label, tagline: PRESETS[id].tagline, description: PRESETS[id].description, features: PRESETS[id].features }));
 }
 
-module.exports = { PRESETS, PRESET_ORDER, presetList, presetFiles, applyPreset, restoreBackup, hasBackup, recommendPreset };
+module.exports = { PRESETS, PRESET_ORDER, presetList, presetFiles, applyPreset, restoreBackup, hasBackup, recommendPreset, snapResolution, snapRefresh, repairVideoIni };

@@ -17,6 +17,7 @@ const { listFiles, hashFolder } = require('./hash');
 const { contentDir } = require('./acContent');
 const { CspManager, checkVcRedist, compareVersions } = require('./csp');
 const graphics = require('./graphics');
+const crashlog = require('./crashlog');
 const { BrandingManager } = require('./branding');
 const { SetupSync, localSetupCars } = require('./setups');
 const { DiscordPresence } = require('./discord');
@@ -537,6 +538,14 @@ function setupGame() {
   game.on('exited', (info) => {
     if (telemetry) telemetry.source.detach();
     send('game:state', { running: false, ...info });
+    if (!info.error && crashlog.looksLikeCrash(info)) {
+      try {
+        lastCrash = { ...crashlog.diagnose({ ...info, launch: lastLaunch, version: app.getVersion(), docsDir: docsDir() }), launch: lastLaunch, at: new Date().toISOString(), canRestore: graphics.hasBackup(docsDir()) };
+        send('game:crash', lastCrash);
+      } catch (err) {
+        console.warn('[crash]', err.message);
+      }
+    }
     setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
     if (win) {
       if (win.isMinimized()) win.restore();
@@ -544,6 +553,20 @@ function setupGame() {
     }
     refreshManifest({ autoSync: true }).catch(() => {});
   });
+}
+
+let lastLaunch = null;
+let lastCrash = null;
+
+/** Launch acs.exe after fixing a screen mode that cannot exist (older versions could write one). */
+function startGame(launch) {
+  try {
+    if (graphics.repairVideoIni(docsDir())) send('toast', { kind: 'info', text: 'Résolution d’écran corrigée avant le lancement' });
+  } catch {
+    /* unreadable video.ini: the game will say so */
+  }
+  lastLaunch = launch;
+  game.launch(acRoot(), docsDir());
 }
 
 function ensureReady() {
@@ -800,7 +823,7 @@ function setupIpc() {
   });
   handle('shell:open', (target) => {
     if (/^https?:\/\//.test(target)) return shell.openExternal(target);
-    const map = { ac: acRoot(), docs: docsDir(), cars: path.join(acRoot(), 'content', 'cars'), tracks: path.join(acRoot(), 'content', 'tracks') };
+    const map = { ac: acRoot(), docs: docsDir(), logs: path.join(docsDir(), 'logs'), cars: path.join(acRoot(), 'content', 'cars'), tracks: path.join(acRoot(), 'content', 'tracks') };
     if (map[target]) return shell.openPath(map[target]);
     return null;
   });
@@ -836,6 +859,7 @@ function setupIpc() {
 
   // Game
   handle('game:status', () => ({ running: game.running }));
+  handle('game:lastCrash', () => lastCrash);
   handle('game:launchSolo', (opts) => {
     ensureReady();
     const s = settings.data;
@@ -859,7 +883,7 @@ function setupIpc() {
     settings.update({ solo: { ...opts, assists: undefined }, assists: opts.assists || s.assists });
     const modeLabel = { practice: 'Entraînement', race: 'Course', hotlap: 'Hotlap' }[opts.mode] || 'Solo';
     game.presence = { details: `Solo — ${modeLabel}`, state: `${car.name} @ ${layout.name || track.name}` };
-    game.launch(acRoot(), docsDir());
+    startGame({ kind: 'solo', mode: opts.mode || 'practice', car: car.id, track: track.id, layout: layout.id });
     return true;
   });
   handle('game:joinServer', async (opts) => {
@@ -883,7 +907,7 @@ function setupIpc() {
     const carInfo = content.cars.find((c) => c.id === opts.car);
     const trackInfo = content.tracks.find((t) => t.id === track);
     game.presence = { details: `En ligne — ${opts.serverName || 'serveur LKS'}`, state: `${carInfo ? carInfo.name : opts.car} @ ${trackInfo ? trackInfo.name : track}` };
-    game.launch(acRoot(), docsDir());
+    startGame({ kind: 'online', mode: opts.serverName || '', car: opts.car, track, layout });
     return true;
   });
 
