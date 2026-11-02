@@ -79,6 +79,10 @@ npm run dist       # construit l'installeur Windows dans dist/ (à faire sous Wi
 - `lks.config.json` : URL du manifeste et dépôt de contenu intégrés dans le launcher (par défaut `pab-69/lks-content`).
 - `package.json` → `build.publish` : dépôt où sont publiées les versions du launcher (par défaut `pab-69/lks-launcher`). **Ce dépôt doit être public** pour que la mise à jour automatique marche chez les membres.
 
+### Changer les voitures de la vitrine
+
+Les photos affichées sur l'accueil (diaporama et « Le Garage ») et pendant le jeu sont dans `src/renderer/img/cars/`, et leur liste est dans `src/renderer/showcase.js`. Pour les changer sans sortir une nouvelle version du launcher, on peut aussi ajouter au manifeste un champ `"showcase": [{ "image": "https://…", "title": "…", "subtitle": "…" }]`.
+
 ### Sortir une nouvelle version du launcher
 
 1. Change `version` dans `package.json` (ex. `1.0.1`).

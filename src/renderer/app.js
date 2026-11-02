@@ -1,5 +1,6 @@
 import { api, h, clear, bytes, toast, lapTime, guard } from './ui.js';
 import { store, set, subscribe, loadContent } from './store.js';
+import { randomShowcase } from './showcase.js';
 import home from './views/home.js';
 import content from './views/content.js';
 import solo from './views/solo.js';
@@ -86,6 +87,8 @@ document.getElementById('syncbar-cancel').addEventListener('click', () => api.ca
 function renderGameOverlay(info) {
   const el = document.getElementById('game-overlay');
   clear(el);
+  const car = randomShowcase();
+  el.append(h('img.bg', { src: car.image, alt: '' }));
   if (store.game.running) {
     el.hidden = false;
     el.append(h('div.inner', h('img', { src: 'img/logo.png', alt: '' }), h('h2', 'Assetto Corsa en cours'), h('p.muted', 'Bonne session. Le launcher reprend la main à la fermeture du jeu.')));

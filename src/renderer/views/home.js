@@ -1,15 +1,25 @@
 import { api, h, clear, icon, bytes, guard, dateFr } from '../ui.js';
 import { store, subscribe } from '../store.js';
+import { SHOWCASE, showcaseFrom } from '../showcase.js';
 
 export default function home(root, _params, { go }) {
   const statusBox = h('div');
   const serversBox = h('div');
   const newsBox = h('div.panel');
 
+  const slidesEl = h('div.hero-slides');
+  const captionEl = h('div.hero-caption');
+  const garageEl = h('div.garage');
+  let slides = SHOWCASE;
+  let index = 0;
+  let timer = null;
+
   root.append(
     h('section.hero',
-      h('img.hero-logo', { src: 'img/logo.png', alt: 'Lowkey Syndicate' }),
-      h('div.hero-body',
+      slidesEl,
+      h('div.hero-shade'),
+      h('div.hero-content',
+        h('img.hero-logo', { src: 'img/logo.png', alt: 'Lowkey Syndicate' }),
         h('h1', 'Bienvenue au garage'),
         h('p', 'Le contenu du Syndicate se met à jour tout seul. Prends ta caisse, choisis ta piste, et roule.'),
         h('div.hero-actions',
@@ -17,13 +27,56 @@ export default function home(root, _params, { go }) {
           h('button.btn.btn-lg', { on: { click: () => go('solo') } }, 'Solo'),
         ),
       ),
+      captionEl,
     ),
     statusBox,
-    h('div.grid.grid-2.mt',
+    h('h2.section', 'Le Garage'),
+    garageEl,
+    h('div.grid.grid-2',
       h('div', h('h2.section', 'Serveurs LKS'), serversBox),
       h('div', h('h2.section', 'Actus du Syndicate'), newsBox),
     ),
   );
+
+  function renderShowcase() {
+    clear(slidesEl);
+    clear(garageEl);
+    slides.forEach((car, i) => {
+      slidesEl.append(h('img', { src: car.image, alt: '', class: i === index ? 'on' : '', style: { objectPosition: car.position || 'center' } }));
+      garageEl.append(h('button.garage-car', { on: { click: () => show(i, true) } },
+        h('img', { src: car.image, alt: car.title, loading: 'lazy', style: { objectPosition: car.position || 'center' } }),
+        h('div.cap', h('div.v', car.title), h('div.s', car.subtitle || ''))));
+    });
+    show(index);
+  }
+
+  function show(i, user) {
+    index = (i + slides.length) % slides.length;
+    [...slidesEl.children].forEach((img, n) => {
+      if (n === index) {
+        img.classList.remove('on');
+        void img.offsetWidth; // restart the slow zoom
+        img.classList.add('on');
+      } else img.classList.remove('on');
+    });
+    const car = slides[index];
+    clear(captionEl);
+    captionEl.append(
+      h('div.k', 'Garage LKS'),
+      h('div.v', car.title),
+      h('div.s', car.subtitle || ''),
+      h('div.hero-dots', slides.map((_, n) => h('button', { class: n === index ? 'on' : '', 'aria-label': `Voiture ${n + 1}`, on: { click: () => show(n, true) } }))),
+    );
+    if (user) {
+      root.querySelector('.hero').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      restart();
+    }
+  }
+
+  function restart() {
+    clearInterval(timer);
+    timer = setInterval(() => show(index + 1), 7000);
+  }
 
   function renderStatus() {
     clear(statusBox);
@@ -85,6 +138,12 @@ export default function home(root, _params, { go }) {
 
   async function renderNews() {
     const manifest = await guard(() => api.call('sync:manifest'));
+    const fromManifest = showcaseFrom(manifest);
+    if (fromManifest !== slides) {
+      slides = fromManifest;
+      index = 0;
+      renderShowcase();
+    }
     clear(newsBox);
     const news = (manifest && manifest.news) || [];
     if (manifest && manifest.motd) newsBox.append(h('div.notice.info', manifest.motd));
@@ -95,13 +154,17 @@ export default function home(root, _params, { go }) {
     for (const n of news.slice(0, 6)) newsBox.append(h('div.news-item', h('div.date', dateFr(n.date)), h('h4', n.title), h('p', n.body)));
   }
 
+  renderShowcase();
+  restart();
   renderStatus();
   renderServers();
   renderNews();
-  return subscribe((patch) => {
+  const unsub = subscribe((patch) => {
     if ('summary' in patch || 'content' in patch || 'settings' in patch) renderStatus();
-    if ('summary' in patch && patch.summary && !patch.summary.running) {
-      /* manifest may have changed */
-    }
+    if ('content' in patch) renderServers();
   });
+  return () => {
+    clearInterval(timer);
+    unsub();
+  };
 }

@@ -130,6 +130,7 @@ function scanWeathers(acRoot) {
   const dir = path.join(acRoot, 'content', 'weather');
   const list = listDirs(dir).map((id) => {
     let name = id.replace(/^\d+_/, '').replace(/_/g, ' ');
+    name = name.charAt(0).toUpperCase() + name.slice(1);
     try {
       const ini = fs.readFileSync(path.join(dir, id, 'weather.ini'), 'utf8');
       const m = ini.match(/^NAME=(.+)$/m);
