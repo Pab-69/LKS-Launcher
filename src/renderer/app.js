@@ -8,8 +8,10 @@ import servers from './views/servers.js';
 import settings from './views/settings.js';
 import admin from './views/admin.js';
 import graphics from './views/graphics.js';
+import donate from './views/donate.js';
+import shop from './views/shop.js';
 
-const routes = { home, content, solo, servers, graphics, settings, admin };
+const routes = { home, content, solo, servers, graphics, donate, shop, settings, admin };
 const viewEl = document.getElementById('view');
 let current = null;
 let cleanup = null;

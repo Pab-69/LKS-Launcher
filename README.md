@@ -7,6 +7,8 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Serveurs** : liste des serveurs LKS avec joueurs et ping en direct, choix d'une voiture libre et connexion en un clic. Le launcher vérifie aussi qu'il ne manque pas de contenu pour le serveur.
 - **Publication (admins)** : on coche ses voitures et circuits modifiés, on clique sur « Publier », et tout le monde reçoit la nouvelle version.
 - **Graphismes en 1 clic** : installe le Custom Shaders Patch officiel et applique un préréglage adapté à ta carte graphique (Performance, Équilibré, Qualité, Ultra).
+- **Soutenir** : page de dons (PayPal, Ko-fi, Tipeee…) avec objectif du mois, entièrement gérée depuis l'onglet Publication.
+- **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
 - **Mise à jour automatique du launcher** via les releases GitHub.
 
 ---

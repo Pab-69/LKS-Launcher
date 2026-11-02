@@ -204,6 +204,21 @@ export default function admin(root) {
     const news = (data.manifest.news || []).map((n) => ({ ...n }));
     let motd = data.manifest.motd || '';
     let cspPin = (data.manifest.csp && data.manifest.csp.version) || '';
+    const don = JSON.parse(JSON.stringify(data.manifest.donate || { message: '', links: [], goal: null }));
+    don.links = Array.isArray(don.links) ? don.links : [];
+    const goal = don.goal || { label: 'Objectif du mois', current: 0, target: 0, currency: '€' };
+    const shopCfg = { open: false, url: '', message: '', ...(data.manifest.shop || {}) };
+    const linkList = h('div.grid');
+    const drawLinks = () => {
+      clear(linkList);
+      don.links.forEach((l, idx) => linkList.append(h('div.input-row',
+        h('select.input', { style: { width: '130px', flex: 'none' }, on: { change: (e) => { l.kind = e.target.value; } } },
+          ['paypal', 'kofi', 'tipeee', 'twitch', 'patreon', 'other'].map((k) => h('option', { value: k, selected: (l.kind || 'other') === k }, k))),
+        h('input.input', { value: l.label || '', placeholder: 'Nom affiché', on: { input: (e) => { l.label = e.target.value; } } }),
+        h('input.input.mono', { value: l.url || '', placeholder: 'https://…', on: { input: (e) => { l.url = e.target.value.trim(); } } }),
+        h('button.btn.btn-sm.btn-ghost', { on: { click: () => { don.links.splice(idx, 1); drawLinks(); } } }, icon('trash')))));
+    };
+    drawLinks();
 
     const srvList = h('div.grid');
     const drawServers = () => {
@@ -259,6 +274,32 @@ export default function admin(root) {
             guard(() => api.call('admin:updateMeta', { csp: cspPin ? { version: cspPin } : null }), 'Version CSP publiée');
           } } }, 'Enregistrer'),
         )),
+      h('div.panel', h('h3', 'Dons'),
+        field('Message', h('textarea.input', { value: don.message || '', placeholder: 'Pourquoi soutenir le Syndicate…', on: { input: (e) => { don.message = e.target.value; } } })),
+        h('div.grid.grid-3.mt',
+          field('Objectif (texte)', h('input.input', { value: goal.label, on: { input: (e) => { goal.label = e.target.value; } } })),
+          field('Récolté', h('input.input', { type: 'number', value: goal.current, on: { input: (e) => { goal.current = Number(e.target.value); } } })),
+          field('Objectif (0 = masqué)', h('input.input', { type: 'number', value: goal.target, on: { input: (e) => { goal.target = Number(e.target.value); } } })),
+        ),
+        h('div.label.mt', 'Liens (PayPal, Ko-fi, Tipeee…) — https uniquement'),
+        h('div.mt', linkList),
+        h('div.row.mt',
+          h('button.btn.btn-sm', { on: { click: () => { don.links.push({ kind: 'paypal', label: '', url: '' }); drawLinks(); } } }, icon('plus'), 'Ajouter un lien'),
+          h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
+            const bad = don.links.find((l) => !/^https:\/\/[^\s]+$/.test(l.url || ''));
+            if (bad) return toast('Chaque lien doit commencer par https://', 'warn');
+            guard(() => api.call('admin:updateMeta', { donate: { message: don.message, links: don.links, goal: goal.target > 0 ? goal : null } }), 'Page de dons publiée');
+          } } }, 'Enregistrer les dons'),
+        )),
+      h('div.panel', h('h3', 'Boutique'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Tant que la boutique est fermée, la page affiche « Bientôt disponible ».'),
+        field('Message', h('input.input', { value: shopCfg.message, placeholder: 'Hoodies, t-shirts, stickers…', on: { input: (e) => { shopCfg.message = e.target.value; } } })),
+        h('div.mt', field('Lien de la boutique', h('input.input.mono', { value: shopCfg.url, placeholder: 'https://…', on: { input: (e) => { shopCfg.url = e.target.value.trim(); } } }))),
+        h('label.row.mt', h('input', { type: 'checkbox', checked: Boolean(shopCfg.open), on: { change: (e) => { shopCfg.open = e.target.checked; } } }), 'Boutique ouverte'),
+        h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
+          if (shopCfg.open && !/^https:\/\//.test(shopCfg.url)) return toast('Ajoute un lien https:// avant d’ouvrir la boutique', 'warn');
+          guard(() => api.call('admin:updateMeta', { shop: shopCfg }), 'Boutique mise à jour');
+        } } }, 'Enregistrer la boutique'))),
     );
   }
 

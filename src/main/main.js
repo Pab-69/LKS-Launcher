@@ -542,7 +542,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
