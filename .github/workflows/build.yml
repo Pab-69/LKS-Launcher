@@ -136,7 +136,9 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           TAG="v$VERSION"
-          FILES="dist/LKS-Launcher-Setup-$VERSION.exe dist/LKS-Launcher-Setup-$VERSION.exe.blockmap dist/latest.yml"
+          # stable name too: https://github.com/<repo>/releases/latest/download/LKS-Launcher-Setup.exe
+          cp "dist/LKS-Launcher-Setup-$VERSION.exe" dist/LKS-Launcher-Setup.exe
+          FILES="dist/LKS-Launcher-Setup-$VERSION.exe dist/LKS-Launcher-Setup-$VERSION.exe.blockmap dist/latest.yml dist/LKS-Launcher-Setup.exe"
           node tools/release-notes.js > release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $FILES --clobber

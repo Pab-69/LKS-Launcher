@@ -1,0 +1,48 @@
+@font-face { font-family: 'Grenze Gotisch'; font-weight: 600; src: url(fonts/grenze-gotisch-latin-600-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Barlow Condensed'; font-weight: 700; src: url(fonts/barlow-condensed-latin-700-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Barlow'; font-weight: 400; src: url(fonts/barlow-latin-400-normal.woff2) format('woff2'); }
+@font-face { font-family: 'Barlow'; font-weight: 600; src: url(fonts/barlow-latin-600-normal.woff2) format('woff2'); }
+
+:root { --bg: #050405; --panel: #0e0b0d; --line: #261e22; --text: #ece5da; --text-2: #a89c94; --accent: #b3122a; --accent-2: #e01b3a; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 400 17px/1.6 'Barlow', 'Segoe UI', system-ui, sans-serif; }
+a { color: var(--accent-2); }
+h1, h2 { font-family: 'Grenze Gotisch', serif; font-weight: 600; text-shadow: 0 0 28px rgba(179, 18, 42, 0.45); }
+h3 { font: 700 18px 'Barlow Condensed', sans-serif; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 8px; }
+
+.hero { position: relative; min-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
+.hero-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.55; }
+.hero-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5,4,5,.97), rgba(5,4,5,.75) 45%, rgba(5,4,5,.25)), linear-gradient(0deg, var(--bg), transparent 40%); }
+.top { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 18px 5vw; gap: 16px; flex-wrap: wrap; }
+.top img { height: 30px; }
+.top-links a { color: var(--text-2); text-decoration: none; margin-left: 22px; font: 700 14px 'Barlow Condensed', sans-serif; letter-spacing: 0.16em; text-transform: uppercase; }
+.top-links a:hover { color: var(--text); }
+.hero-content { position: relative; margin: auto 5vw; max-width: 640px; padding: 40px 0 60px; }
+.hero-content .logo { width: min(360px, 80vw); filter: drop-shadow(0 0 22px rgba(179, 18, 42, 0.35)); }
+.hero-content h1 { font-size: clamp(40px, 6vw, 68px); margin: 10px 0; line-height: 1; }
+.hero-content p { color: var(--text-2); }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; margin: 26px 0 10px; }
+.btn { display: inline-block; padding: 15px 30px; font: 700 17px 'Barlow Condensed', sans-serif; letter-spacing: 0.2em; text-transform: uppercase; text-decoration: none; color: var(--text); border: 1px solid #3a2d33; background: #120e11; clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+.btn-primary { background: linear-gradient(180deg, #c8152f, #7a0817); border-color: var(--accent-2); color: #fff; }
+.btn:hover { filter: brightness(1.15); }
+.small { font-size: 14px; }
+.muted { color: #6c615c !important; }
+
+main { padding: 0 5vw 40px; max-width: 1200px; margin: 0 auto; }
+section { margin: 70px 0; }
+section h2 { font-size: 42px; margin: 0 0 22px; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.feature { background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--accent); padding: 22px; }
+.feature p { color: var(--text-2); margin: 0; }
+.garage { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.car { position: relative; aspect-ratio: 16/10; overflow: hidden; border: 1px solid var(--line); }
+.car img { width: 100%; height: 100%; object-fit: cover; }
+.car div { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px; background: linear-gradient(0deg, rgba(5,4,5,.95), transparent); }
+.car strong { font: 600 26px 'Grenze Gotisch', serif; display: block; }
+.car span { color: var(--text-2); font-size: 14px; }
+.news article { border-bottom: 1px solid var(--line); padding: 16px 0; }
+.news time { color: var(--accent-2); font: 700 13px 'Barlow Condensed', sans-serif; letter-spacing: 0.18em; text-transform: uppercase; }
+.news h3 { font: 600 26px 'Grenze Gotisch', serif; letter-spacing: 0; text-transform: none; margin: 4px 0; }
+.news p { color: var(--text-2); margin: 0; white-space: pre-line; }
+.support { display: flex; gap: 12px; flex-wrap: wrap; }
+footer { border-top: 1px solid var(--line); padding: 26px 5vw 40px; color: var(--text-2); font-size: 14px; text-align: center; }

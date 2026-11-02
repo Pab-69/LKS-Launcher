@@ -1,9 +1,13 @@
 import { api, h, clear, icon, bytes, guard, dateFr } from '../ui.js';
 import { store, subscribe } from '../store.js';
 import { brandShowcase, brandUrl, onBrand } from '../showcase.js';
+import { localImg } from '../ui.js';
 
 export default function home(root, _params, { go }) {
   const statusBox = h('div');
+  const eventBox = h('div');
+  const presetsBox = h('div');
+  let countdownTimer = null;
   let cspState = null;
   api.call('csp:status').then((s) => { cspState = s; renderStatus(); }).catch(() => {});
   const serversBox = h('div');
@@ -33,6 +37,8 @@ export default function home(root, _params, { go }) {
       captionEl,
     ),
     statusBox,
+    eventBox,
+    presetsBox,
     h('h2.section.garage-title', 'Le Garage'),
     garageEl,
     h('div.grid.grid-2',
@@ -156,8 +162,87 @@ export default function home(root, _params, { go }) {
     }
   }
 
+  // ---------- next event (from the group's calendar)
+  function renderEvent(manifest) {
+    clear(eventBox);
+    clearInterval(countdownTimer);
+    const now = Date.now();
+    const next = (manifest.events || [])
+      .filter((e) => Date.parse(e.date) + (Number(e.durationMinutes) || 120) * 60000 > now)
+      .sort((a, b) => Date.parse(a.date) - Date.parse(b.date))[0];
+    if (!next) return;
+    const start = Date.parse(next.date);
+    const timer = h('div.event-countdown');
+    const join = h('button.btn.btn-primary', { on: { click: () => go('servers', next.server ? { select: next.server } : {}) } }, icon('play'), 'Rejoindre');
+    const tick = () => {
+      const diff = start - Date.now();
+      if (diff <= 0) {
+        timer.textContent = 'En cours';
+        join.disabled = false;
+        return;
+      }
+      const d = Math.floor(diff / 86400000);
+      const hh = Math.floor((diff % 86400000) / 3600000);
+      const mm = Math.floor((diff % 3600000) / 60000);
+      const ss = Math.floor((diff % 60000) / 1000);
+      timer.textContent = d > 0 ? `${d} j ${hh} h ${String(mm).padStart(2, '0')}` : `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+      join.disabled = diff > 15 * 60000; // the server opens 15 min before
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+    eventBox.append(
+      h('h2.section', 'Prochain event'),
+      h('div.panel.event-card',
+        h('div.event-main',
+          h('div.picker-k', new Date(start).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })),
+          h('div.event-title', next.title || 'Event LKS'),
+          next.description ? h('p.muted', { style: { margin: '4px 0 0', whiteSpace: 'pre-line' } }, next.description) : null,
+        ),
+        h('div.event-side', timer, join, h('div.hint', 'Rappel 15 min avant')),
+      ),
+    );
+  }
+
+  // ---------- quick solo sessions published by the group
+  function renderPresets(manifest) {
+    clear(presetsBox);
+    const presets = manifest.soloPresets || [];
+    if (!presets.length) return;
+    const content = store.content || { cars: [], tracks: [] };
+    const grid = h('div.cards');
+    for (const p of presets) {
+      const s = p.settings || {};
+      const car = content.cars.find((c) => c.id === s.car);
+      const track = content.tracks.find((t) => t.id === s.track);
+      const layout = track && (track.layouts.find((l) => l.id === (s.layout || '')) || track.layouts[0]);
+      const skin = car && (car.skins.find((k) => k.id === s.skin) || car.skins[0]);
+      const ready = Boolean(car && track);
+      const img = layout && layout.preview ? localImg(layout.preview) : skin && skin.preview ? localImg(skin.preview) : '';
+      const mode = { practice: 'Entraînement', race: 'Course', hotlap: 'Hotlap' }[s.mode] || 'Solo';
+      grid.append(
+        h('div.card',
+          h('div.card-media', img ? h('img', { src: img, alt: '' }) : h('div.placeholder'), h('span.tag.lks', 'LKS')),
+          h('div.card-body',
+            h('div.card-title', p.name),
+            h('div.card-sub', [mode, car ? car.name : s.car, layout ? layout.name : s.track].filter(Boolean).join(' · ')),
+            p.description ? h('div.card-sub', { title: p.description }, p.description) : null,
+            h('div.card-foot',
+              ready ? h('span.card-sub', 'Prêt') : h('span.card-sub', 'Contenu manquant'),
+              h('button.btn.btn-primary.btn-sm', { disabled: !ready, on: { click: () => guard(() => api.call('game:launchSolo', { ...store.settings.solo, ...s, assists: store.settings.assists })) } }, icon('play'), 'Lancer'),
+            ),
+          ),
+        ),
+      );
+    }
+    presetsBox.append(h('h2.section', 'Sessions du Syndicate'), grid);
+  }
+
   async function renderNews() {
     const manifest = await guard(() => api.call('sync:manifest'));
+    if (manifest) {
+      renderEvent(manifest);
+      renderPresets(manifest);
+    }
     clear(newsBox);
     const news = (manifest && manifest.news) || [];
     if (manifest && manifest.motd) newsBox.append(h('div.notice.info', manifest.motd));
@@ -178,12 +263,18 @@ export default function home(root, _params, { go }) {
   renderStatus();
   renderServers();
   renderNews();
+  let lastManifest = store.summary && store.summary.manifestUpdatedAt;
   const unsub = subscribe((patch) => {
     if ('summary' in patch || 'content' in patch || 'settings' in patch) renderStatus();
     if ('content' in patch) renderServers();
+    if ('content' in patch || ('summary' in patch && patch.summary && patch.summary.manifestUpdatedAt !== lastManifest)) {
+      lastManifest = patch.summary ? patch.summary.manifestUpdatedAt : lastManifest;
+      renderNews();
+    }
   });
   return () => {
     clearInterval(timer);
+    clearInterval(countdownTimer);
     unsub();
     offBrand();
   };

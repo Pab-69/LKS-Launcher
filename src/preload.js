@@ -25,6 +25,7 @@ const EVENTS = [
   'csp:progress',
   'csp:changed',
   'branding:changed',
+  'navigate',
 ];
 
 contextBridge.exposeInMainWorld('lks', {

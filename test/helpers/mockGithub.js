@@ -18,6 +18,7 @@ function startMockGithub() {
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => resolve(Buffer.concat(chunks)));
     });
+    if (req.method === 'GET' && p === '/user') return json(200, { login: 'pab' });
     if (req.method === 'GET' && p === '/repos/o/r') return json(200, { full_name: 'o/r', private: false, html_url: 'x', permissions: { push: true } });
     if (req.method === 'GET' && p === '/repos/o/r/releases/tags/content') return state.release ? json(200, state.release) : json(404, { message: 'Not Found' });
     if (req.method === 'POST' && p === '/repos/o/r/releases') {

@@ -183,6 +183,7 @@ api.on('toast', (t) => toast(t.text, t.kind));
 api.on('settings:changed', (s) => set({ settings: s }));
 api.on('content:changed', () => loadContent(true).catch(() => {}));
 api.on('updater:status', (u) => set({ updater: u }));
+api.on('navigate', (n) => go(n.route, n.params || {}));
 api.on('game:state', (g) => {
   set({ game: g });
   renderGameOverlay(g);

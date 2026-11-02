@@ -1,0 +1,52 @@
+name: Site vitrine
+
+# Publie le site du Syndicate sur GitHub Pages.
+# Mise en route (une fois) : Settings > Pages > Source : « GitHub Actions »,
+# puis Settings > Secrets and variables > Actions > Variables : SITE_ENABLED = true.
+# Le site est ensuite reconstruit à chaque release, chaque nuit (actus, vitrine)
+# et quand le dossier site/ change.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths: ['site/**', 'tools/build-site.js']
+  schedule:
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/build-site.js _site
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    if: vars.SITE_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -251,6 +251,119 @@ export default function admin(root) {
     const titleIn = h('input.input', { placeholder: 'Titre', on: { input: (e) => { nt = e.target.value; } } });
     const bodyIn = h('textarea.input', { placeholder: 'Message', on: { input: (e) => { nb = e.target.value; } } });
 
+    // ---------- events calendar
+    const events = (data.manifest.events || []).map((e) => ({ ...e }));
+    const eventList = h('div.grid');
+    const serverOptions = [['', '— aucun —'], ...servers.filter((s) => s.ip).map((s) => [`${s.ip}:${s.httpPort || 8081}`, s.name || s.ip])];
+    const toLocalInput = (iso) => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const drawEvents = () => {
+      clear(eventList);
+      events.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+      events.forEach((ev, idx) => {
+        const past = Date.parse(ev.date) + (Number(ev.durationMinutes) || 120) * 60000 < Date.now();
+        eventList.append(h('div.panel', { style: { background: 'var(--bg-2)', padding: '12px', opacity: past ? 0.55 : 1 } },
+          h('div.grid.grid-2',
+            field('Titre', h('input.input', { value: ev.title || '', on: { input: (e) => { ev.title = e.target.value; } } })),
+            field('Date et heure', h('input.input', { type: 'datetime-local', value: toLocalInput(ev.date), on: { change: (e) => { ev.date = new Date(e.target.value).toISOString(); } } })),
+            field('Serveur', h('select.input', { on: { change: (e) => { ev.server = e.target.value; } } }, serverOptions.map(([v, l]) => h('option', { value: v, selected: (ev.server || '') === v }, l)))),
+            field('Durée (min)', h('input.input', { type: 'number', value: ev.durationMinutes || 120, on: { input: (e) => { ev.durationMinutes = Number(e.target.value); } } })),
+          ),
+          h('div.row.mt',
+            field('Description', h('input.input', { value: ev.description || '', placeholder: 'voitures imposées, règles…', on: { input: (e) => { ev.description = e.target.value; } } })),
+            h('button.btn.btn-sm.btn-danger.right', { on: { click: () => { events.splice(idx, 1); drawEvents(); } } }, icon('trash')),
+          )));
+      });
+      if (!events.length) eventList.append(h('p.muted', { style: { margin: 0 } }, 'Aucun event prévu.'));
+    };
+    drawEvents();
+
+    // ---------- quick solo sessions
+    const presets = (data.manifest.soloPresets || []).map((p) => ({ ...p }));
+    const presetList = h('div.list');
+    const drawPresets = () => {
+      clear(presetList);
+      if (!presets.length) presetList.append(h('p.muted', { style: { margin: 0 } }, 'Aucune session. Dans l’onglet Solo, règle une session puis clique « Partager au Syndicate ».'));
+      presets.forEach((p, idx) => presetList.append(h('div.row', { style: { padding: '6px 0', borderBottom: '1px solid var(--line)' } },
+        h('div', h('div', { style: { fontWeight: 700 } }, p.name), h('div.hint', [p.settings && p.settings.car, p.settings && p.settings.track].filter(Boolean).join(' @ '))),
+        h('button.btn.btn-sm.btn-danger.right', { on: { click: () => { presets.splice(idx, 1); drawPresets(); } } }, icon('trash')))));
+    };
+    drawPresets();
+
+    // ---------- shared setups
+    const setupBox = h('div');
+    const published = data.manifest.setups || [];
+    (async () => {
+      const local = (await guard(() => api.call('admin:localSetups'))) || [];
+      const chosen = new Set();
+      clear(setupBox);
+      if (!local.length && !published.length) {
+        setupBox.append(h('p.muted', { style: { margin: 0 } }, 'Aucun setup trouvé dans Documents/Assetto Corsa/setups. Enregistre tes setups dans le jeu, puis reviens ici.'));
+        return;
+      }
+      for (const c of local) {
+        const pub = published.find((p) => p.car === c.car);
+        setupBox.append(h('label.row', { style: { padding: '5px 0' } },
+          h('input', { type: 'checkbox', on: { change: (e) => (e.target.checked ? chosen.add(c.car) : chosen.delete(c.car)) } }),
+          h('span', c.name), h('span.hint', `${c.count} setup(s)`), pub ? h('span.tag.ok', { style: { marginLeft: 'auto' } }, `Publiés (${pub.files})`) : null));
+      }
+      for (const p of published.filter((x) => !local.some((c) => c.car === x.car))) {
+        setupBox.append(h('div.row', { style: { padding: '5px 0' } }, h('span', p.name), h('span.tag.info', 'En ligne seulement')));
+      }
+      setupBox.append(h('div.row.mt',
+        published.length ? h('button.btn.btn-sm.btn-danger', { on: { click: async () => {
+          const cars = [...chosen].filter((c) => published.some((p) => p.car === c));
+          if (!cars.length) return toast('Coche les voitures dont il faut retirer les setups', 'warn');
+          if (await guard(() => api.call('admin:removeSetups', cars), 'Setups retirés')) load();
+        } } }, icon('trash'), 'Retirer') : null,
+        h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
+          if (!chosen.size) return toast('Coche au moins une voiture', 'warn');
+          logEl.textContent = '';
+          if (await guard(() => api.call('admin:publishSetups', [...chosen]), 'Setups publiés')) load();
+        } } }, icon('upload'), 'Publier les setups')));
+    })();
+
+    // ---------- Discord
+    const discord = { clientId: '', inviteUrl: '', ...(data.manifest.discord || {}) };
+
+    // ---------- history
+    const history = data.manifest.history || [];
+
+    metaBox.append(
+      h('div.panel', h('h3', 'Calendrier des events'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Les membres voient le prochain event sur l’accueil avec un compte à rebours, et reçoivent une notification 15 min avant.'),
+        eventList,
+        h('div.row.mt',
+          h('button.btn.btn-sm', { on: { click: () => { const d = new Date(Date.now() + 86400000); d.setHours(21, 0, 0, 0); events.push({ id: `e${Date.now().toString(36)}`, title: 'Soirée LKS', date: d.toISOString(), durationMinutes: 120, server: serverOptions[1] ? serverOptions[1][0] : '' }); drawEvents(); } } }, icon('plus'), 'Ajouter un event'),
+          h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
+            if (events.some((e) => !e.title || Number.isNaN(Date.parse(e.date)))) return toast('Chaque event a besoin d’un titre et d’une date', 'warn');
+            guard(() => api.call('admin:updateMeta', { events }), 'Calendrier publié');
+          } } }, 'Enregistrer le calendrier'))),
+      h('div.panel', h('h3', 'Sessions solo du Syndicate'), presetList,
+        h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => guard(() => api.call('admin:updateMeta', { soloPresets: presets }), 'Sessions enregistrées') } }, 'Enregistrer'))),
+      h('div.panel', h('h3', 'Setups partagés'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Les setups sont installés chez les membres à côté des leurs (préfixe LKS_), sans jamais écraser leurs propres réglages.'),
+        setupBox),
+      h('div.panel', h('h3', 'Discord'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Pour afficher « Joue à Lowkey Syndicate » sur le profil Discord des membres : crée une application nommée « Lowkey Syndicate » sur discord.com/developers/applications et colle son Application ID ici.'),
+        h('div.grid',
+          field('Application ID', h('input.input.mono', { value: discord.clientId, placeholder: '123456789012345678', on: { input: (e) => { discord.clientId = e.target.value.trim(); } } })),
+          field('Lien d’invitation du serveur Discord', h('input.input.mono', { value: discord.inviteUrl, placeholder: 'https://discord.gg/…', on: { input: (e) => { discord.inviteUrl = e.target.value.trim(); } } })),
+        ),
+        h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
+          if (discord.clientId && !/^\d{15,25}$/.test(discord.clientId)) return toast('L’Application ID est un nombre de 17 à 20 chiffres', 'warn');
+          if (discord.inviteUrl && !/^https:\/\//.test(discord.inviteUrl)) return toast('Le lien doit commencer par https://', 'warn');
+          guard(() => api.call('admin:updateMeta', { discord }), 'Réglages Discord publiés');
+        } } }, 'Enregistrer'))),
+      h('div.panel', h('h3', 'Historique des publications'),
+        history.length
+          ? h('div.history', history.map((e) => h('div.history-row', h('span.hint', dateFr(e.date)), h('strong', e.by), h('span', e.action))))
+          : h('p.muted', { style: { margin: 0 } }, 'Les prochaines publications apparaîtront ici, avec le nom de l’admin.')),
+    );
     const brand = data.manifest.branding;
     metaBox.append(
       h('div.panel', { style: { gridColumn: '1 / -1' } }, h('h3', 'Identité visuelle (logo & vitrine)'),

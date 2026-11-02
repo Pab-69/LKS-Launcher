@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lowkey Syndicate — Launcher Assetto Corsa</title>
+    <meta name="description" content="Le launcher Assetto Corsa du Lowkey Syndicate : voitures et circuits toujours à jour, serveurs en un clic, graphismes optimisés." />
+    <meta property="og:title" content="Lowkey Syndicate — Launcher Assetto Corsa" />
+    <meta property="og:description" content="Voitures et circuits du Syndicate toujours à jour, serveurs en un clic, graphismes optimisés." />
+    {{OG_IMAGE}}
+    {{FAVICON}}
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="hero">
+      {{HERO_BG}}
+      <div class="hero-shade"></div>
+      <nav class="top">
+        {{LOGO_WIDE}}
+        <div class="top-links">{{NAV_LINKS}}</div>
+      </nav>
+      <div class="hero-content">
+        {{LOGO}}
+        <h1>Le launcher du Syndicate</h1>
+        <p>Toutes les voitures et tous les circuits du groupe, toujours à jour. Les serveurs en un clic. Un jeu magnifique sans bidouille.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">Télécharger pour Windows</a>
+          {{DISCORD_BUTTON}}
+        </div>
+        <p class="small">Version {{VERSION}} · Windows 10/11 · nécessite Assetto Corsa (Steam)</p>
+        <p class="small muted">Si Windows affiche « Windows a protégé votre ordinateur » : <em>Informations complémentaires → Exécuter quand même</em>. Les mises à jour suivantes s'installent ensuite toutes seules.</p>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Ce que fait le launcher</h2>
+        <div class="features">
+          <div class="feature"><h3>Contenu toujours à jour</h3><p>Les voitures et circuits du Syndicate s'installent et se mettent à jour tout seuls. Tout le monde a exactement les mêmes fichiers.</p></div>
+          <div class="feature"><h3>Serveurs en un clic</h3><p>Joueurs et ping en direct, choix d'une place libre, et vérification du contenu avant de rejoindre.</p></div>
+          <div class="feature"><h3>Graphismes en un clic</h3><p>Installe le Custom Shaders Patch officiel avec le meilleur réglage pour ta carte graphique.</p></div>
+          <div class="feature"><h3>Solo</h3><p>Entraînement, course contre l'IA ou hotlap, avec météo, heure, aides… et les sessions préparées par le Syndicate.</p></div>
+          <div class="feature"><h3>Events</h3><p>Le calendrier des soirées avec compte à rebours et rappel 15 minutes avant.</p></div>
+          <div class="feature"><h3>Setups partagés</h3><p>Les réglages des voitures LKS arrivent tout seuls, à côté des tiens.</p></div>
+        </div>
+      </section>
+
+      {{GARAGE}}
+      {{NEWS}}
+      {{SUPPORT}}
+    </main>
+
+    <footer>
+      <p>© {{YEAR}} Lowkey Syndicate — association. Le nom, le logo et les visuels sont la propriété de l'association.</p>
+      <p>Le code du launcher est un logiciel libre sous licence GPL-3.0 : <a href="https://github.com/{{REPO}}">code source</a> · <a href="https://github.com/{{REPO}}/blob/main/PRIVACY.md">confidentialité</a> · <a href="https://github.com/{{REPO}}/blob/main/TRADEMARKS.md">marques</a>.</p>
+      <p class="muted">Assetto Corsa est une marque de Kunos Simulazioni. Ce site n'est pas affilié à Kunos ni à Steam.</p>
+    </footer>
+  </body>
+</html>

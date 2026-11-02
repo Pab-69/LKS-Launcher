@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage, Notification } = require('electron');
 
 const { Settings } = require('./config');
 const { detectAcRoot, detectSteamUser, isAcRoot, acDocumentsDir } = require('./paths');
@@ -18,6 +18,9 @@ const { contentDir } = require('./acContent');
 const { CspManager, checkVcRedist, compareVersions } = require('./csp');
 const graphics = require('./graphics');
 const { BrandingManager } = require('./branding');
+const { SetupSync, localSetupCars } = require('./setups');
+const { DiscordPresence } = require('./discord');
+const { appConfig } = require('./config');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -39,6 +42,10 @@ let contentCache = null;
 let updater = null;
 let csp = null;
 let branding = null;
+let setupsSync = null;
+const presence = new DiscordPresence();
+const startedAt = Date.now();
+const notifiedEvents = new Set();
 
 const acRoot = () => settings.data.acRoot;
 const docsDir = () => acDocumentsDir(settings.data, app.getPath('documents'));
@@ -124,6 +131,77 @@ function applyBrandIcon() {
   if (icon && win && !win.isDestroyed()) win.setIcon(nativeImage.createFromPath(icon));
 }
 
+// ---------------------------------------------------------------- Discord Rich Presence
+function brandLogoUrl() {
+  const files = (sync.manifest.branding && sync.manifest.branding.files) || [];
+  const logo = files.find((f) => f.name === 'logo.png');
+  return logo ? logo.url : undefined;
+}
+
+function presenceButtons() {
+  const d = sync.manifest.discord || {};
+  const buttons = [];
+  if (d.inviteUrl) buttons.push({ label: 'Rejoindre le Syndicate', url: d.inviteUrl });
+  buttons.push({ label: 'Télécharger le launcher', url: `https://github.com/${appConfig.contentRepo}/releases/latest` });
+  return buttons;
+}
+
+let presenceState = { details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt };
+
+function setPresence(state) {
+  presenceState = state || presenceState;
+  presence.setActivity({ ...presenceState, largeImage: brandLogoUrl(), largeText: 'Lowkey Syndicate', buttons: presenceButtons() });
+}
+
+function configurePresence() {
+  const clientId = (sync.manifest.discord && sync.manifest.discord.clientId) || appConfig.discordClientId || null;
+  presence.configure({ clientId: clientId && /^\d{15,25}$/.test(String(clientId)) ? String(clientId) : null, enabled: settings.data.discordPresence !== false });
+  setPresence();
+}
+
+// ---------------------------------------------------------------- events: reminders before a session
+function checkEvents() {
+  if (settings.data.eventNotifications === false || !Notification.isSupported()) return;
+  const now = Date.now();
+  for (const ev of sync.manifest.events || []) {
+    const start = Date.parse(ev.date);
+    if (!start || !ev.id) continue;
+    const minutes = Math.round((start - now) / 60000);
+    const key15 = `${ev.id}:15`;
+    const key0 = `${ev.id}:0`;
+    let body = null;
+    if (minutes <= 15 && minutes > 1 && !notifiedEvents.has(key15)) {
+      notifiedEvents.add(key15);
+      body = `Ça commence dans ${minutes} min${ev.server ? ' — le serveur est prêt' : ''}.`;
+    } else if (minutes <= 1 && minutes >= -10 && !notifiedEvents.has(key0)) {
+      notifiedEvents.add(key0);
+      notifiedEvents.add(key15);
+      body = "C'est parti ! Clique pour rejoindre.";
+    }
+    if (!body) continue;
+    const n = new Notification({ title: `${ev.title || 'Event LKS'}`, body, icon: branding.file('icon.png') || path.join(__dirname, '..', '..', 'assets', 'icon.png') });
+    n.on('click', () => {
+      if (win) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
+      send('navigate', { route: ev.server ? 'servers' : 'home', params: ev.server ? { select: ev.server } : {} });
+    });
+    n.show();
+  }
+}
+
+function syncSetups() {
+  if (!acRoot() || !fs.existsSync(docsDir())) return;
+  setupsSync
+    .sync(sync.manifest.setups || [])
+    .then((r) => {
+      if (r.installed) send('toast', { kind: 'success', text: `Setups LKS mis à jour (${r.installed} fichier(s))` });
+      for (const e of r.errors) send('toast', { kind: 'warn', text: `Setups : ${e}` });
+    })
+    .catch(() => {});
+}
+
 function syncBranding() {
   branding
     .sync(sync.manifest.branding)
@@ -140,6 +218,9 @@ async function refreshManifest({ autoSync } = {}) {
   await sync.loadManifest();
   send('sync:changed', sync.summary());
   syncBranding();
+  syncSetups();
+  configurePresence();
+  checkEvents();
   const pending = sync.summary();
   if (pending.unknown > 0 && !sync.verifying) await sync.verify(false);
   if (autoSync && settings.data.autoSync && !game.running && acRoot()) {
@@ -177,13 +258,20 @@ function setupSync() {
   setInterval(() => refreshManifest({ autoSync: true }).catch(() => {}), MANIFEST_POLL_MS);
 }
 
+function setupSync_() {
+  setupsSync = new SetupSync({ dataDir: app.getPath('userData'), getDocsDir: docsDir });
+  setInterval(checkEvents, 30000);
+}
+
 function setupGame() {
   game.on('started', () => {
     send('game:state', { running: true });
+    if (game.presence) setPresence({ ...game.presence, startedAt: Date.now() });
     if (settings.data.closeOnLaunch && win) win.minimize();
   });
   game.on('exited', (info) => {
     send('game:state', { running: false, ...info });
+    setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
     if (win) {
       if (win.isMinimized()) win.restore();
       win.focus();
@@ -432,6 +520,7 @@ function setupIpc() {
     }
     if (beforeUrl !== settings.data.manifestUrl || before !== settings.data.acRoot) refreshManifest({ autoSync: true }).catch(() => {});
     else send('sync:changed', sync.summary());
+    configurePresence();
     return out;
   });
   handle('settings:detect', async () => {
@@ -502,6 +591,8 @@ function setupIpc() {
     });
     game.writeConfig(docsDir(), raceIni, buildAssistsIni(opts.assists || s.assists));
     settings.update({ solo: { ...opts, assists: undefined }, assists: opts.assists || s.assists });
+    const modeLabel = { practice: 'Entraînement', race: 'Course', hotlap: 'Hotlap' }[opts.mode] || 'Solo';
+    game.presence = { details: `Solo — ${modeLabel}`, state: `${car.name} @ ${layout.name || track.name}` };
     game.launch(acRoot(), docsDir());
     return true;
   });
@@ -523,6 +614,9 @@ function setupIpc() {
       steamId: s.steamId,
     });
     game.writeConfig(docsDir(), raceIni, null);
+    const carInfo = content.cars.find((c) => c.id === opts.car);
+    const trackInfo = content.tracks.find((t) => t.id === track);
+    game.presence = { details: `En ligne — ${opts.serverName || 'serveur LKS'}`, state: `${carInfo ? carInfo.name : opts.car} @ ${trackInfo ? trackInfo.name : track}` };
     game.launch(acRoot(), docsDir());
     return true;
   });
@@ -641,7 +735,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -683,6 +777,29 @@ function setupIpc() {
     }),
   );
   handle('branding:get', () => branding.status());
+  handle('setups:status', () => setupsSync.status());
+  handle('discord:status', () => ({ configured: Boolean(presence.clientId), enabled: settings.data.discordPresence !== false, connected: presence.connected }));
+  handle('admin:localSetups', () => {
+    const names = Object.fromEntries(scanContent(false).cars.map((c) => [c.id, c.name]));
+    return localSetupCars(docsDir()).map((c) => ({ ...c, name: names[c.car] || c.car }));
+  });
+  handle('admin:publishSetups', (cars) =>
+    withAdmin(async () => {
+      const names = Object.fromEntries(scanContent(false).cars.map((c) => [c.id, c.name]));
+      const pub = getPublisher();
+      const r = await pub.publishSetups(docsDir(), cars, names);
+      await refreshManifest({ autoSync: false });
+      return r;
+    }),
+  );
+  handle('admin:removeSetups', (cars) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      await pub.removeSetups(cars);
+      await refreshManifest({ autoSync: false });
+      return true;
+    }),
+  );
   handle('admin:publishBranding', (dir) =>
     withAdmin(async () => {
       const pub = getPublisher();
@@ -713,6 +830,7 @@ app.whenReady().then(async () => {
   });
   setupSync();
   setupCsp();
+  setupSync_();
   setupGame();
   setupIpc();
   createWindow();

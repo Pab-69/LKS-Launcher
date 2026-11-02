@@ -11,6 +11,19 @@ const { readBrandingFolder } = require('./branding');
 const crypto = require('crypto');
 
 const MANIFEST_NAME = 'manifest.json';
+const META_KEYS = ['servers', 'news', 'name', 'motd', 'csp', 'showcase', 'donate', 'shop', 'events', 'soloPresets', 'discord'];
+const META_LABELS = {
+  servers: 'Serveurs mis à jour',
+  news: 'Actus mises à jour',
+  motd: 'Message du jour modifié',
+  csp: 'Version du CSP du groupe modifiée',
+  donate: 'Page de dons modifiée',
+  shop: 'Boutique modifiée',
+  events: 'Calendrier des events modifié',
+  soloPresets: 'Sessions solo modifiées',
+  discord: 'Réglages Discord modifiés',
+};
+const SETUP_EXT = /\.(ini|sp)$/i;
 const plural = (kind) => (kind === 'car' ? 'cars' : 'tracks');
 const safeName = (id) => id.replace(/[^A-Za-z0-9._-]/g, '_');
 // Official Kunos content (base game + DLC) is never redistributed.
@@ -141,6 +154,7 @@ class Publisher {
     else list.push(entry);
     list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
     this.log(`✔ ${label} : publié (version ${short})`);
+    this.note(`${kind === 'car' ? 'Voiture' : 'Circuit'} « ${meta.name} » publié${notes ? ` — ${notes}` : ''}`);
     return { status: 'published', version: hash };
   }
 
@@ -149,6 +163,7 @@ class Publisher {
     for (const { kind, id } of items) {
       this.manifest[plural(kind)] = this.manifest[plural(kind)].filter((e) => e.id !== id);
       this.log(`− ${kind === 'car' ? 'Voiture' : 'Circuit'} ${id} retiré du manifeste`);
+      this.note(`${kind === 'car' ? 'Voiture' : 'Circuit'} ${id} retiré`);
     }
     await this.saveManifest();
     await this.collectGarbage();
@@ -157,12 +172,40 @@ class Publisher {
   /** Replace servers / news / group name. */
   async updateMeta(patch) {
     if (!this.manifest) await this.open();
-    for (const key of ['servers', 'news', 'name', 'motd', 'csp', 'showcase', 'donate', 'shop']) if (patch[key] !== undefined) this.manifest[key] = patch[key];
+    for (const key of META_KEYS) {
+      if (patch[key] === undefined) continue;
+      this.manifest[key] = patch[key];
+      this.note(META_LABELS[key] || `${key} modifié`);
+    }
     await this.saveManifest();
+  }
+
+  /** GitHub login of the token's owner, for the publication history. */
+  async whoami() {
+    if (this.login === undefined) {
+      try {
+        const me = await this.gh.api('GET', '/user');
+        this.login = (me && me.login) || null;
+      } catch {
+        this.login = null;
+      }
+    }
+    return this.login;
+  }
+
+  note(action) {
+    (this.pending = this.pending || []).push(action);
   }
 
   async saveManifest() {
     this.manifest.updatedAt = new Date().toISOString();
+    if (this.pending && this.pending.length) {
+      const by = (await this.whoami()) || 'admin';
+      const date = this.manifest.updatedAt;
+      const entries = this.pending.map((action) => ({ date, by, action }));
+      this.manifest.history = [...entries.reverse(), ...(Array.isArray(this.manifest.history) ? this.manifest.history : [])].slice(0, 100);
+      this.pending = [];
+    }
     const buf = Buffer.from(JSON.stringify(this.manifest, null, 2));
     await this.upload(MANIFEST_NAME, buf, 'application/json', 'manifest.json');
     this.log('✔ Manifeste mis à jour : tous les launchers vont se synchroniser');
@@ -201,9 +244,77 @@ class Publisher {
       this.log(`✔ ${e.name} envoyé`);
     }
     this.manifest.branding = { version, files: out, showcase };
+    this.note('Identité visuelle publiée');
     await this.saveManifest();
     await this.collectGarbage();
     return { version, files: out.length, showcase: showcase.length };
+  }
+
+  /**
+   * Share car setups: Documents/Assetto Corsa/setups/<car>/<track>/*.ini
+   * One small archive per car; members get them next to their own setups.
+   */
+  async publishSetups(docsDir, cars, names = {}) {
+    if (!this.manifest) await this.open();
+    if (!Array.isArray(this.manifest.setups)) this.manifest.setups = [];
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lks-setups-'));
+    const report = [];
+    try {
+      for (const car of cars) {
+        const src = path.join(docsDir, 'setups', car);
+        if (!fs.existsSync(src)) {
+          report.push({ car, status: 'error', error: 'aucun setup trouvé' });
+          continue;
+        }
+        const stage = path.join(tmpDir, safeName(car));
+        const files = [];
+        (function walk(dir, rel) {
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const r = rel ? `${rel}/${e.name}` : e.name;
+            if (e.isDirectory()) walk(path.join(dir, e.name), r);
+            else if (SETUP_EXT.test(e.name) && !/^LKS_/i.test(e.name)) {
+              fs.mkdirSync(path.join(stage, ...r.split('/').slice(0, -1)), { recursive: true });
+              fs.copyFileSync(path.join(dir, e.name), path.join(stage, ...r.split('/')));
+              files.push(r);
+            }
+          }
+        })(src, '');
+        if (!files.length) {
+          report.push({ car, status: 'error', error: 'aucun fichier .ini' });
+          continue;
+        }
+        const { hash } = await hashFolder(stage);
+        const existing = this.manifest.setups.find((s) => s.car === car);
+        if (existing && existing.version === hash) {
+          this.log(`= Setups ${car} : inchangés`);
+          report.push({ car, status: 'unchanged' });
+          continue;
+        }
+        const zipPath = path.join(tmpDir, `${safeName(car)}.zip`);
+        await zipFolder(stage, zipPath);
+        const { hash: sha256, size } = await hashFile(zipPath);
+        const asset = await this.upload(`setups-${safeName(car)}-${hash.slice(0, 10)}.zip`, zipPath, 'application/zip', `Setups ${car}`);
+        const entry = { car, name: names[car] || car, version: hash, url: asset.browser_download_url, sha256, size, files, publishedAt: new Date().toISOString() };
+        if (existing) Object.assign(existing, entry);
+        else this.manifest.setups.push(entry);
+        this.log(`✔ Setups ${entry.name} : ${files.length} fichier(s) publiés`);
+        this.note(`Setups « ${entry.name} » publiés (${files.length})`);
+        report.push({ car, status: 'published', files: files.length });
+      }
+      if (report.some((r) => r.status === 'published')) await this.saveManifest();
+      await this.collectGarbage();
+    } finally {
+      await fs.promises.rm(tmpDir, { recursive: true, force: true });
+    }
+    return report;
+  }
+
+  async removeSetups(cars) {
+    if (!this.manifest) await this.open();
+    this.manifest.setups = (this.manifest.setups || []).filter((s) => !cars.includes(s.car));
+    for (const c of cars) this.note(`Setups ${c} retirés`);
+    await this.saveManifest();
+    await this.collectGarbage();
   }
 
   /** Delete archives no longer referenced by the manifest. */
@@ -212,13 +323,13 @@ class Publisher {
     for (const f of (this.manifest.branding && this.manifest.branding.files) || []) {
       if (f.url) used.add(decodeURIComponent(f.url.split('/').pop()));
     }
-    for (const e of [...this.manifest.cars, ...this.manifest.tracks]) {
+    for (const e of [...this.manifest.cars, ...this.manifest.tracks, ...(this.manifest.setups || [])]) {
       if (e.url) used.add(decodeURIComponent(e.url.split('/').pop()));
       if (e.preview) used.add(decodeURIComponent(e.preview.split('/').pop()));
     }
     for (const asset of [...this.assets]) {
       if (asset.name === MANIFEST_NAME || used.has(asset.name)) continue;
-      if (!/^(car|track|branding)-/.test(asset.name)) continue;
+      if (!/^(car|track|branding|setups)-/.test(asset.name)) continue;
       await this.gh.deleteAsset(asset.id);
       this.assets = this.assets.filter((a) => a !== asset);
     }

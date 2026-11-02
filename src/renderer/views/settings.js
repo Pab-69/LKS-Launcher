@@ -42,6 +42,8 @@ export default function settings(root, params) {
       h('div.mt'),
       toggle('Synchronisation automatique', s.autoSync, (v) => saveSettings({ autoSync: v }), 'Installe les nouveautés LKS dès qu’elles sont publiées (vérifié toutes les 5 min).'),
       toggle('Réduire le launcher pendant le jeu', s.closeOnLaunch, (v) => saveSettings({ closeOnLaunch: v })),
+      toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Ton statut Discord montre ta voiture, ta piste et un bouton pour rejoindre le Syndicate (Discord doit être ouvert).'),
+      toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification Windows 15 min avant chaque event du Syndicate, puis au départ.'),
       h('div.row.mt',
         h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'ac') } }, icon('folder'), 'Dossier du jeu'),
         h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'docs') } }, icon('folder'), 'Documents/Assetto Corsa'),

@@ -526,3 +526,13 @@ details summary::before { content: '✠ '; color: var(--accent); }
 .update-text strong { font: 700 15px var(--display); letter-spacing: 0.1em; text-transform: uppercase; }
 .update-text span { font-size: 12px; color: var(--text-2); }
 .notes { white-space: pre-line; color: var(--text-2); line-height: 1.6; user-select: text; }
+
+/* ---------------------------------------------------------------- events / history */
+.event-card { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.event-main { flex: 1; min-width: 260px; }
+.event-title { font: 600 38px/1.05 var(--gothic); margin-top: 4px; text-shadow: 0 0 24px rgba(179, 18, 42, 0.4); }
+.event-side { display: grid; gap: 8px; justify-items: end; }
+.event-countdown { font: 700 34px/1 var(--display); letter-spacing: 0.06em; color: #fff; font-variant-numeric: tabular-nums; }
+.history { display: grid; gap: 2px; max-height: 260px; overflow: auto; }
+.history-row { display: grid; grid-template-columns: 150px 110px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.history-row strong { color: var(--accent-2); font-weight: 600; }

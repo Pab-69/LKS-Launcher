@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.2.0
+
+- **Events** : le prochain event du Syndicate apparaît sur l'accueil avec un compte à rebours. Une notification arrive 15 min avant, puis au départ, et le bouton « Rejoindre » mène directement au serveur.
+- **Sessions du Syndicate** : des sessions solo préparées par les admins, à lancer en un clic depuis l'accueil.
+- **Setups partagés** : les réglages des voitures LKS sont installés automatiquement, à côté des tiens, sans jamais les écraser.
+- **Discord** : ton statut Discord affiche ta session (voiture, piste, solo ou en ligne), avec un bouton pour rejoindre le Syndicate. Désactivable dans les Paramètres.
+- Pour les admins : historique des publications, et réglages des events, sessions, setups et Discord dans Publication.
+
 ## 1.1.1
 
 - Correction : la page Solo ne plante plus au premier lancement, quand le dossier d'Assetto Corsa n'est pas encore configuré.

@@ -21,7 +21,7 @@ export default function solo(root, params) {
   root.append(
     h('div.view-head', h('div', h('h1', 'Solo'), h('p', 'Entraînement, course contre l’IA ou hotlap. Les réglages sont mémorisés.'))),
     h('div.solo', left, right),
-    h('div.launch-bar', summaryLine, h('button.btn.btn-primary.btn-lg', { on: { click: launch } }, icon('play'), 'Lancer')),
+    h('div.launch-bar', summaryLine, store.settings.admin && store.settings.admin.hasToken ? h('button.btn', { title: 'Publier ces réglages comme session rapide pour tout le Syndicate', on: { click: sharePreset } }, 'Partager au Syndicate') : null, h('button.btn.btn-primary.btn-lg', { on: { click: launch } }, icon('play'), 'Lancer')),
   );
 
   const car = () => content && content.cars.find((c) => c.id === o.car);
@@ -202,6 +202,33 @@ export default function solo(root, params) {
   }
   function pickTrack() {
     pickerModal('Choisir un circuit', content.tracks, o.track, (id) => { o.track = id; o.layout = ''; ensureDefaults(); renderLeft(); renderRight(); renderSummary(); }, 'track');
+  }
+
+  async function sharePreset() {
+    if (!car() || !track()) return toast('Choisissez une voiture et un circuit', 'warn');
+    let name = `${(layout() || track()).name} — ${{ practice: 'Entraînement', race: 'Course', hotlap: 'Hotlap' }[o.mode]}`;
+    let description = '';
+    const ok = await new Promise((resolve) => {
+      let done = false;
+      const m = modal({
+        title: 'Partager au Syndicate',
+        small: true,
+        body: h('div.grid',
+          h('p.muted', { style: { margin: 0 } }, 'Cette session apparaîtra sur l’accueil de tous les membres, prête à lancer en un clic avec leur propre réglage d’aides.'),
+          field('Nom', h('input.input', { value: name, on: { input: (e) => { name = e.target.value; } } })),
+          field('Description (optionnel)', h('input.input', { placeholder: 'ex : drift de nuit, pneus usés…', on: { input: (e) => { description = e.target.value; } } })),
+        ),
+        foot: [h('button.btn.btn-ghost', { on: { click: () => m.close() } }, 'Annuler'), h('button.btn.btn-primary', { on: { click: () => { done = true; m.close(); } } }, 'Publier')],
+        onClose: () => resolve(done),
+      });
+    });
+    if (!ok || !name.trim()) return;
+    const keys = ['mode', 'car', 'skin', 'track', 'layout', 'durationMinutes', 'laps', 'aiCount', 'aiLevel', 'aiAggression', 'startPosition', 'timeOfDay', 'timeMult', 'weather', 'ambient', 'road', 'trackGrip', 'penalties'];
+    const settings = Object.fromEntries(keys.map((k) => [k, o[k]]));
+    const manifest = await guard(() => api.call('sync:manifest'));
+    if (!manifest) return;
+    const soloPresets = [...(manifest.soloPresets || []), { id: `p${Date.now().toString(36)}`, name: name.trim(), description: description.trim(), settings }];
+    await guard(() => api.call('admin:updateMeta', { soloPresets }), 'Session partagée avec le Syndicate');
   }
 
   async function launch() {

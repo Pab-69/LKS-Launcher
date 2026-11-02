@@ -26,6 +26,8 @@ const DEFAULTS = {
   favoriteServers: [],
   graphics: { preset: '', appliedAt: null },
   lastRunVersion: '',
+  discordPresence: true,
+  eventNotifications: true,
   updateNotes: null,
   admin: {
     repo: appConfig.contentRepo,

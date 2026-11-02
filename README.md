@@ -9,7 +9,15 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Graphismes en 1 clic** : installe le Custom Shaders Patch officiel et applique un préréglage adapté à ta carte graphique (Performance, Équilibré, Qualité, Ultra).
 - **Soutenir** : page de dons (PayPal, Ko-fi, Tipeee…) avec objectif du mois, entièrement gérée depuis l'onglet Publication.
 - **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
+- **Events** : calendrier des soirées, compte à rebours sur l'accueil, notification 15 min avant et bouton « Rejoindre ».
+- **Sessions du Syndicate** : sessions solo préparées par les admins, lancées en un clic depuis l'accueil.
+- **Setups partagés** : les réglages des voitures LKS arrivent chez chacun, à côté de ses propres setups (préfixe `LKS_`), sans jamais rien écraser.
+- **Discord Rich Presence** : « Joue à Lowkey Syndicate — Drift sur Haruna en BMW M2 », avec des boutons pour rejoindre le Discord et télécharger le launcher.
+- **Historique des publications** : qui a publié quoi, et quand (pratique avec plusieurs admins).
+- **Site vitrine** sur GitHub Pages, généré automatiquement.
 - **Mise à jour automatique du launcher** via les releases GitHub.
+
+**Lien de téléchargement permanent**, à partager partout : https://github.com/Pab-69/LKS-Launcher/releases/latest/download/LKS-Launcher-Setup.exe
 
 > **About (English):** LKS Launcher is a free and open source (GPL-3.0) launcher for the racing game Assetto Corsa, made for the Lowkey Syndicate community. It keeps the group's cars and tracks in sync, starts single-player sessions, joins the group's servers, installs the official Custom Shaders Patch with optimized graphics presets, and lets admins publish content updates. Windows installer: see [Releases](https://github.com/Pab-69/LKS-Launcher/releases).
 
@@ -84,6 +92,26 @@ En ligne de commande (pratique pour les gros packs) :
 ```bash
 GITHUB_TOKEN=github_pat_xxx npm run publish-content -- --ac "C:\...\assettocorsa" car:lks_bmw_e36 track:lks_touge
 ```
+
+### Events, sessions, setups, Discord
+
+Tout se gère dans l'onglet **Publication** :
+
+- **Calendrier des events** : titre, date, serveur, durée et description. Les membres voient le prochain event avec un compte à rebours et reçoivent une notification Windows 15 min avant, puis au départ.
+- **Sessions solo** : dans l'onglet **Solo**, règle une session puis clique sur **Partager au Syndicate**. Elle apparaît sur l'accueil de tout le monde. Les sessions se suppriment dans Publication.
+- **Setups partagés** : enregistre tes setups dans le jeu, coche les voitures dans Publication, puis clique sur **Publier les setups**.
+- **Discord** : crée une application nommée « Lowkey Syndicate » sur [discord.com/developers/applications](https://discord.com/developers/applications), puis colle son *Application ID* et le lien d'invitation de ton serveur. Chaque membre peut désactiver son statut Discord dans les Paramètres.
+- **Historique** : chaque publication est enregistrée avec le compte GitHub de l'admin.
+
+### Site vitrine (GitHub Pages)
+
+Le site présente le Syndicate et le launcher : logo, vitrine, actus, bouton de téléchargement, liens Discord et dons. Il est reconstruit à chaque release et chaque nuit, à partir du contenu publié. Le logo n'est jamais ajouté au code.
+
+Mise en route, une seule fois :
+
+1. *Settings → Pages* → *Source* : **GitHub Actions**.
+2. *Settings → Secrets and variables → Actions → Variables* : crée `SITE_ENABLED` = `true`.
+3. *Actions → Site vitrine → Run workflow*. Le site est ensuite en ligne sur https://pab-69.github.io/LKS-Launcher/
 
 ### Serveurs
 
