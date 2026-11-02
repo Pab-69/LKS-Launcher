@@ -1,0 +1,86 @@
+name: Test Windows (application + mise à jour)
+
+# Lancé à la main (Actions > Run workflow), et automatiquement chaque lundi.
+#  - ui     : démarre le vrai .exe Windows, vérifie le rendu, le manifeste et
+#             l'identité visuelle en ligne, et fait des captures de chaque page.
+#  - update : installe une ancienne version publiée, la laisse se mettre à jour
+#             toute seule, puis vérifie la version installée.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: 'Version publiée à installer avant la mise à jour'
+        default: '1.0.0'
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the Windows app (unpacked)
+        run: npx electron-builder --win dir --publish never
+      - name: Run the smoke test
+        shell: bash
+        run: node tools/smoke/ui.js "dist/win-unpacked/LKS Launcher.exe" smoke-shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: captures-windows
+          path: smoke-shots/
+
+  update:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install the published version
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.from_version || '1.0.0' }}"
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$v/LKS-Launcher-Setup-$v.exe"
+          Invoke-WebRequest $url -OutFile setup.exe
+          Start-Process .\setup.exe -ArgumentList '/S' -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'LKS Launcher.exe' | Select-Object -First 1
+          if (-not $exe) { throw "Installation introuvable" }
+          "EXE=$($exe.FullName)" | Out-File -Append $env:GITHUB_ENV
+          Write-Host "Installé : $($exe.FullName) — version $($exe.VersionInfo.ProductVersion)"
+          if ($exe.VersionInfo.ProductVersion -ne $v) { throw "Version installée inattendue" }
+
+      - name: Let it update itself
+        shell: pwsh
+        run: |
+          $latest = (Invoke-RestMethod "https://api.github.com/repos/${{ github.repository }}/releases/latest").tag_name.TrimStart('v')
+          "LATEST=$latest" | Out-File -Append $env:GITHUB_ENV
+          Write-Host "Dernière version publiée : $latest"
+          $p = Start-Process $env:EXE -PassThru
+          # the launcher checks for updates at start-up and downloads in the background
+          $cache = "$env:LOCALAPPDATA\lks-launcher-updater\pending"
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep 5
+            $ready = Get-ChildItem $cache -Filter "*$latest*.exe" -ErrorAction SilentlyContinue
+            if ($ready) { Write-Host "Mise à jour téléchargée : $($ready.Name)"; break }
+          }
+          if (-not $ready) { Get-ChildItem "$env:LOCALAPPDATA" -Directory | Select-Object Name; throw "La mise à jour n'a pas été téléchargée" }
+          Start-Sleep 5
+          # close the launcher normally: the update installs silently on exit
+          taskkill /PID $p.Id /T | Out-Null
+          Start-Sleep 60
+
+      - name: Check the installed version
+        shell: pwsh
+        run: |
+          $exe = Get-Item $env:EXE
+          $v = $exe.VersionInfo.ProductVersion
+          Write-Host "Version installée après mise à jour : $v (attendue : $env:LATEST)"
+          if ($v -ne $env:LATEST) { throw "La mise à jour automatique n'a pas été installée" }
