@@ -50,7 +50,10 @@ jobs:
           $v = "${{ inputs.from_version || '1.0.0' }}"
           $url = "https://github.com/${{ github.repository }}/releases/download/v$v/LKS-Launcher-Setup-$v.exe"
           Invoke-WebRequest $url -OutFile setup.exe
-          Start-Process .\setup.exe -ArgumentList '/S' -Wait
+          Write-Host "Téléchargé : $((Get-Item setup.exe).Length) octets"
+          $inst = Start-Process .\setup.exe -ArgumentList '/S', '/currentuser' -Wait -PassThru
+          Write-Host "Code de sortie de l'installeur : $($inst.ExitCode)"
+          Get-ChildItem "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles" -Directory -ErrorAction SilentlyContinue | Where-Object Name -like '*lks*' | ForEach-Object { Write-Host "Dossier : $($_.FullName)"; Get-ChildItem $_.FullName | Select-Object -First 8 Name }
           # find the install through the uninstall registry entry (per-user or per-machine)
           $exe = $null
           for ($i = 0; $i -lt 30 -and -not $exe; $i++) {
@@ -62,7 +65,15 @@ jobs:
             }
             if (-not $exe) { Start-Sleep 2 }
           }
-          if (-not $exe) { Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue; throw "Installation introuvable" }
+          if (-not $exe) {
+            # fall back to a file search in the usual install folders
+            $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles\LKS Launcher" -Recurse -Filter 'LKS Launcher.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $exe) {
+            Get-ChildItem "$env:LOCALAPPDATA\Programs" -ErrorAction SilentlyContinue | Select-Object FullName
+            Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Select-Object DisplayName, InstallLocation | Format-Table | Out-String | Write-Host
+            throw "Installation introuvable"
+          }
           "EXE=$($exe.FullName)" | Out-File -Append $env:GITHUB_ENV
           Write-Host "Installé : $($exe.FullName) — version $($exe.VersionInfo.ProductVersion)"
           if ($exe.VersionInfo.ProductVersion -ne $v) { throw "Version installée inattendue" }
