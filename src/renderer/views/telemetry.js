@@ -8,6 +8,9 @@ let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
 let compareMode = 'time';
 let judgeMode = 'normal'; // debutant | normal | pro
 let editor = null; // drift course editor state
+let battleQuery = { track: '', layout: '' };
+let champIndex = 0;
+let champEditor = null; // admins: championships being edited
 
 const COLORS = { a: '#e01b3a', b: '#ece5da', grid: '#261e22', text: '#6c615c' };
 const COL = { d: 0, t: 1, speed: 2, gas: 3, brake: 4, gear: 5, rpm: 6, steer: 7, angle: 8, x: 9, z: 10 };
@@ -281,7 +284,7 @@ export default function telemetryView(root, params = {}) {
 
   function renderTabs() {
     clear(tabsEl);
-    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer']];
+    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat']];
     if (isAdmin()) tabs.push(['course', 'Parcours drift']);
     tabs.push(['tools', 'Outils']);
     if (!tabs.some(([k]) => k === tab)) tab = 'live';
@@ -296,7 +299,7 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
@@ -785,6 +788,164 @@ export default function telemetryView(root, params = {}) {
     body.append(h('div.course-layout', h('div.course-main', mapWrap, rulesPanel(() => {})), side));
     drawList();
     drawMap();
+  }
+
+  // ------------------------------------------------------------ battles
+  async function renderBattles() {
+    const { laps, map: combosMap } = await combos();
+    const keys = [...combosMap.keys()];
+    if (!battleQuery.track && keys.length) Object.assign(battleQuery, combosMap.get(boardQuery.track ? `${boardQuery.track}|${boardQuery.layout}` : laps[0] ? `${laps[0].track}|${laps[0].layout || ''}` : keys[0]) || combosMap.get(keys[0]));
+    if (!presets) presets = (await api.call('drift:modes')).presets;
+    body.append(h('div.toolbar',
+      keys.length ? select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${battleQuery.track}|${battleQuery.layout}`, (v) => { Object.assign(battleQuery, combosMap.get(v)); render(); }, 'board-select') : null,
+      seg(MODES, judgeMode, (v) => { judgeMode = v; render(); })));
+    const omt = presets[judgeMode].battle.omtGap;
+    body.append(h('div.notice.info', `Battle : deux runs avec les rôles inversés, sur le même circuit, à moins de 20 min d’écart. Chaque pilote a (note en lead + note en chase) / 2. Moins de ${omt} point${omt > 1 ? 's' : ''} d’écart : one more time. L’appli en jeu enregistre les deux runs.`));
+    if (!battleQuery.track) return;
+    const res = await guard(() => api.call('battles:list', { ...battleQuery, mode: judgeMode }));
+    if (!res) return;
+    if (res.error) body.append(h('div.notice.mt', res.error));
+    if (!res.battles.length) {
+      body.append(h('div.empty.mt', h('strong', 'Pas encore de battle'), 'Roule en tandem avec un pote : un passage chacun devant, et la battle est jugée toute seule.'));
+      return;
+    }
+    const list = h('div.grid.mt');
+    for (const b of res.battles) {
+      const r = b.result;
+      const [a, c] = r.drivers;
+      const me = (n) => (store.settings.driverName || '').trim().toLowerCase() === n.trim().toLowerCase();
+      list.append(h('div.panel.battle-card',
+        h('div.row',
+          h('div', h('div.battle-title', `${a.name} vs ${c.name}`), h('div.s', `${dateFr(b.date)} · ${MODE_LABEL[judgeMode]}`)),
+          h('div.right', r.omt ? h('span.tag.warn', 'One more time') : h('span.tag.ok', `${r.winner} gagne`))),
+        h('div.battle-table',
+          h('span.label', 'Pilote'), h('span.label', 'Lead'), h('span.label', 'Chase'), h('span.label', 'Total'),
+          ...[a, c].flatMap((d) => [h(`span${d.name === r.winner ? '.battle-win' : ''}`, d.name, me(d.name) ? ' (toi)' : ''), h('span', d.lead.toFixed(1)), h('span', d.chase.toFixed(1)), h('strong', d.total.toFixed(1))])),
+        b.remote ? h('p.hint', 'Battle partagée par un autre pilote.') : h('div.row.mt',
+          ...b.runs.map((run, i) => h('button.btn.btn-sm', { on: { click: () => openTandem(run.lapId) } }, `Run ${i + 1} : ${run.lead} devant`)))));
+    }
+    body.append(list);
+  }
+
+  // ------------------------------------------------------------ championship
+  const KIND_LABEL = { drift: 'Solo drift', tandem: 'Tandem', battle: 'Battle' };
+  const STATUS_TAG = { upcoming: ['plain', 'À venir'], live: ['warn', 'En cours'], done: ['ok', 'Terminée'] };
+  const toLocal = (iso) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
+
+  async function renderChamp() {
+    const list = (await guard(() => api.call('champ:list'))) || [];
+    if (champEditor) return renderChampEditor(list);
+    if (!list.length) {
+      body.append(h('div.empty', h('strong', 'Pas encore de championnat'), isAdmin() ? 'Crée-en un : des manches en solo, en tandem ou en battle, avec des points.' : 'Les admins n’en ont pas encore créé.'));
+      if (isAdmin()) body.append(h('div.row.mt', h('button.btn.btn-primary', { on: { click: () => { champEditor = strip(list); champEditor.push(newChamp()); champIndex = champEditor.length - 1; render(); } } }, icon('plus'), 'Créer un championnat')));
+      return;
+    }
+    champIndex = Math.min(champIndex, list.length - 1);
+    const c = list[champIndex];
+    body.append(h('div.toolbar',
+      list.length > 1 ? select(list.map((x, i) => [String(i), x.name]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select') : h('h2.champ-name', c.name),
+      isAdmin() ? h('button.btn.btn-sm.right', { on: { click: () => { champEditor = strip(list); render(); } } }, 'Modifier') : null));
+    // standings
+    const st = h('div.panel', h('h3', 'Classement général'));
+    if (!c.standings.length) st.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de points.'));
+    else {
+      st.append(h('div.champ-table', { style: { gridTemplateColumns: `40px minmax(0, 1fr) repeat(${c.rounds.length}, 44px) 70px` } },
+        h('span.label', '#'), h('span.label', 'Pilote'), ...c.rounds.map((_, i) => h('span.label', { title: c.rounds[i].name }, `M${i + 1}`)), h('span.label', 'Points'),
+        ...c.standings.flatMap((r, i) => [
+          h('span.board-pos', `${i + 1}`),
+          h('span', h('strong', r.name), h('span.s', ` ${r.wins} victoire${r.wins > 1 ? 's' : ''} · ${r.podiums} podium${r.podiums > 1 ? 's' : ''}`)),
+          ...c.rounds.map((_, k) => h('span.s', r.rounds[k] ? String(r.rounds[k]) : '—')),
+          h('strong.board-v', String(r.points))])));
+    }
+    body.append(st);
+    // rounds
+    c.rounds.forEach((r, i) => {
+      const [tagCls, tagText] = STATUS_TAG[r.status];
+      const panel = h('div.panel.mt',
+        h('div.row',
+          h('div', h('h3', { style: { margin: 0 } }, `M${i + 1} · ${r.name}`), h('div.s', `${trackName(r.track, r.layout)} · ${KIND_LABEL[r.kind]}${r.kind === 'battle' ? ` top ${r.bracket}` : ''} · ${MODE_LABEL[r.mode]} · du ${dateFr(r.start)} au ${dateFr(r.end)}`)),
+          h(`span.tag.${tagCls}.right`, tagText)));
+      if (r.error) panel.append(h('div.notice.mt', r.error));
+      if (r.kind !== 'battle') {
+        if (!r.results.length) panel.append(h('p.muted', r.status === 'upcoming' ? 'Pas encore commencée.' : 'Personne n’a encore roulé.'));
+        else panel.append(resultsList(r.results.slice(0, 16), true));
+      } else {
+        panel.append(h('div.label.mt', 'Qualifications (solo)'));
+        if (!r.qualifying.length) panel.append(h('p.muted', r.status === 'upcoming' ? 'Pas encore commencée.' : 'Personne n’a encore roulé.'));
+        else panel.append(resultsList(r.qualifying.slice(0, r.bracket).map((q, k) => ({ position: k + 1, name: q.name, score: q.score })), false));
+        if (r.qualifying.length >= 2) panel.append(h('div.label.mt', 'Tableau'), bracketView(r.draw));
+        if (r.results.length) panel.append(h('div.label.mt', 'Résultat'), resultsList(r.results, true));
+      }
+      body.append(panel);
+    });
+  }
+
+  function resultsList(rows, withPoints) {
+    return h('div.champ-results', ...rows.map((x) => h('div.champ-result', h('span.board-pos', String(x.position)), h('span', x.name), h('span.s', x.score != null ? `${Number(x.score).toFixed(1)}/100` : ''), withPoints ? h('strong', `${x.points} pts`) : h('span'))));
+  }
+
+  function bracketView(br) {
+    const names = ['Finale', 'Demi-finales', 'Quarts', 'Huitièmes', 'Seizièmes'];
+    return h('div.bracket', ...br.rounds.map((matches, k) => h('div.bracket-col',
+      h('div.label', names[br.rounds.length - 1 - k] || `Tour ${k + 1}`),
+      ...matches.map((m) => h('div.bracket-match',
+        ...[m.a, m.b].map((n) => h(`div.bracket-slot${n && m.winner === n ? '.win' : ''}`, n || (m.bye ? '—' : '?'))),
+        h('div.s', m.bye ? 'Qualifié d’office' : m.winner ? (m.battle ? `${m.battle.drivers.map((d) => d.total.toFixed(1)).join(' – ')}` : '') : m.omt ? 'One more time' : m.a && m.b ? 'À jouer' : ''))))));
+  }
+
+  function newChamp() {
+    return { id: Math.random().toString(36).slice(2, 8), name: 'Saison 1', points: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], rounds: [] };
+  }
+
+  async function renderChampEditor() {
+    const { map: combosMap } = await combos();
+    const keys = [...combosMap.keys()];
+    if (!champEditor.length) champEditor.push(newChamp());
+    champIndex = Math.min(champIndex, champEditor.length - 1);
+    const c = champEditor[champIndex];
+    body.append(h('div.toolbar',
+      select(champEditor.map((x, i) => [String(i), x.name]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select'),
+      h('button.btn.btn-sm', { on: { click: () => { champEditor.push(newChamp()); champIndex = champEditor.length - 1; render(); } } }, icon('plus'), 'Nouveau championnat'),
+      h('button.btn.btn-sm.btn-ghost.right', { on: { click: () => { champEditor = null; render(); } } }, 'Annuler')));
+    const roundsBox = h('div.grid');
+    const drawRounds = () => {
+      clear(roundsBox);
+      if (!c.rounds.length) roundsBox.append(h('p.muted', { style: { margin: 0 } }, 'Aucune manche.'));
+      c.rounds.forEach((r, i) => roundsBox.append(h('div.champ-round-edit',
+        h('strong.champ-round-n', `M${i + 1}`),
+        h('div.champ-round-fields',
+          field('Nom', h('input.input', { value: r.name, maxlength: 60, on: { input: (e) => { r.name = e.target.value; } } })),
+          field('Circuit', select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${r.track}|${r.layout || ''}`, (v) => Object.assign(r, combosMap.get(v)))),
+          field('Format', select([['drift', 'Solo drift'], ['tandem', 'Tandem'], ['battle', 'Battle']], r.kind, (v) => { r.kind = v; drawRounds(); })),
+          field('Mode', select(MODES, r.mode, (v) => { r.mode = v; })),
+          field('Début', h('input.input', { type: 'datetime-local', value: toLocal(r.start), on: { change: (e) => { r.start = new Date(e.target.value).toISOString(); } } })),
+          field('Fin', h('input.input', { type: 'datetime-local', value: toLocal(r.end), on: { change: (e) => { r.end = new Date(e.target.value).toISOString(); } } })),
+          r.kind === 'battle' ? field('Tableau', select([['4', 'Top 4'], ['8', 'Top 8'], ['16', 'Top 16']], String(r.bracket || 8), (v) => { r.bracket = Number(v); })) : h('span')),
+        h('button.btn.btn-sm.btn-ghost', { title: 'Retirer', on: { click: () => { c.rounds.splice(i, 1); drawRounds(); } } }, icon('trash')))));
+    };
+    drawRounds();
+    body.append(
+      h('div.panel',
+        h('div.grid.grid-2',
+          field('Nom', h('input.input', { value: c.name, maxlength: 60, on: { input: (e) => { c.name = e.target.value; } } })),
+          field('Points par place', h('input.input.mono', { value: c.points.join(', '), on: { change: (e) => { c.points = e.target.value.split(/[,; ]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0); } } }), '1er, 2e, 3e…')),
+        h('h3.mt', 'Manches'),
+        h('p.hint', 'Solo drift et tandem : la meilleure note de chaque pilote pendant la manche. Battle : qualifs en solo pendant la manche, puis tableau à élimination avec les battles.'),
+        roundsBox,
+        h('div.row.mt',
+          h('button.btn.btn-sm', { on: { click: () => {
+            if (!keys.length) return toast('Aucun circuit disponible', 'warn');
+            const first = combosMap.get(keys[0]);
+            const start = new Date();
+            start.setMinutes(0, 0, 0);
+            c.rounds.push({ id: Math.random().toString(36).slice(2, 8), name: `Manche ${c.rounds.length + 1}`, track: first.track, layout: first.layout, kind: 'drift', mode: 'normal', start: start.toISOString(), end: new Date(start.getTime() + 7 * 86400000).toISOString(), bracket: 8 });
+            drawRounds();
+          } } }, icon('plus'), 'Ajouter une manche'),
+          h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { if (await confirmBox('Supprimer', `Supprimer « ${c.name} » ?`, 'Supprimer')) { champEditor.splice(champIndex, 1); champIndex = 0; render(); } } } }, 'Supprimer ce championnat'),
+          h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
+            if (await guard(() => api.call('admin:saveChampionships', champEditor), 'Championnat publié')) { champEditor = null; render(); }
+          } } }, icon('upload'), 'Publier'))));
   }
 
   // ------------------------------------------------------------ tools

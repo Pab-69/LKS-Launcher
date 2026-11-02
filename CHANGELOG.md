@@ -1,5 +1,19 @@
 # Journal des versions
 
+## 1.8.0
+
+- **Battle tandem** : deux runs avec les rôles inversés, un passage chacun devant.
+  - Chaque pilote a (note en lead + note en chase) / 2.
+  - Trop serré : one more time.
+  - L'appli en jeu enregistre les deux runs, celle où tu suis et celle où tu es devant. La battle est jugée toute seule (onglet Battles).
+- **Championnat** : des manches en solo drift, en tandem ou en battle.
+  - Les battles se jouent en tableau à élimination (top 4, 8 ou 16) après des qualifs en solo.
+  - Points par place et classement général.
+  - Les admins le créent dans l'onglet Championnat.
+- Correction : une run où tu es devant n'envoie plus rien au classement à la place de l'autre pilote.
+- Appli en jeu 1.3 : réinstalle-la dans Outils.
+- Pour les admins : relance le script SQL du classement.
+
 ## 1.7.0
 
 - **Tandem** : ton chase est noté sur 100.

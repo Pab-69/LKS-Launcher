@@ -398,6 +398,94 @@ test('tandem runs from the in-game app are imported and judged', async () => {
   assert.ok(!m.store.list()[0].tandem.leadSamples, 'index keeps no samples');
 });
 
+test('battle tandem: two runs with the roles swapped', async () => {
+  const { runToLap } = require('../src/main/telemetry/tandem');
+  // chaser `gap` rows behind the leader on a circle, both sideways at `angle`
+  const makeRun = (role, chaserName, leadName, gapRows, angle, time) => {
+    const rows = [];
+    for (let k = 0; k < 400; k++) {
+      const a = k / 60;
+      const la = (k + gapRows) / 60;
+      rows.push([k * 50, k / 400, Math.cos(a) * 40, Math.sin(a) * 40, 70, angle, 1, 0, 4, 0, Math.cos(la) * 40, Math.sin(la) * 40, 35, 72, 0]);
+    }
+    return { v: 1, role, track: 'lks_touge', layout: 'downhill', car: 'lks_bmw_m2', driver: chaserName, lead: { name: leadName, car: 'lks_s15' }, time, lapMs: 20000, rows };
+  };
+  const me = { name: 'Pab', steamId: '7656' };
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(new Simulator()), getDriver: () => me, getSettings: () => ({}) });
+  const sentBattles = [];
+  const sentLaps = [];
+  m.board = () => ({ submit: async (l) => sentLaps.push(l.driver.name), submitBattle: async (b, mode, rules) => sentBattles.push([mode, rules || '']) });
+  const battles = [];
+  m.on('battle', (b) => battles.push(b));
+  const t0 = Math.floor(Date.now() / 1000);
+  // run 1: Kaze leads, Pab chases very close ; run 2: Pab leads, Kaze chases far behind
+  assert.strictEqual(await m.addTandemRun(runToLap(makeRun('chase', 'Pab', 'Kaze', 4, 34, t0), me)), null, 'one run is not a battle');
+  const battle = await m.addTandemRun(runToLap(makeRun('lead', 'Kaze', 'Pab', 30, 20, t0 + 120), me));
+  assert.ok(battle && battles.length === 1);
+  const res = battle.modes.normal;
+  assert.deepStrictEqual(res.drivers.map((d) => d.name), ['Kaze', 'Pab']);
+  const pab = res.drivers.find((d) => d.name === 'Pab');
+  const kaze = res.drivers.find((d) => d.name === 'Kaze');
+  assert.ok(pab.chase > kaze.chase, 'close chase beats a far one');
+  assert.strictEqual(res.winner, 'Pab');
+  assert.ok(!res.omt && res.diff >= 2);
+  assert.strictEqual(sentBattles.length, 3, 'one per mode');
+  assert.ok(sentLaps.length > 0 && sentLaps.every((n) => n === 'Pab'), 'the other driver\'s chase is not sent from this PC');
+  assert.ok(m.store.list().every((l) => l.battleId === battle.id), 'runs kept with the battle');
+  // a third run does not make another battle with already used runs
+  assert.strictEqual(await m.addTandemRun(runToLap(makeRun('chase', 'Pab', 'Kaze', 4, 34, t0 + 200), me)), null);
+
+  // one more time when the totals are too close
+  const { judgeBattle } = require('../src/main/telemetry/drift');
+  const r1 = runToLap(makeRun('chase', 'Pab', 'Kaze', 5, 30, t0), me);
+  const r2 = runToLap(makeRun('lead', 'Kaze', 'Pab', 5, 30, t0 + 60), me);
+  const close = judgeBattle(r1, r2, null, 'normal');
+  assert.ok(close.omt && close.winner === null);
+});
+
+test('championship: rounds, bracket and standings', () => {
+  const C = require('../src/main/telemetry/championship');
+  assert.deepStrictEqual(C.seedOrder(8), [1, 8, 4, 5, 2, 7, 3, 6]);
+  const now = Date.parse('2026-06-15T12:00:00Z');
+  const done = { id: 'r1', name: 'Haruna', track: 't', layout: '', kind: 'drift', mode: 'normal', start: '2026-06-01T00:00:00Z', end: '2026-06-07T00:00:00Z' };
+  const solo = C.roundResults(done, { entries: [{ name: 'Kaze', score: 70 }, { name: 'Pab', score: 82 }, { name: 'Riku', score: 60 }], now });
+  assert.strictEqual(solo.status, 'done');
+  assert.deepStrictEqual(solo.results.map((r) => [r.name, r.points]), [['Pab', 25], ['Kaze', 18], ['Riku', 15]]);
+
+  const battleRound = { id: 'r2', name: 'Battle Ebisu', track: 'e', layout: '', kind: 'battle', mode: 'pro', bracket: 4, start: '2026-06-10T00:00:00Z', end: '2026-06-20T00:00:00Z' };
+  const quali = [{ name: 'Pab', score: 80 }, { name: 'Kaze', score: 78 }, { name: 'Riku', score: 70 }, { name: 'Mako', score: 65 }, { name: 'Shin', score: 50 }];
+  const b = (w, l, date, omt = false) => ({ drivers: [{ name: w }, { name: l }], winner: omt ? null : w, omt, date });
+  // semis: 1 Pab vs 4 Mako, 2 Kaze vs 3 Riku
+  let live = C.roundResults(battleRound, { entries: quali, battles: [b('Pab', 'Mako', '2026-06-11'), b('Kaze', 'Riku', '2026-06-11', true)], now });
+  assert.strictEqual(live.status, 'live');
+  assert.deepStrictEqual(live.draw.rounds[0].map((x) => [x.a, x.b, x.winner, x.omt]), [['Pab', 'Mako', 'Pab', false], ['Kaze', 'Riku', null, true]]);
+  assert.deepStrictEqual(live.results, [], 'no final placing yet');
+  live = C.roundResults(battleRound, { entries: quali, battles: [b('Pab', 'Mako', '2026-06-11'), b('Kaze', 'Riku', '2026-06-11', true), b('Riku', 'Kaze', '2026-06-12'), b('Riku', 'Pab', '2026-06-13')], now });
+  assert.deepStrictEqual(live.results.map((r) => [r.position, r.name]), [[1, 'Riku'], [2, 'Pab'], [3, 'Kaze'], [4, 'Mako']]);
+  assert.ok(!live.results.some((r) => r.name === 'Shin'), 'only the top 4 enter the bracket');
+
+  const table = C.standings({}, [solo, live]);
+  assert.deepStrictEqual(table.map((r) => [r.name, r.points]), [['Pab', 43], ['Riku', 40], ['Kaze', 33], ['Mako', 12]]);
+  assert.strictEqual(table[1].wins, 1);
+
+  assert.strictEqual(C.openRounds([{ rounds: [done, battleRound] }], { track: 'e', layout: '' }, now).length, 1);
+  const clean = C.cleanChampionships([{ name: 'Saison 1', rounds: [{ name: 'x', track: '../t', kind: 'nope', mode: 'pro', start: '2026-01-01', end: '2026-01-02', bracket: 5 }] }]);
+  assert.deepStrictEqual([clean[0].rounds[0].track, clean[0].rounds[0].kind, clean[0].rounds[0].bracket, clean[0].points[0]], ['..t', 'drift', 8, 25]);
+});
+
+test('championship round: results sent with the round rules', async () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const start = new Date(Date.now() - 3600e3).toISOString();
+  const end = new Date(Date.now() + 3600e3).toISOString();
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(sim), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}), getRounds: () => [{ id: 'abc123', kind: 'drift', mode: 'pro', start, end }] });
+  const sent = [];
+  m.board = () => ({ submit: async (lap, kind, mode, rules) => sent.push([kind, mode, rules || '']) });
+  for (let i = 0; i < 1400; i++) m.tick();
+  await new Promise((r) => setImmediate(r));
+  const round = sent.filter((x) => x[2].endsWith('@abc123'));
+  assert.ok(round.length === 1 && round[0][0] === 'drift' && round[0][1] === 'pro');
+});
+
 test('companion tools and in-game app', () => {
   const env = { 'ProgramFiles(x86)': 'C:\\PF86', ProgramFiles: 'C:\\PF' };
   const status = toolsStatus({ env, exists: (p) => p.includes('SimHub') });

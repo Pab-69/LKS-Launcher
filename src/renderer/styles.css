@@ -625,3 +625,24 @@ select.input.board-select { width: auto; min-width: 240px; }
 .rules-panel .range { max-width: 520px; }
 .lap-row { grid-template-columns: 130px minmax(0, 1fr) 120px 170px 250px; }
 .lap-row > .row { justify-content: flex-end; }
+
+/* ---------------------------------------------------------------- battles / championship */
+.battle-title { font: 600 26px var(--gothic); }
+.battle-table { display: grid; grid-template-columns: minmax(0, 1fr) 80px 80px 80px; gap: 6px 12px; margin-top: 12px; align-items: center; font-variant-numeric: tabular-nums; }
+.battle-win { color: var(--ok); font-weight: 700; }
+.champ-name { margin: 0; font: 600 32px var(--gothic); }
+.champ-table { display: grid; gap: 8px 10px; align-items: center; }
+.champ-table .board-pos { font-size: 20px; text-align: left; }
+.champ-results { display: grid; gap: 4px; margin-top: 8px; }
+.champ-result { display: grid; grid-template-columns: 34px minmax(0, 1fr) 90px 70px; gap: 10px; align-items: center; padding: 6px 10px; background: var(--bg-2); border: 1px solid var(--line); }
+.champ-result .board-pos { font-size: 18px; }
+.bracket { display: flex; gap: 18px; overflow-x: auto; padding: 8px 0; }
+.bracket-col { display: flex; flex-direction: column; justify-content: space-around; gap: 12px; min-width: 170px; }
+.bracket-match { border: 1px solid var(--line-2); background: var(--bg-2); padding: 6px 8px; display: grid; gap: 3px; }
+.bracket-slot { padding: 3px 6px; font: 600 14px var(--display); letter-spacing: 0.03em; color: var(--text-2); }
+.bracket-slot.win { color: #fff; background: var(--accent-soft); border-left: 2px solid var(--accent-2); }
+.champ-round-edit { display: grid; grid-template-columns: 40px minmax(0, 1fr) 36px; gap: 10px; align-items: start; padding: 10px; background: var(--bg-2); border: 1px solid var(--line); }
+.champ-round-n { font: 600 22px var(--gothic); padding-top: 22px; }
+.champ-round-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
+.champ-round-fields .field { margin: 0; }
+@media (max-width: 1100px) { .champ-round-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

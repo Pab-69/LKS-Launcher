@@ -35,6 +35,8 @@ const { Leaderboard } = require('./telemetry/leaderboard');
 const { courseVersion, referenceFrom, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
 const { autoCourse } = require('./telemetry/ailine');
 const { collectRuns } = require('./telemetry/tandem');
+const champ = require('./telemetry/championship');
+const { dedupe: dedupeBattles } = require('./telemetry/battles');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -464,6 +466,16 @@ function setupTelemetry() {
     getBoardConfig: () => sync.manifest.leaderboard || null,
     getSettings: () => settings.data.telemetry,
     getCourse: driftCourse,
+    getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
+  });
+  telemetry.on('battle', (b) => {
+    const res = b.modes.normal;
+    const me = (settings.data.driverName || '').trim().toLowerCase();
+    const other = res.drivers.find((d) => d.name.trim().toLowerCase() !== me) || res.drivers[1];
+    let text = `Battle ${res.drivers[0].name} – ${res.drivers[1].name} : ${res.omt ? 'one more time' : `${res.winner} gagne`}`;
+    if (me && res.drivers.some((d) => d.name.trim().toLowerCase() === me)) text = `Battle contre ${other.name} : ${res.omt ? 'one more time !' : res.winner.trim().toLowerCase() === me ? 'gagnée' : 'perdue'} (${res.drivers.map((d) => d.total).join(' – ')})`;
+    send('toast', { kind: res.omt ? 'info' : 'success', text });
+    send('telemetry:lap', null);
   });
   applyDriftCourses();
   telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
@@ -1114,6 +1126,52 @@ function setupIpc() {
     return course;
   });
   handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
+  handle('battles:list', async ({ track, layout = '', mode = 'normal' }) => {
+    const version = courseVersion(driftCourse({ track, layout }), mode);
+    const view = (b) => ({ ...b, result: b.modes[mode] || null });
+    const local = telemetry.battles.list({ track, layout }).map(view);
+    const board = telemetry.board();
+    let remote = [];
+    let error = null;
+    if (board) {
+      try {
+        remote = (await board.battles({ track, layout, rules: version })).map(view);
+      } catch (err) {
+        error = err.message;
+      }
+    }
+    return { battles: dedupeBattles([...local, ...remote]).filter((b) => b.result), error };
+  });
+  handle('champ:list', async () => {
+    const list = (sync.manifest && sync.manifest.championships) || [];
+    const board = telemetry.board();
+    const out = [];
+    for (const c of list) {
+      const rounds = [];
+      for (const round of c.rounds || []) {
+        const version = courseVersion(driftCourse(round), round.mode);
+        const rules = `${version}@${round.id}`;
+        const kind = round.kind === 'battle' ? 'drift' : round.kind;
+        const inWindow = (date) => Date.parse(date) >= Date.parse(round.start) && Date.parse(date) <= Date.parse(round.end);
+        let entries = null;
+        let battles = null;
+        let error = null;
+        if (board && champ.roundStatus(round) !== 'upcoming') {
+          try {
+            entries = (await board.list({ track: round.track, layout: round.layout || '', kind, rules, limit: 100 })).map((r) => ({ name: r.driver, steamId: r.steam_id, score: Number(r.score) }));
+            if (round.kind === 'battle') battles = (await board.battles({ track: round.track, layout: round.layout || '', rules })).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+          } catch (err) {
+            error = err.message;
+          }
+        }
+        if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
+        if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+        rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: dedupeBattles(battles.map((b) => ({ ...b, pair: b.drivers.map((d) => d.name.toLowerCase()).sort().join('|'), track: round.track }))), points: c.points }), error });
+      }
+      out.push({ ...c, rounds, standings: champ.standings(c, rounds) });
+    }
+    return out;
+  });
   handle('telemetry:board', async (q) => {
     if (q.kind !== 'time') q.rules = courseVersion(driftCourse(q), q.mode || 'normal');
     const local = telemetry.store.leaderboard(q);
@@ -1208,6 +1266,14 @@ function setupIpc() {
         all[key] = course;
       }
       await pub.updateMeta({ drift: all });
+      await refreshManifest({ autoSync: false });
+      return true;
+    }),
+  );
+  handle('admin:saveChampionships', (list) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      await pub.updateMeta({ championships: champ.cleanChampionships(list) });
       await refreshManifest({ autoSync: false });
       return true;
     }),

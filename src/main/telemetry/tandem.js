@@ -28,7 +28,8 @@ function runToLap(run, driver = {}) {
   return {
     version: 1,
     id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    driver: { name: String(driver.name || run.driver || 'Pilote').slice(0, 40), steamId: driver.steamId || '' },
+    // run where you led: the chaser is the other driver
+    driver: run.role === 'lead' ? { name: String(run.driver || '?').slice(0, 40), steamId: '' } : { name: String(driver.name || run.driver || 'Pilote').slice(0, 40), steamId: driver.steamId || '' },
     car: run.car,
     track: run.track,
     layout: typeof run.layout === 'string' ? run.layout : '',
@@ -38,8 +39,12 @@ function runToLap(run, driver = {}) {
     cuts: 0,
     topSpeed: Math.max(...samples.map((s) => s[2])),
     drift: {},
-    tandem: { lead: { name: String((run.lead && run.lead.name) || '?').slice(0, 40), car: String((run.lead && run.lead.car) || '') }, leadSamples },
-    date: new Date().toISOString(),
+    tandem: {
+      lead: run.role === 'lead' ? { name: String(driver.name || (run.lead && run.lead.name) || '?').slice(0, 40), car: String((run.lead && run.lead.car) || ''), steamId: driver.steamId || '' } : { name: String((run.lead && run.lead.name) || '?').slice(0, 40), car: String((run.lead && run.lead.car) || '') },
+      role: run.role === 'lead' ? 'lead' : 'chase',
+      leadSamples,
+    },
+    date: new Date(Number(run.time) > 1e9 ? Number(run.time) * 1000 : Date.now()).toISOString(),
     columns: [...COLUMNS, 'contact'],
     samples,
   };

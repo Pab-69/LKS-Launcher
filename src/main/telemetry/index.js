@@ -12,13 +12,17 @@ const { TelemetryRecorder } = require('./recorder');
 const { LapStore } = require('./store');
 const { Leaderboard } = require('./leaderboard');
 const { DashServer } = require('./dash-server');
+const { BattleStore, findPartnerRun } = require('./battles');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse, getRounds }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
+    this.battles = new BattleStore(dataDir);
+    // championship rounds open now for a track: [{ id, kind, mode, start, end }]
+    this.getRounds = getRounds || (() => []);
     this.getCourse = getCourse || (() => null);
     this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c) });
     this.getBoardConfig = getBoardConfig || (() => null);
@@ -125,6 +129,7 @@ class TelemetryManager extends EventEmitter {
         /* unreadable lap: leave it */
       }
     }
+    n += this.battles.rejudge((b) => this.getCourse(b), (id) => this.store.load(id), courseVersion);
     if (n) this.synced.clear(); // new bests may need sending
     return n;
   }
@@ -181,22 +186,79 @@ class TelemetryManager extends EventEmitter {
     const pbTime = lap.valid && (!prevBest || lap.lapMs < prevBest.lapMs);
     if (pbTime && !lap.tandem) this.recorder.setReference(lap);
     this.emit('lap', { lap: { ...lap, samples: lap.samples.length, tandem: lap.tandem ? { ...lap.tandem, leadSamples: undefined } : undefined }, pbTime, pbDrift, pbTandem });
-    const board = this.getSettings().shareLaps !== false ? this.board() : null;
+    // only this PC's driver sends records (a run you led holds the other driver's chase)
+    const me = (this.recorder.getDriver() || {}).steamId || '';
+    const board = this.getSettings().shareLaps !== false && (lap.driver.steamId || '') === me ? this.board() : null;
     if (!board) return;
     try {
       if (pbTime) await board.submit(lap, 'time');
       for (const mode of pbDrift) await board.submit(lap, 'drift', mode);
       for (const mode of pbTandem) await board.submit(lap, 'tandem', mode);
+      for (const r of this.roundRecords(lap)) await board.submit(lap, r.kind, r.mode, r.rules);
       if (pbTime || pbDrift.length || pbTandem.length) this.emit('submitted', { pbTime, pbDrift, pbTandem });
     } catch (err) {
       this.emit('submitError', err);
     }
   }
 
+  /**
+   * Championship rounds open now on this track: is this lap the driver's best
+   * of the round? Returns [{ kind, mode, rules }] to send with the round's rules.
+   */
+  roundRecords(lap) {
+    const out = [];
+    const own = lap.driver.steamId;
+    if (!own) return out;
+    const time = Date.parse(lap.date);
+    for (const round of this.getRounds({ track: lap.track, layout: lap.layout || '' }) || []) {
+      const kind = round.kind === 'battle' ? 'drift' : round.kind; // battle rounds: qualifying in solo
+      if (kind !== 'drift' && kind !== 'tandem') continue;
+      if (!(time >= Date.parse(round.start) && time <= Date.parse(round.end))) continue;
+      const res = driftOf(lap, round.mode, kind);
+      if (!res || !(res.score > 0)) continue;
+      const others = this.store.list({ track: lap.track, layout: lap.layout || '' }).filter((l) => l.id !== lap.id && l.driver.steamId === own && Date.parse(l.date) >= Date.parse(round.start) && Date.parse(l.date) <= Date.parse(round.end));
+      const better = others.every((l) => {
+        const o = driftOf(l, round.mode, kind);
+        return !o || o.rules !== res.rules || o.score < res.score;
+      });
+      if (better) out.push({ kind, mode: round.mode, rules: `${res.rules}@${round.id}` });
+    }
+    return out;
+  }
+
   /** Tandem run recorded by the in-game app (it sees the other cars). */
-  addTandemRun(lap) {
+  async addTandemRun(lap) {
     this.judge(lap, this.getCourse(lap));
-    return this.onLap(lap);
+    await this.onLap(lap);
+    return this.detectBattle(lap);
+  }
+
+  /** Two runs with the roles swapped = a battle. */
+  async detectBattle(lap) {
+    const candidates = this.store.list({ track: lap.track, layout: lap.layout || '' }).filter((l) => l.tandem);
+    const other = findPartnerRun(lap, candidates, this.battles.usedLaps());
+    if (!other) return null;
+    const full = this.store.load(other.id);
+    const battle = BattleStore.make(lap, full, this.getCourse(lap));
+    for (const run of [lap, full]) {
+      run.battleId = battle.id; // kept when old laps are cleaned up
+      this.store.save(run, { imported: Boolean(this.store.index.find((l) => l.id === run.id && l.imported)) });
+    }
+    this.battles.add(battle);
+    this.emit('battle', battle);
+    const board = this.getSettings().shareLaps !== false ? this.board() : null;
+    if (board) {
+      try {
+        const rounds = (this.getRounds({ track: battle.track, layout: battle.layout }) || []).filter((r) => r.kind === 'battle' && Date.parse(battle.date) >= Date.parse(r.start) && Date.parse(battle.date) <= Date.parse(r.end));
+        for (const mode of MODE_IDS) {
+          await board.submitBattle(battle, mode);
+          for (const r of rounds.filter((x) => x.mode === mode)) await board.submitBattle(battle, mode, `${battle.modes[mode].rules}@${r.id}`);
+        }
+      } catch (err) {
+        this.emit('submitError', err);
+      }
+    }
+    return battle;
   }
 }
 

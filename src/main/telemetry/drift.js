@@ -47,6 +47,7 @@ const MODES = {
     reverse: { action: 'points', points: 3 },
     spin: { action: 'points', points: 10 },
     missedClip: { action: 'none', points: 0 },
+    battle: { omtGap: 1 },
     tandem: { weights: { proximity: 35, angle: 25, line: 20, drift: 20 }, gap: [3, 18], lostGap: 40, contact: { action: 'points', points: 3 }, pass: { action: 'points', points: 5 }, lost: { action: 'points', points: 3 } },
   },
   normal: {
@@ -62,6 +63,7 @@ const MODES = {
     reverse: { action: 'points', points: 10 },
     spin: { action: 'points', points: 20 },
     missedClip: { action: 'none', points: 2 },
+    battle: { omtGap: 2 },
     tandem: { weights: { proximity: 35, angle: 25, line: 20, drift: 20 }, gap: [2, 12], lostGap: 25, contact: { action: 'points', points: 10 }, pass: { action: 'zero', points: 0 }, lost: { action: 'points', points: 10 } },
   },
   pro: {
@@ -77,6 +79,7 @@ const MODES = {
     reverse: { action: 'zero', points: 0 },
     spin: { action: 'zero', points: 0 },
     missedClip: { action: 'points', points: 5 },
+    battle: { omtGap: 3 },
     tandem: { weights: { proximity: 35, angle: 25, line: 20, drift: 20 }, gap: [1.5, 9], lostGap: 18, contact: { action: 'zero', points: 0 }, pass: { action: 'zero', points: 0 }, lost: { action: 'zero', points: 0 } },
   },
 };
@@ -436,6 +439,42 @@ function scoreTandemAll(samples, lead, course) {
   return { ...modes.normal, modes };
 }
 
+/** The leader of a tandem run as solo samples (distance axis of the chaser). */
+function leadSamplesAsRun(samples, lead) {
+  return samples.map((s, i) => [s[C.d], s[C.t], lead[i][LC.speed], 0, 0, 0, 0, 0, lead[i][LC.angle], lead[i][LC.x], lead[i][LC.z], 0, lead[i][LC.slip]]);
+}
+
+/**
+ * Battle tandem: two runs with the roles swapped. run1: A leads, B chases;
+ * run2: B leads, A chases. Each driver gets (lead note + chase note) / 2.
+ * Closer than the mode's « one more time » gap: OMT, the battle is replayed.
+ */
+function judgeBattle(run1, run2, course, mode = 'normal') {
+  const rules = rulesFor(course, mode);
+  const A = run1.tandem.lead.name;
+  const B = run1.driver.name;
+  const chase = (run) => {
+    const r = scoreTandem(run.samples, run.tandem.leadSamples, course, mode);
+    return r ? r.score : 0;
+  };
+  const lead = (run) => {
+    const r = scoreDrift(leadSamplesAsRun(run.samples, run.tandem.leadSamples), course, mode);
+    return r ? r.score : 0;
+  };
+  const a = { name: A, lead: lead(run1), chase: chase(run2) };
+  const b = { name: B, chase: chase(run1), lead: lead(run2) };
+  for (const d of [a, b]) d.total = r1((d.lead + d.chase) / 2);
+  const diff = r1(Math.abs(a.total - b.total));
+  const omt = diff < ((rules.battle && rules.battle.omtGap) || 0);
+  return { mode, drivers: [a, b], diff, omt, winner: omt ? null : a.total > b.total ? A : B, rules: courseVersion(course, mode) };
+}
+
+function judgeBattleAll(run1, run2, course) {
+  const modes = {};
+  for (const m of MODE_IDS) modes[m] = judgeBattle(run1, run2, course, m);
+  return modes;
+}
+
 /** Live clip feedback while driving: closest approach per clip so far. */
 class LiveClips {
   constructor(course) {
@@ -474,6 +513,9 @@ module.exports = {
   scoreAllModes,
   scoreTandem,
   scoreTandemAll,
+  judgeBattle,
+  judgeBattleAll,
+  leadSamplesAsRun,
   courseVersion,
   rulesFor,
   referenceFrom,

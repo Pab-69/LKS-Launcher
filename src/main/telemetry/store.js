@@ -101,6 +101,7 @@ class LapStore {
       }
     }
     laps.sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).slice(0, MAX_PER_COMBO).forEach((l) => keep.add(l.id));
+    laps.filter((l) => l.battleId).forEach((l) => keep.add(l.id)); // runs of a battle
     for (const l of laps) {
       if (keep.has(l.id)) continue;
       fs.rmSync(this.file(l.id), { force: true });
@@ -136,9 +137,11 @@ class LapStore {
   }
 
   /** Leaderboard from the laps on this PC (own + imported): best per driver. */
-  leaderboard({ track, layout = '', car, kind = 'time', mode = 'normal', rules }) {
+  leaderboard({ track, layout = '', car, kind = 'time', mode = 'normal', rules, from, to }) {
     const best = {};
     for (const l of this.list({ track, layout, car })) {
+      if (from && Date.parse(l.date) < Date.parse(from)) continue;
+      if (to && Date.parse(l.date) > Date.parse(to)) continue;
       if (kind === 'time' && !l.valid) continue;
       const result = kind === 'time' ? null : resultOf(l, kind, mode, rules);
       if (kind !== 'time' && !result) continue;

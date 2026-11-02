@@ -53,7 +53,12 @@ local function driftAngle(car)
 end
 
 -- ------------------------------------------------------------- tandem
-local tandem = { lead = nil, rows = {}, frames = 0, leadFrames = 0, lastT = -1, lastD = -1, saved = nil, lost = 0 }
+-- Une run est enregistrée quand une autre voiture roule à moins de 35 m :
+--   devant toi  -> tu es le chaser (role "chase")
+--   derrière toi -> tu es le leader (role "lead"), la run du chaser est
+--                  enregistrée aussi : avec les deux runs inversées, le
+--                  launcher juge la battle.
+local tandem = { other = nil, role = nil, rows = {}, frames = 0, withFrames = 0, lastT = -1, lastD = -1, saved = nil, lost = 0 }
 
 local function num(v) return string.format('%.2f', tonumber(v) or 0) end
 local function jstr(v) return '"' .. tostring(v or ''):gsub('[%c"\\]', ' ') .. '"' end
@@ -64,34 +69,41 @@ local function safe(fn, default)
   return default
 end
 
--- voiture la plus proche devant toi (moins de 35 m)
-local function findLead(me)
+-- voiture la plus proche (moins de 35 m), devant ou derrière
+local function findPartner(me)
   local count = safe(function() return ac.getSim().carsCount end, 1)
-  local best, bestDist = nil, 35
+  local best, bestDist, bestRole = nil, 35, nil
   for i = 1, count - 1 do
     local c = ac.getCar(i)
     if c and safe(function() return c.isConnected end, true) and c.speedKmh > 10 then
       local dx, dz = c.position.x - me.position.x, c.position.z - me.position.z
       local dist = math.sqrt(dx * dx + dz * dz)
-      local ahead = dx * me.look.x + dz * me.look.z > 0
-      if ahead and dist < bestDist then best, bestDist = i, dist end
+      if dist < bestDist then
+        best, bestDist = i, dist
+        bestRole = (dx * me.look.x + dz * me.look.z > 0) and 'chase' or 'lead'
+      end
     end
   end
-  return best
+  return best, bestRole
 end
 
 local function saveRun(me)
   local rows = tandem.rows
-  if tandem.lead == nil or #rows < 40 or tandem.leadFrames < tandem.frames * 0.5 then return end
-  local lead = tandem.lead
+  if tandem.other == nil or #rows < 40 or tandem.withFrames < tandem.frames * 0.5 then return end
+  local other = tandem.other
+  local chaser, leader = 0, other
+  if tandem.role == 'lead' then chaser, leader = other, 0 end
   local out = {}
   for i = 1, #rows do out[i] = '[' .. table.concat(rows[i], ',') .. ']' end
   local stamp = tostring(safe(function() return os.time() end, math.random(1, 1e9))) .. '-' .. tostring(math.random(1000, 9999))
-  local json = '{"v":1,"track":' .. jstr(safe(function() return ac.getTrackID() end, '')) ..
+  local json = '{"v":1,"role":' .. jstr(tandem.role) ..
+    ',"track":' .. jstr(safe(function() return ac.getTrackID() end, '')) ..
     ',"layout":' .. jstr(safe(function() return ac.getTrackLayout() end, '')) ..
-    ',"car":' .. jstr(safe(function() return ac.getCarID(0) end, '')) ..
-    ',"driver":' .. jstr(safe(function() return ac.getDriverName(0) end, '')) ..
-    ',"lead":{"name":' .. jstr(safe(function() return ac.getDriverName(lead) end, '')) .. ',"car":' .. jstr(safe(function() return ac.getCarID(lead) end, '')) .. '}' ..
+    ',"car":' .. jstr(safe(function() return ac.getCarID(chaser) end, '')) ..
+    ',"driver":' .. jstr(safe(function() return ac.getDriverName(chaser) end, '')) ..
+    ',"lead":{"name":' .. jstr(safe(function() return ac.getDriverName(leader) end, '')) .. ',"car":' .. jstr(safe(function() return ac.getCarID(leader) end, '')) .. '}' ..
+    ',"recordedBy":' .. jstr(safe(function() return ac.getDriverName(0) end, '')) ..
+    ',"time":' .. tostring(safe(function() return os.time() end, 0)) ..
     ',"lapMs":' .. tostring(me.previousLapTimeMs or 0) ..
     ',"rows":[' .. table.concat(out, ',') .. ']}'
   local okDir, dir = pcall(function() return __dirname end)
@@ -100,20 +112,23 @@ local function saveRun(me)
     f:write(json)
     f:close()
   end)
-  tandem.saved = ok and ('Tandem enregistré derrière ' .. safe(function() return ac.getDriverName(lead) end, '?')) or 'Tandem : enregistrement impossible'
+  local name = safe(function() return ac.getDriverName(other) end, '?')
+  if not ok then tandem.saved = 'Tandem : enregistrement impossible'
+  elseif tandem.role == 'lead' then tandem.saved = 'Run enregistrée devant ' .. name
+  else tandem.saved = 'Tandem enregistré derrière ' .. name end
 end
 
 local function resetTandem()
-  tandem.lead, tandem.rows, tandem.frames, tandem.leadFrames, tandem.lastT, tandem.lastD, tandem.lost = nil, {}, 0, 0, -1, -1, 0
+  tandem.other, tandem.role, tandem.rows, tandem.frames, tandem.withFrames, tandem.lastT, tandem.lastD, tandem.lost = nil, nil, {}, 0, 0, -1, -1, 0
 end
 
 local function updateTandem(me)
   tandem.frames = tandem.frames + 1
-  if tandem.lead == nil then tandem.lead = findLead(me) end
-  if tandem.lead == nil then return nil end
-  local l = ac.getCar(tandem.lead)
-  if not l then tandem.lead = nil return nil end
-  local dx, dz = l.position.x - me.position.x, l.position.z - me.position.z
+  if tandem.other == nil then tandem.other, tandem.role = findPartner(me) end
+  if tandem.other == nil then return nil end
+  local o = ac.getCar(tandem.other)
+  if not o then resetTandem() return nil end
+  local dx, dz = o.position.x - me.position.x, o.position.z - me.position.z
   local gap = math.sqrt(dx * dx + dz * dz)
   if gap > 80 then
     tandem.lost = tandem.lost + 1
@@ -121,17 +136,20 @@ local function updateTandem(me)
     return nil
   end
   tandem.lost = 0
-  tandem.leadFrames = tandem.leadFrames + 1
+  tandem.withFrames = tandem.withFrames + 1
+  local c, l = me, o -- chaser, leader
+  if tandem.role == 'lead' then c, l = o, me end
   -- un échantillon toutes les 50 ms, toujours en avançant
-  local t, d = me.lapTimeMs, me.splinePosition
+  local t = me.lapTimeMs
+  local d = safe(function() return c.splinePosition end, me.splinePosition)
   if t - tandem.lastT >= 50 and d > tandem.lastD then
     tandem.lastT, tandem.lastD = t, d
     local cw = safe(function() return me.collidedWith end, -1)
-    local contact = (cw == tandem.lead) and 1 or 0
+    local contact = (cw == tandem.other) and 1 or 0
     local rows = tandem.rows
     if #rows < 20000 then
-      rows[#rows + 1] = { tostring(t), string.format('%.5f', d), num(me.position.x), num(me.position.z), num(me.speedKmh), num(slipAngle(me)),
-        num(me.gas), num(me.brake), tostring((me.gear or 0) + 1), tostring(safe(function() return me.wheelsOutside end, 0)),
+      rows[#rows + 1] = { tostring(t), string.format('%.5f', d), num(c.position.x), num(c.position.z), num(c.speedKmh), num(slipAngle(c)),
+        num(safe(function() return c.gas end, 0)), num(safe(function() return c.brake end, 0)), tostring(safe(function() return c.gear end, 0) + 1), tostring(safe(function() return c.wheelsOutside end, 0)),
         num(l.position.x), num(l.position.z), num(slipAngle(l)), num(l.speedKmh), tostring(contact) }
     end
   end
@@ -190,7 +208,7 @@ function script.windowMain(dt)
   end
 
   if gap then
-    ui.textColored(string.format('Tandem : %.1f m', gap), gap < 5 and GREEN or GREY)
+    ui.textColored(string.format(tandem.role == 'lead' and 'Lead : chaser à %.1f m' or 'Chase : %.1f m', gap), gap < 5 and GREEN or GREY)
   elseif tandem.saved then
     ui.textColored(tandem.saved, GREY)
   end

@@ -57,7 +57,7 @@ class Leaderboard {
    * Send a lap: kept only if it beats the driver's previous record.
    * kind 'time' | 'drift' | 'tandem' ; mode for judged runs (debutant, normal, pro).
    */
-  submit(lap, kind, mode = 'normal') {
+  submit(lap, kind, mode = 'normal', rules) {
     const res = kind === 'time' ? null : driftOf(lap, mode, kind);
     if (kind !== 'time' && !res) throw new Error('Run non notée');
     let samples = lap.samples;
@@ -79,10 +79,41 @@ class Leaderboard {
         p_kind: kind,
         p_lap_ms: kind === 'time' ? lap.lapMs : null,
         p_score: res ? res.score : null,
-        p_rules: res ? res.rules || '' : '',
+        p_rules: rules || (res ? res.rules || '' : ''),
         p_samples: packSamples(samples),
         p_meta: meta,
       }),
+    });
+  }
+
+  /** A battle (one row per mode); rules can carry a championship round (version@round). */
+  submitBattle(battle, mode = 'normal', rules) {
+    const res = battle.modes[mode];
+    const [a, b] = res.drivers;
+    return this.request('/rest/v1/rpc/submit_lap', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_steam_id: `b-${battle.id}`.slice(0, 32),
+        p_driver: `${a.name} vs ${b.name}`.slice(0, 40),
+        p_car: battle.cars[a.name] || Object.values(battle.cars)[0] || '?',
+        p_track: battle.track,
+        p_layout: battle.layout || '',
+        p_kind: 'battle',
+        p_lap_ms: null,
+        p_score: Math.max(0.1, Math.max(a.total, b.total)),
+        p_rules: rules || res.rules,
+        p_samples: '',
+        p_meta: { mode, battle: { id: battle.id, date: battle.date, pair: battle.pair, cars: battle.cars, runs: battle.runs, result: res } },
+      }),
+    });
+  }
+
+  /** Shared battles of a track (in a mode / round). */
+  async battles({ track, layout = '', rules, limit = 100 }) {
+    const rows = await this.list({ track, layout, kind: 'battle', rules, limit });
+    return (rows || []).filter((r) => r.meta && r.meta.battle).map((r) => {
+      const b = r.meta.battle;
+      return { id: b.id, remote: true, track: r.track, layout: r.layout, date: b.date || r.created_at, pair: b.pair, cars: b.cars || {}, runs: b.runs || [], modes: { [r.meta.mode || 'normal']: b.result } };
     });
   }
 
