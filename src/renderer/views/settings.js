@@ -69,7 +69,7 @@ export default function settings(root, params) {
     const admin = h('div.panel', h('h3', 'Accès admin (publication)'),
       h('p.hint', { style: { marginTop: 0 } }, "Réservé aux admins du Syndicate : permet de publier des voitures/circuits pour tout le monde. Il faut un token GitHub (fine-grained) avec l'accès « Contents: Read and write » sur le dépôt de contenu."),
       h('div.grid.grid-2',
-        field('Dépôt de contenu', h('input.input.mono', { value: s.admin.repo, placeholder: 'utilisateur/lks-content', on: { change: (e) => saveSettings({ admin: { repo: e.target.value } }) } })),
+        field('Dépôt de contenu', h('input.input.mono', { value: s.admin.repo, placeholder: 'Pab-69/LKS-Launcher', on: { change: (e) => saveSettings({ admin: { repo: e.target.value } }) } })),
         field('Tag de release', h('input.input.mono', { value: s.admin.tag, on: { change: (e) => saveSettings({ admin: { tag: e.target.value } }) } })),
       ),
       h('div.mt', field('Token GitHub', h('div.input-row',

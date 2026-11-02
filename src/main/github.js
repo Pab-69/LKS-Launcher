@@ -63,10 +63,11 @@ class GitHub {
     if (existing) return existing;
     return this.api('POST', `/repos/${this.repo}/releases`, {
       tag_name: tag,
-      name: 'LKS Content',
-      body: 'Contenu (voitures / circuits) synchronisé par le LKS Launcher. Ne pas supprimer.',
+      name: 'LKS Content (ne pas supprimer)',
+      body: 'Contenu (voitures, circuits, identité visuelle) synchronisé par le LKS Launcher. Ce n’est pas une version du launcher : ne pas supprimer.',
       draft: false,
-      prerelease: false,
+      // pre-release: never picked as "latest", so launcher auto-updates ignore it
+      prerelease: true,
       make_latest: 'false',
     });
   }

@@ -51,7 +51,7 @@ Côté admins, l'onglet Publication permet d'imposer une **version de CSP** à t
 ### Comment ça marche
 
 ```
-PC de l'admin                       GitHub (dépôt lks-content, release "content")       PC des membres
+PC de l'admin                       GitHub (release "content" du dépôt)                 PC des membres
 content/cars/lks_e36  ──Publier──▶  car-lks_e36-<version>.zip + manifest.json  ──▶  Synchro automatique
 ```
 
@@ -61,10 +61,10 @@ content/cars/lks_e36  ──Publier──▶  car-lks_e36-<version>.zip + manife
 
 ### Mise en place (une seule fois)
 
-1. Crée un dépôt GitHub **public** `pab-69/lks-content` avec au moins un fichier (un README suffit).
-   Les membres téléchargent depuis ce dépôt sans compte, c'est pourquoi il doit être public.
-2. Crée un token GitHub *fine-grained* : GitHub → Settings → Developer settings → Fine-grained tokens.
-   Donne-lui accès **uniquement** au dépôt `lks-content`, avec la permission **Contents : Read and write**.
+Le contenu est hébergé dans la release **`content`** de ce dépôt. C'est une pré-version : elle n'est jamais prise pour une version du launcher. Les membres la téléchargent sans compte.
+
+1. Crée un token GitHub *fine-grained* : GitHub → Settings → Developer settings → Fine-grained tokens.
+2. Donne-lui accès **uniquement** au dépôt `Pab-69/LKS-Launcher`, avec la permission **Contents : Read and write**.
 3. Dans le launcher : **Paramètres → Accès admin**, colle le token et clique sur **Enregistrer** (il est chiffré sur ton PC), puis **Tester l'accès**.
 4. L'onglet **Publication** apparaît.
 
@@ -101,7 +101,7 @@ npm run dist       # construit l'installeur Windows dans dist/ (à faire sous Wi
 
 ### Avant la première release
 
-- `lks.config.json` : URL du manifeste et dépôt de contenu intégrés dans le launcher (par défaut `pab-69/lks-content`).
+- `lks.config.json` : URL du manifeste et dépôt de contenu intégrés dans le launcher (par défaut la release `content` de `Pab-69/LKS-Launcher`).
 - `package.json` → `build.publish` : dépôt où sont publiées les versions du launcher (par défaut `pab-69/lks-launcher`). **Ce dépôt doit être public** pour que la mise à jour automatique marche chez les membres.
 
 ### Changer les voitures de la vitrine

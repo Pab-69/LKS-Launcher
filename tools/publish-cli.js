@@ -6,7 +6,7 @@
  *
  *   GITHUB_TOKEN=github_pat_xxx node tools/publish-cli.js \
  *     --ac "C:\Program Files (x86)\Steam\steamapps\common\assettocorsa" \
- *     --repo pab-69/lks-content car:lks_bmw_e36 track:lks_touge
+ *     --repo Pab-69/LKS-Launcher car:lks_bmw_e36 track:lks_touge
  *
  * Options: --tag content  --force  --notes "texte"  --remove (retire au lieu de publier)
  */

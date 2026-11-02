@@ -1,5 +1,9 @@
 {
-  "manifestUrl": "https://github.com/pab-69/lks-content/releases/download/content/manifest.json",
-  "contentRepo": "pab-69/lks-content",
-  "contentTag": "content"
+  "manifestUrl": "https://github.com/Pab-69/LKS-Launcher/releases/download/content/manifest.json",
+  "contentRepo": "Pab-69/LKS-Launcher",
+  "contentTag": "content",
+  "legacy": {
+    "manifestUrl": ["https://github.com/pab-69/lks-content/releases/download/content/manifest.json"],
+    "contentRepo": ["pab-69/lks-content"]
+  }
 }

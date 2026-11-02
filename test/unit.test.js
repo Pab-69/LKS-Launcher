@@ -133,3 +133,15 @@ test('zip slip is refused', () => {
   assert.throws(() => safeJoin('/tmp/a', 'C:/Windows/x'));
   assert.ok(safeJoin('/tmp/a', 'ok/file.txt').endsWith(path.join('a', 'ok', 'file.txt')));
 });
+
+test('settings saved by older launchers follow the moved content URL', () => {
+  const { Settings, appConfig } = require('../src/main/config');
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ manifestUrl: appConfig.legacy.manifestUrl[0], admin: { repo: appConfig.legacy.contentRepo[0] }, driverName: 'Pab' }));
+  const s = new Settings(dir);
+  assert.strictEqual(s.data.manifestUrl, appConfig.manifestUrl);
+  assert.strictEqual(s.data.admin.repo, appConfig.contentRepo);
+  assert.strictEqual(s.data.driverName, 'Pab');
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ manifestUrl: 'https://example.com/m.json' }));
+  assert.strictEqual(new Settings(dir).data.manifestUrl, 'https://example.com/m.json', 'custom URL kept');
+});

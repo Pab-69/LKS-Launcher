@@ -75,6 +75,14 @@ class Settings {
   constructor(dir) {
     this.file = path.join(dir, 'settings.json');
     this.data = deepMerge(structuredClone(DEFAULTS), this.read());
+    this.migrate();
+  }
+
+  /** Older launchers saved a default URL that has since moved: follow it. */
+  migrate() {
+    const legacy = appConfig.legacy || {};
+    if ((legacy.manifestUrl || []).includes(this.data.manifestUrl)) this.data.manifestUrl = appConfig.manifestUrl;
+    if ((legacy.contentRepo || []).includes(this.data.admin.repo)) this.data.admin.repo = appConfig.contentRepo;
   }
 
   read() {
