@@ -1,0 +1,118 @@
+import { api, h, clear, icon, guard, field, toggle, select, NATIONS, toast } from '../ui.js';
+import { store, subscribe, saveSettings, loadContent } from '../store.js';
+
+export default function settings(root, params) {
+  const body = h('div');
+  root.append(
+    h('div.view-head', h('div', h('h1', 'Paramètres'), h('p', 'Profil pilote, dossier du jeu et options du launcher.'))),
+    body,
+  );
+
+  let acValid = null;
+  async function checkAc(dir) {
+    acValid = dir ? await api.call('settings:validateAcRoot', dir) : false;
+  }
+
+  async function render() {
+    const s = store.settings;
+    if (!s) return;
+    await checkAc(s.acRoot);
+    clear(body);
+    if (params.welcome) {
+      body.append(h('div.notice.info', h('span.grow', 'Bienvenue ! Vérifiez votre dossier Assetto Corsa et votre nom de pilote, puis le launcher installera le contenu LKS tout seul.')));
+    }
+
+    const acInput = h('input.input', { value: s.acRoot, placeholder: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\assettocorsa', on: { change: (e) => setAc(e.target.value.trim()) } });
+    const profile = h('div.panel', h('h3', 'Profil pilote'),
+      h('div.grid.grid-2',
+        field('Nom de pilote', h('input.input', { value: s.driverName, maxlength: 40, on: { change: (e) => saveSettings({ driverName: e.target.value.trim() }) } }), 'Affiché en ligne et dans les résultats.'),
+        field('Nationalité', select(NATIONS.map(([c, n]) => [c, `${n} (${c})`]), s.nationality, (v) => saveSettings({ nationality: v }))),
+        field('Équipe', h('input.input', { value: s.team, on: { change: (e) => saveSettings({ team: e.target.value.trim() }) } })),
+        field('Steam ID', h('input.input', { value: s.steamId, placeholder: '7656119…', on: { change: (e) => saveSettings({ steamId: e.target.value.trim() }) } }), 'Détecté automatiquement depuis Steam.'),
+      ),
+    );
+
+    const game = h('div.panel', h('h3', 'Assetto Corsa'),
+      field('Dossier du jeu',
+        h('div.input-row', acInput,
+          h('button.btn', { on: { click: async () => { const dir = await api.call('dialog:pickFolder', 'Dossier assettocorsa'); if (dir) setAc(dir); } } }, icon('folder'), 'Parcourir'),
+          h('button.btn', { on: { click: detect } }, 'Détecter')),
+        acValid ? h('span', { style: { color: 'var(--ok)' } }, '✔ Installation valide') : h('span', { style: { color: 'var(--accent-2)' } }, '✖ acs.exe / content/cars introuvables dans ce dossier'),
+      ),
+      h('div.mt'),
+      toggle('Synchronisation automatique', s.autoSync, (v) => saveSettings({ autoSync: v }), 'Installe les nouveautés LKS dès qu’elles sont publiées (vérifié toutes les 5 min).'),
+      toggle('Réduire le launcher pendant le jeu', s.closeOnLaunch, (v) => saveSettings({ closeOnLaunch: v })),
+      h('div.row.mt',
+        h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'ac') } }, icon('folder'), 'Dossier du jeu'),
+        h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'docs') } }, icon('folder'), 'Documents/Assetto Corsa'),
+      ),
+    );
+
+    const info = store.info || {};
+    const u = store.updater;
+    const launcher = h('div.panel', h('h3', 'Launcher'),
+      h('div.row.wrap',
+        h('span', `Version ${info.version || '?'}`),
+        h('span.muted', u ? { checking: 'Recherche de mise à jour…', latest: 'À jour', downloading: 'Téléchargement de la mise à jour…', ready: `v${u.version} prête`, error: `Erreur : ${u.error}`, dev: 'Mode développement' }[u.state] || '' : ''),
+        h('button.btn.btn-sm.right', { on: { click: async () => { const r = await guard(() => api.call('updater:check')); if (r && r.state === 'dev') toast('Mises à jour désactivées en mode développement', 'info'); } } }, icon('refresh'), 'Vérifier les mises à jour'),
+      ),
+      h('details.mt',
+        h('summary.muted', { style: { cursor: 'pointer' } }, 'Avancé'),
+        h('div.grid.mt',
+          field('URL du manifeste de contenu', h('input.input.mono', { value: s.manifestUrl, on: { change: (e) => saveSettings({ manifestUrl: e.target.value.trim() }) } }), 'Fichier qui liste les voitures/circuits/serveurs LKS. Ne changez que si un admin vous le demande.'),
+        ),
+      ),
+    );
+
+    let token = '';
+    const admin = h('div.panel', h('h3', 'Accès admin (publication)'),
+      h('p.hint', { style: { marginTop: 0 } }, "Réservé aux admins du Syndicate : permet de publier des voitures/circuits pour tout le monde. Il faut un token GitHub (fine-grained) avec l'accès « Contents: Read and write » sur le dépôt de contenu."),
+      h('div.grid.grid-2',
+        field('Dépôt de contenu', h('input.input.mono', { value: s.admin.repo, placeholder: 'utilisateur/lks-content', on: { change: (e) => saveSettings({ admin: { repo: e.target.value } }) } })),
+        field('Tag de release', h('input.input.mono', { value: s.admin.tag, on: { change: (e) => saveSettings({ admin: { tag: e.target.value } }) } })),
+      ),
+      h('div.mt', field('Token GitHub', h('div.input-row',
+        h('input.input.mono', { type: 'password', placeholder: s.admin.hasToken ? '•••••••••• (enregistré)' : 'github_pat_…', on: { input: (e) => { token = e.target.value; } } }),
+        h('button.btn', { on: { click: async () => { if (!token) return; await saveSettings({ admin: { token } }); toast('Token enregistré (chiffré)', 'success'); render(); } } }, 'Enregistrer'),
+        s.admin.hasToken ? h('button.btn.btn-ghost', { on: { click: async () => { await saveSettings({ admin: { token: '' } }); render(); } } }, 'Supprimer') : null,
+      ))),
+      s.admin.hasToken ? h('div.row.mt',
+        h('button.btn.btn-sm', { on: { click: testAdmin } }, icon('shield'), 'Tester l’accès'),
+        h('button.btn.btn-sm.btn-primary', { on: { click: () => window.lksGo('admin') } }, 'Ouvrir la publication'),
+      ) : null,
+    );
+
+    body.append(profile, h('div.mt'), game, h('div.mt'), launcher, h('div.mt'), admin);
+  }
+
+  async function setAc(dir) {
+    await saveSettings({ acRoot: dir });
+    await loadContent(true).catch(() => {});
+    render();
+  }
+
+  async function detect() {
+    const r = await guard(() => api.call('settings:detect'));
+    if (!r) return;
+    const patch = {};
+    if (r.acRoot) patch.acRoot = r.acRoot;
+    if (r.steamId) patch.steamId = r.steamId;
+    if (r.personaName && !store.settings.driverName) patch.driverName = r.personaName;
+    if (!r.acRoot) toast('Assetto Corsa introuvable automatiquement : utilisez « Parcourir »', 'warn');
+    else toast('Assetto Corsa détecté', 'success');
+    await saveSettings(patch);
+    await loadContent(true).catch(() => {});
+    render();
+  }
+
+  async function testAdmin() {
+    const r = await guard(() => api.call('admin:test'));
+    if (r) toast(`Accès OK à ${r.name} — ${r.cars} voiture(s), ${r.tracks} circuit(s) publiés`, 'success', 6000);
+  }
+
+  render();
+  return subscribe((patch) => {
+    if ('settings' in patch && !root.contains(document.activeElement)) render();
+    if ('updater' in patch) render();
+  });
+}

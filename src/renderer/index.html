@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' lks-img: https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'"
+    />
+    <title>LKS Launcher</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <img class="titlebar-logo" src="img/logo-wide.png" alt="Lowkey Syndicate" />
+      <span class="titlebar-label">Launcher</span>
+      <div class="titlebar-spacer"></div>
+      <div id="updater-badge" class="updater-badge" hidden></div>
+      <div class="window-buttons">
+        <button data-win="minimize" title="Réduire" aria-label="Réduire">
+          <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
+        </button>
+        <button data-win="maximize" title="Agrandir" aria-label="Agrandir">
+          <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" /></svg>
+        </button>
+        <button data-win="close" class="close" title="Fermer" aria-label="Fermer">
+          <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <nav class="sidebar" id="nav">
+        <a data-route="home" class="nav-item">
+          <svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /></svg>
+          <span>Accueil</span>
+        </a>
+        <a data-route="content" class="nav-item">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 17v3h16v-3" /></svg>
+          <span>Contenu</span>
+          <em class="nav-badge" id="badge-content" hidden></em>
+        </a>
+        <a data-route="solo" class="nav-item">
+          <svg viewBox="0 0 24 24"><path d="M5 17h14l-1.5-6.5A2 2 0 0 0 15.6 9H8.4a2 2 0 0 0-1.9 1.5zM7 17v2m10-2v2M4 13h2m12 0h2" /></svg>
+          <span>Solo</span>
+        </a>
+        <a data-route="servers" class="nav-item">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></svg>
+          <span>Serveurs</span>
+        </a>
+        <div class="nav-sep"></div>
+        <a data-route="admin" class="nav-item" id="nav-admin" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z" /><path d="M12 8v8m-4-4h8" /></svg>
+          <span>Publication</span>
+        </a>
+        <a data-route="settings" class="nav-item">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+          <span>Paramètres</span>
+        </a>
+        <div class="sidebar-foot">
+          <div class="driver-chip" id="driver-chip"></div>
+          <div class="version" id="app-version"></div>
+        </div>
+      </nav>
+
+      <main class="view" id="view"></main>
+    </div>
+
+    <footer class="syncbar" id="syncbar" hidden>
+      <div class="syncbar-info">
+        <strong id="syncbar-title"></strong>
+        <span id="syncbar-detail"></span>
+      </div>
+      <div class="progress"><div class="progress-fill" id="syncbar-fill"></div></div>
+      <button class="btn btn-ghost btn-sm" id="syncbar-cancel">Annuler</button>
+    </footer>
+
+    <div class="game-overlay" id="game-overlay" hidden></div>
+    <div class="toasts" id="toasts"></div>
+    <div class="modal-root" id="modal-root"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
