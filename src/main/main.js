@@ -26,7 +26,7 @@ const { DiscordPresence } = require('./discord');
 const { appConfig } = require('./config');
 const { buildServerConfig, ServerHost, serverExe } = require('./hosting');
 const { firewallStatus, fixFirewall } = require('./firewall');
-const { findGateway, isPrivateIp } = require('./upnp');
+const { findGateway, isPrivateIp, boxGuide } = require('./upnp');
 const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
 const { encodeInvite, decodeInvite } = require('../shared/invite');
 const vpn = require('./vpn');
@@ -284,8 +284,13 @@ function computeInvites() {
     code: encodeInvite({ name: hostState.name, address, tcpPort: hostState.ports.tcp, httpPort: hostState.ports.http, password: hostState.password, kind }),
   });
   const ext = hostState.upnp && hostState.upnp.externalIp;
-  if (ext && hostState.upnp.state === 'open' && !isPrivateIp(ext)) invites.push(make('internet', ext));
-  for (const n of networkAddresses()) invites.push(make(n.kind, n.address));
+  if (ext && ['open', 'manual'].includes(hostState.upnp.state) && !isPrivateIp(ext)) invites.push(make('internet', ext));
+  // several « home network » cards: keep the one the box answered on
+  const lanOfBox = gateway && gateway.localAddress;
+  for (const n of networkAddresses()) {
+    if (n.kind === 'lan' && lanOfBox && n.address !== lanOfBox && networkAddresses().some((x) => x.address === lanOfBox)) continue;
+    invites.push(make(n.kind, n.address));
+  }
   return invites;
 }
 
@@ -315,14 +320,18 @@ async function openPorts() {
       hostState.upnp = { state: 'open', externalIp };
     }
   } catch (err) {
-    hostState.upnp = { state: 'failed', error: err.message };
+    // the box may still say its public address (useful once the ports are opened by hand)
+    const externalIp = gateway ? await gateway.externalIp().catch(() => null) : null;
+    hostState.upnp = { state: 'failed', error: err.message, externalIp };
     trace.push(`échec : ${err.message}${err.code ? ` (code ${err.code})` : ''}`);
+    trace.push(`adresse publique : ${externalIp || 'inconnue'}`);
     applog.log('upnp failed', err.message, err.code || '');
   }
   if (!hostState) return;
   // for opening the ports by hand: the address of this PC on the home network
   const lan = (gateway && gateway.localAddress) || ((networkAddresses().find((n) => n.kind === 'lan') || {}).address) || '';
   hostState.lanAddress = lan;
+  if (gateway) hostState.boxGuide = boxGuide({ ...gateway.box, host: gateway.box.host || new URL(gateway.location || 'http://192.168.1.1').hostname });
   hostState.invites = computeInvites();
   send('host:changed');
 }
@@ -1226,6 +1235,22 @@ function setupIpc() {
       ...(st.log || []).slice(-40),
     ];
     return lines.join('\n');
+  });
+  // ports opened by hand in the box: give the internet invitation code
+  handle('host:manualPorts', async () => {
+    if (!hostState) throw new Error('Aucun serveur lancé');
+    let ip = hostState.upnp && hostState.upnp.externalIp;
+    if (!ip || isPrivateIp(ip)) {
+      const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(6000) }).catch(() => null);
+      ip = res && res.ok ? (await res.json().catch(() => ({}))).ip : null;
+    }
+    if (!ip) throw new Error('Adresse publique introuvable : vérifie ta connexion internet');
+    if (isPrivateIp(ip)) throw new Error('Ta connexion n’a pas d’adresse publique à elle (IP partagée) : passe par le VPN.');
+    hostState.upnp = { state: 'manual', externalIp: ip };
+    hostTrace.push(`ports ouverts à la main, adresse publique ${ip}`);
+    hostState.invites = computeInvites();
+    send('host:changed');
+    return hostStatus();
   });
   handle('host:retryPorts', async () => {
     if (!hostState) throw new Error('Aucun serveur lancé');

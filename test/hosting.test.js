@@ -250,3 +250,36 @@ test('Windows firewall: reading the rules and the fix command', async () => {
   assert.deepStrictEqual(calls[0][1].slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
   assert.ok(!Buffer.from(calls[0][1][3], 'base64').toString('utf16le').includes('RunAs'), 'reading needs no admin rights');
 });
+
+test('real PC report: PowerShell progress output, VirtualBox card, v2 box answering 501', async (t) => {
+  const fw = require('../src/main/firewall');
+  const clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"></Obj></Objs>\r\n{"allow":["Any"],"block":0,"networks":["Private"]}\r\n<Objs Version="1.1.0.1"></Objs>';
+  assert.strictEqual(fw.evaluate(clixml).ok, true);
+  assert.throws(() => fw.evaluate('<Objs Version="1.1.0.1"></Objs>'), /illisible/);
+  assert.match(fw.statusScript('C:\\a.exe'), /\$ProgressPreference = 'SilentlyContinue'/);
+
+  const nets = networkAddresses({ 'Ethernet 5': [{ family: 'IPv4', address: '192.168.56.1', internal: false }], 'Ethernet 4': [{ family: 'IPv4', address: '192.168.1.117', internal: false }] });
+  assert.deepStrictEqual(nets.map((n) => n.address), ['192.168.1.117'], 'VirtualBox host-only card ignored');
+
+  const actions = [];
+  const web = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const action = String(req.headers.soapaction).split('#')[1].replace('"', '');
+      actions.push(`${action}${(body.match(/<NewLeaseDuration>(\d+)</) || [])[1] ? `:${body.match(/<NewLeaseDuration>(\d+)</)[1]}` : ''}`);
+      if (action === 'AddPortMapping') {
+        res.statusCode = 500;
+        return res.end('<s:Envelope><s:Body><s:Fault><detail><UPnPError><errorCode>501</errorCode><errorDescription>Action Failed</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>');
+      }
+      if (action === 'AddAnyPortMapping') return res.end('<s:Envelope><s:Body><u:AddAnyPortMappingResponse><NewReservedPort>9600</NewReservedPort></u:AddAnyPortMappingResponse></s:Body></s:Envelope>');
+      res.end('<ok/>');
+    });
+  });
+  await new Promise((r) => web.listen(0, '127.0.0.1', r));
+  t.after(() => web.close());
+  const { Gateway } = require('../src/main/upnp');
+  const gw = new Gateway({ controlUrl: `http://127.0.0.1:${web.address().port}/ctl`, serviceType: 'urn:schemas-upnp-org:service:WANIPConnection:2', localAddress: '192.168.1.117' });
+  await gw.map(9600, 'TCP', 'LKS');
+  assert.deepStrictEqual(actions, ['AddPortMapping:0', 'AddPortMapping:86400', 'AddPortMapping:3600', 'AddAnyPortMapping:3600']);
+});

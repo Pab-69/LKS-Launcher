@@ -127,11 +127,12 @@ function localAddressFor(host) {
 }
 
 class Gateway {
-  constructor({ controlUrl, serviceType, localAddress, location }) {
+  constructor({ controlUrl, serviceType, localAddress, location, box }) {
     this.controlUrl = controlUrl;
     this.serviceType = serviceType;
     this.localAddress = localAddress;
     this.location = location || '';
+    this.box = box || {};
   }
 
   async soap(action, args = {}) {
@@ -175,9 +176,13 @@ class Gateway {
         return err;
       }
     };
+    const LIMITED = ['725', '402', '501'];
     let err = await tryAdd(0);
-    // some boxes only accept limited leases (725, or a generic refusal)
-    if (err && ['725', '402', '501'].includes(err.code)) err = await tryAdd(86400);
+    // some boxes only accept limited leases (725, or a generic refusal), sometimes short ones
+    if (err && LIMITED.includes(err.code)) err = await tryAdd(86400);
+    if (err && LIMITED.includes(err.code)) err = await tryAdd(3600);
+    // UPnP v2 boxes: the dedicated request, accepted only if the box keeps the same port
+    if (err && err.code === '501' && /:2$/.test(this.serviceType)) err = await this.addAny(port, protocol, description);
     // port still open from a previous session or another PC: close it and retry
     if (err && err.code === '718') {
       await this.unmap(port, protocol).catch(() => {});
@@ -185,6 +190,31 @@ class Gateway {
       if (err && ['725', '402', '501'].includes(err.code)) err = await tryAdd(86400);
     }
     if (err) throw friendlyUpnpError(err, port, protocol);
+  }
+
+  /** UPnP v2 AddAnyPortMapping: null if the same port was opened, else the error. */
+  async addAny(port, protocol, description) {
+    try {
+      const body = await this.soap('AddAnyPortMapping', {
+        NewRemoteHost: '',
+        NewExternalPort: port,
+        NewProtocol: protocol,
+        NewInternalPort: port,
+        NewInternalClient: this.localAddress,
+        NewEnabled: 1,
+        NewPortMappingDescription: description,
+        NewLeaseDuration: 3600,
+      });
+      const reserved = Number(tag(body, 'NewReservedPort'));
+      if (!reserved || reserved === port) return null;
+      // another port was given: players would not find the server, undo it
+      await this.unmap(reserved, protocol).catch(() => {});
+      const e = new Error(`La box propose le port ${reserved} au lieu de ${port}`);
+      e.code = '501';
+      return e;
+    } catch (err) {
+      return err;
+    }
   }
 
   unmap(port, protocol) {
@@ -200,7 +230,7 @@ function friendlyUpnpError(err, port, protocol) {
     724: 'La box exige le même port à l’extérieur et à l’intérieur, mais refuse celui-ci. Change le port du serveur.',
     725: 'La box n’accepte que des ouvertures permanentes : ouvre les ports à la main dans ta box.',
     728: 'La box n’a plus de place pour de nouvelles redirections : supprimes-en dans son interface.',
-    501: 'La box a refusé l’ouverture (erreur interne). Redémarre la box ou ouvre les ports à la main.',
+    501: 'La box accepte l’UPnP mais n’arrive pas à ouvrir les ports (erreur 501 de la box). Ouvre-les à la main dans l’interface de la box (voir ci-dessous).',
   };
   const e = new Error(messages[err.code] || err.message);
   e.code = err.code;
@@ -223,7 +253,20 @@ async function gatewayAt(location, opts = {}) {
   const base = tag(desc.body, 'URLBase') || location;
   const controlUrl = new URL(controlPath, base).toString();
   const localAddress = opts.localAddress || (await localAddressFor(new URL(location).hostname));
-  return new Gateway({ controlUrl, serviceType, localAddress, location });
+  const box = { manufacturer: tag(desc.body, 'manufacturer') || '', model: tag(desc.body, 'modelName') || '', name: tag(desc.body, 'friendlyName') || '', host: new URL(location).hostname };
+  return new Gateway({ controlUrl, serviceType, localAddress, location, box });
+}
+
+/** Where to open the ports by hand, for the usual French boxes. */
+function boxGuide(box = {}) {
+  const id = `${box.manufacturer} ${box.model} ${box.name}`.toLowerCase();
+  const host = box.host || '192.168.1.1';
+  const steps = (s) => s;
+  if (/freebox|free sas|iliad/.test(id)) return { brand: 'Freebox', url: 'http://mafreebox.freebox.fr', steps: steps('Freebox OS → Paramètres de la Freebox → Mode avancé → Gestion des ports → Ajouter une redirection.') };
+  if (/bbox|bouygues/.test(id)) return { brand: 'Bbox', url: 'https://mabbox.bytel.fr', steps: steps('Ma Bbox → Services de la Bbox → Redirection de ports (NAT/PAT) → Ajouter une règle.') };
+  if (/livebox|orange/.test(id)) return { brand: 'Livebox', url: `http://${host}`, steps: steps('Paramètres avancés → Réseau → NAT/PAT → ajouter chaque port.') };
+  if (/sfr|neufbox|nb[0-9]|altice/.test(id)) return { brand: 'Box SFR', url: `http://${host}`, steps: steps('Réseau v4 → NAT → ajouter chaque port.') };
+  return { brand: box.name || box.model || 'ta box', url: `http://${host}`, steps: steps('Cherche « Redirection de ports », « NAT/PAT » ou « Gestion des ports ».') };
 }
 
 /** The box: the first device that answered and really offers port opening. */
@@ -239,7 +282,7 @@ async function findGateway(opts = {}) {
     try {
       const gw = await gatewayAt(location, opts);
       if (gw) {
-        trace.push(`box retenue : ${location} (${gw.serviceType.split(':').slice(-2).join(':')}, ce PC = ${gw.localAddress})`);
+        trace.push(`box retenue : ${location} (${gw.serviceType.split(':').slice(-2).join(':')}, ce PC = ${gw.localAddress}, ${[gw.box.manufacturer, gw.box.model].filter(Boolean).join(' ') || 'modèle inconnu'})`);
         return gw;
       }
       trace.push(`${location} : pas de service d'ouverture de ports`);
@@ -257,4 +300,4 @@ function isPrivateIp(ip) {
   return p[0] === 10 || p[0] === 127 || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) || (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || (p[0] === 169 && p[1] === 254) || p[0] === 0;
 }
 
-module.exports = { findGateway, discover, discoverAll, gatewayAt, likelyGateways, localIPv4, friendlyUpnpError, isPrivateIp, Gateway };
+module.exports = { boxGuide, findGateway, discover, discoverAll, gatewayAt, likelyGateways, localIPv4, friendlyUpnpError, isPrivateIp, Gateway };

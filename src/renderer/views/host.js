@@ -112,6 +112,7 @@ export default function hostView(root, _params, { go }) {
     const upText = {
       working: ['Ouverture des ports de ta box…', 'info'],
       open: [`Ports ouverts sur ta box (${up.externalIp})`, 'ok'],
+      manual: [`Ports ouverts à la main (${up.externalIp})`, 'ok'],
       failed: [`Ports non ouverts : ${up.error}`, 'warn'],
       cgnat: [up.error, 'warn'],
       off: ['Ouverture automatique des ports désactivée', 'plain'],
@@ -132,11 +133,16 @@ export default function hostView(root, _params, { go }) {
         inv),
       portsKo ? h('div.notice.mt', h('span.grow', 'Ports non ouverts : les joueurs hors de chez toi ne peuvent pas se connecter. Passez par le VPN et envoie le code VPN.')) : null,
       up.state === 'failed' ? h('div.panel.mt', h('h3', 'Ouvrir les ports à la main'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Si la box refuse l’ouverture automatique, ajoute ces redirections dans son interface (souvent « NAT / PAT », « Redirection de ports » ou « Gestion des ports »), vers ce PC :'),
+        s.boxGuide
+          ? h('p', { style: { marginTop: 0 } }, h('strong', `${s.boxGuide.brand} : `), s.boxGuide.steps, ' ', h('a.link', { on: { click: () => api.call('shell:open', s.boxGuide.url) } }, 'Ouvrir l’interface de la box'))
+          : h('p.hint', { style: { marginTop: 0 } }, 'Ajoute ces redirections dans l’interface de ta box (souvent « NAT / PAT », « Redirection de ports » ou « Gestion des ports ») :'),
         h('div.ports-table',
           h('span.label', 'Protocole'), h('span.label', 'Port'), h('span.label', 'Vers'),
           ...[['TCP', s.ports && s.ports.tcp], ['UDP', s.ports && s.ports.udp], ['TCP', s.ports && s.ports.http]].flatMap(([proto, port]) => [h('span', proto), h('strong', String(port || '?')), h('code', s.lanAddress || 'ce PC')])),
-        h('div.row.mt', h('button.btn.btn-sm', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, icon('refresh'), 'Réessayer l’ouverture automatique'))) : null,
+        h('p.hint', 'Astuce : dans la box, donne une adresse fixe à ce PC (« bail statique » / « IP fixe » dans le DHCP), sinon la redirection peut se perdre au prochain redémarrage.'),
+        h('div.row.mt',
+          h('button.btn.btn-sm.btn-primary', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:manualPorts'), 'Code internet prêt'); busy = false; await load(); } } }, icon('check'), 'J’ai ouvert les ports à la main'),
+          h('button.btn.btn-sm', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, icon('refresh'), 'Réessayer l’ouverture automatique'))) : null,
       firewallBox(s.firewall) || '',
       h('div.mt', (() => { vpnEl = vpnEl || vpnCard(); vpnEl.classList.toggle('vpn-highlight', portsKo); return vpnEl; })()),
     );

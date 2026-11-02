@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 1.9.9
+
+- Hébergement :
+  - deux nouvelles façons de demander l'ouverture des ports aux box qui répondent « erreur 501 » ;
+  - si ça ne marche toujours pas, le launcher reconnaît ta box (Freebox, Bbox, Livebox, SFR) et indique où ouvrir les ports à la main, avec un lien vers son interface ;
+  - nouveau bouton « J'ai ouvert les ports à la main » : il crée le code d'invitation internet, avec ton adresse publique ;
+  - la carte réseau virtuelle de VirtualBox n'est plus prise pour ton réseau.
+- Correction : la vérification du pare-feu Windows échouait sur certains PC.
+
 ## 1.9.8
 
 - Héberger : bouton « Copier le diagnostic ». Il copie ce que le launcher a essayé avec ta box (cartes réseau, réponses UPnP, ports, adresse publique), l'état du pare-feu Windows et le journal du serveur. À envoyer quand l'hébergement ne marche pas.

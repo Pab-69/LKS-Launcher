@@ -42,7 +42,9 @@ function run(command, args, { runner = spawn, timeout = 30000 } = {}) {
 }
 
 // rules of this program (paths can be written with %ProgramFiles% & co)
-const rulesOf = (exe) => `$p = ${psQuote(exe)}
+// no progress bars: PowerShell would mix them (as CLIXML) into the output
+const rulesOf = (exe) => `$ProgressPreference = 'SilentlyContinue'
+$p = ${psQuote(exe)}
 $r = Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | Where-Object { [Environment]::ExpandEnvironmentVariables($_.Program) -ieq $p } | Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Direction.ToString() -eq 'Inbound' -and $_.Enabled.ToString() -eq 'True' }`;
 
 function statusScript(exe) {
@@ -71,7 +73,10 @@ function covers(profiles, category) {
 
 /** Read the rules' answer: { ok, blocked, missingFor: [network categories] }. */
 function evaluate(raw) {
-  const data = JSON.parse(String(raw).trim().split(/\r?\n/).filter(Boolean).pop());
+  // the JSON line, whatever else PowerShell printed (CLIXML, warnings…)
+  const line = String(raw).split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('{') && l.endsWith('}')).pop();
+  if (!line) throw new Error('Réponse illisible du pare-feu');
+  const data = JSON.parse(line);
   const allow = [].concat(data.allow || []).filter(Boolean);
   const networks = [].concat(data.networks || []).filter(Boolean);
   const blocked = Number(data.block) > 0;
