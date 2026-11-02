@@ -27,8 +27,8 @@ export default function home(root, _params, { go }) {
       h('div.hero-shade'),
       h('div.hero-content',
         logoBox,
-        h('h1', 'Bienvenue au garage'),
-        h('p', 'Le contenu du Syndicate se met à jour tout seul. Prends ta caisse, choisis ta piste, et roule.'),
+        h('h1', 'Bienvenue'),
+        h('p', 'Voitures, circuits et serveurs, toujours à jour.'),
         h('div.hero-actions',
           h('button.btn.btn-primary.btn-lg', { on: { click: () => go('servers') } }, icon('play'), 'Rejoindre'),
           h('button.btn.btn-lg', { on: { click: () => go('solo') } }, 'Solo'),
@@ -43,7 +43,7 @@ export default function home(root, _params, { go }) {
     garageEl,
     h('div.grid.grid-2',
       h('div', h('h2.section', 'Serveurs LKS'), serversBox),
-      h('div', h('h2.section', 'Actus du Syndicate'), newsBox),
+      h('div', h('h2.section', 'Actus'), newsBox),
     ),
   );
 
@@ -117,8 +117,8 @@ export default function home(root, _params, { go }) {
     if (cspState && settings.acRoot && (!cspState.installed || !cspState.preset)) {
       statusBox.append(
         h('div.notice.info.mt',
-          h('span.grow', !cspState.installed ? 'Le Custom Shaders Patch n’est pas installé : ton jeu peut être bien plus beau.' : 'Applique un préréglage graphique LKS pour profiter pleinement du CSP.'),
-          h('button.btn.btn-primary.btn-sm', { on: { click: () => go('graphics') } }, 'Rendre mon jeu magnifique'),
+          h('span.grow', !cspState.installed ? 'Custom Shaders Patch non installé.' : 'Aucun préréglage graphique appliqué.'),
+          h('button.btn.btn-primary.btn-sm', { on: { click: () => go('graphics') } }, 'Configurer'),
         ),
       );
     }
@@ -142,7 +142,7 @@ export default function home(root, _params, { go }) {
     clear(serversBox);
     const lks = list.filter((x) => x.source === 'lks');
     if (!lks.length) {
-      serversBox.append(h('div.empty', h('strong', 'Aucun serveur'), 'Les serveurs du Syndicate apparaîtront ici.'));
+      serversBox.append(h('div.empty', h('strong', 'Aucun serveur'), 'Ils apparaîtront ici.'));
       return;
     }
     for (const server of lks) {
@@ -234,7 +234,7 @@ export default function home(root, _params, { go }) {
         ),
       );
     }
-    presetsBox.append(h('h2.section', 'Sessions du Syndicate'), grid);
+    presetsBox.append(h('h2.section', 'Sessions rapides'), grid);
   }
 
   async function renderNews() {

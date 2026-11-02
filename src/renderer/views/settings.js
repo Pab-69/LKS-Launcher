@@ -19,7 +19,7 @@ export default function settings(root, params) {
     await checkAc(s.acRoot);
     clear(body);
     if (params.welcome) {
-      body.append(h('div.notice.info', h('span.grow', 'Bienvenue ! Vérifiez votre dossier Assetto Corsa et votre nom de pilote, puis le launcher installera le contenu LKS tout seul.')));
+      body.append(h('div.notice.info', h('span.grow', 'Vérifie le dossier du jeu et ton nom de pilote. Le contenu s’installera ensuite tout seul.')));
     }
 
     const acInput = h('input.input', { value: s.acRoot, placeholder: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\assettocorsa', on: { change: (e) => setAc(e.target.value.trim()) } });
@@ -42,8 +42,8 @@ export default function settings(root, params) {
       h('div.mt'),
       toggle('Synchronisation automatique', s.autoSync, (v) => saveSettings({ autoSync: v }), 'Installe les nouveautés LKS dès qu’elles sont publiées (vérifié toutes les 5 min).'),
       toggle('Réduire le launcher pendant le jeu', s.closeOnLaunch, (v) => saveSettings({ closeOnLaunch: v })),
-      toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Ton statut Discord montre ta voiture, ta piste et un bouton pour rejoindre le Syndicate (Discord doit être ouvert).'),
-      toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification Windows 15 min avant chaque event du Syndicate, puis au départ.'),
+      toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Affiche ta voiture et ta piste sur ton profil Discord.'),
+      toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification 15 min avant chaque event.'),
       h('div.row.mt',
         h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'ac') } }, icon('folder'), 'Dossier du jeu'),
         h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'docs') } }, icon('folder'), 'Documents/Assetto Corsa'),
@@ -74,7 +74,7 @@ export default function settings(root, params) {
 
     let token = '';
     const admin = h('div.panel', h('h3', 'Accès admin (publication)'),
-      h('p.hint', { style: { marginTop: 0 } }, "Réservé aux admins du Syndicate : permet de publier des voitures/circuits pour tout le monde. Il faut un token GitHub (fine-grained) avec l'accès « Contents: Read and write » sur le dépôt de contenu."),
+      h('p.hint', { style: { marginTop: 0 } }, "Pour publier du contenu. Il faut un token GitHub (fine-grained) avec « Contents: Read and write » sur le dépôt."),
       h('div.grid.grid-2',
         field('Dépôt de contenu', h('input.input.mono', { value: s.admin.repo, placeholder: 'Pab-69/LKS-Launcher', on: { change: (e) => saveSettings({ admin: { repo: e.target.value } }) } })),
         field('Tag de release', h('input.input.mono', { value: s.admin.tag, on: { change: (e) => saveSettings({ admin: { tag: e.target.value } }) } })),

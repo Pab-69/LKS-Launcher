@@ -44,9 +44,9 @@ export default function donate(root) {
         heroImage(brandShowcase(), 2),
         h('div.hero-shade'),
         h('div.hero-content',
-          h('div.picker-k', 'Soutenir le Syndicate'),
-          h('h1', 'Garde la flamme allumée'),
-          h('p', d.message || 'Le launcher, les voitures et les serveurs du Syndicate sont gratuits pour tous les membres. Si tu veux donner un coup de main pour les faire tourner, chaque don compte.'),
+          h('div.picker-k', 'Soutenir'),
+          h('h1', 'Faire un don'),
+          h('p', d.message || 'Le launcher et les serveurs sont gratuits. Les dons aident à les payer.'),
         ),
       ),
     );
@@ -65,7 +65,7 @@ export default function donate(root) {
       );
     }
 
-    body.append(h('h2.section', 'Faire un don'));
+    body.append(h('h2.section', 'Liens'));
     if (!links.length) {
       body.append(h('div.empty', h('strong', 'Bientôt'), 'Les liens pour faire un don arrivent très vite.'));
     } else {
@@ -86,11 +86,11 @@ export default function donate(root) {
     body.append(
       h('h2.section', 'Où va l’argent'),
       h('div.grid.grid-3',
-        h('div.panel', h('h3', 'Serveurs'), h('p.muted', { style: { margin: 0 } }, 'Les serveurs du Syndicate en ligne 24h/24, sans lag.')),
+        h('div.panel', h('h3', 'Serveurs'), h('p.muted', { style: { margin: 0 } }, 'Serveurs en ligne 24h/24.')),
         h('div.panel', h('h3', 'Voitures & livrées'), h('p.muted', { style: { margin: 0 } }, 'Mods, livrées et circuits créés ou achetés pour le groupe.')),
         h('div.panel', h('h3', 'Events'), h('p.muted', { style: { margin: 0 } }, 'Lots et organisation des soirées et des compétitions.')),
       ),
-      h('p.hint.mt', { style: { textAlign: 'center' } }, icon('check'), ' Les dons sont facultatifs : tout reste gratuit pour tous les membres.'),
+      h('p.hint.mt', { style: { textAlign: 'center' } }, icon('check'), ' Les dons sont facultatifs.'),
     );
   }
 

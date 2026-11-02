@@ -1,7 +1,7 @@
 import { api, h, clear, icon, guard, toast } from '../ui.js';
 
 /**
- * "VPN du Syndicate" card: install / join / status, for ZeroTier (automatic)
+ * VPN card: install / join / status, for ZeroTier (automatic)
  * or Radmin VPN (guided). Used in Héberger and when joining with a VPN code.
  */
 export function vpnCard({ highlight = false, onChange } = {}) {
@@ -32,9 +32,9 @@ export function vpnCard({ highlight = false, onChange } = {}) {
 
   function render(st) {
     clear(box);
-    box.append(h('h3', 'VPN du Syndicate'));
+    box.append(h('h3', 'VPN'));
     if (!st || !st.configured) {
-      box.append(h('p.muted', { style: { margin: 0 } }, 'Le Syndicate n’a pas encore de VPN. Un admin peut en configurer un dans Publication → VPN du Syndicate (ZeroTier ou Radmin VPN, gratuits).'));
+      box.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de VPN. Un admin peut en configurer un dans Publication → VPN.'));
       return;
     }
     const status = st.connected
@@ -43,7 +43,7 @@ export function vpnCard({ highlight = false, onChange } = {}) {
     if (st.provider === 'zerotier') {
       box.append(
         h('div.row.wrap', h('span.tag.plain', 'ZeroTier'), status),
-        h('p.hint', 'Un réseau privé entre membres : il marche même quand la box ne peut pas ouvrir de ports (IP partagée, 4G, 5G). Windows demandera une autorisation administrateur.'),
+        h('p.hint', 'Fonctionne même sans ports ouverts. Windows demandera une autorisation.'),
       );
       if (st.platform && st.platform !== 'win32') {
         box.append(h('p.muted', 'Installation automatique disponible sous Windows uniquement.'));
@@ -53,7 +53,7 @@ export function vpnCard({ highlight = false, onChange } = {}) {
       if (!st.installed) {
         actions.append(h('button.btn.btn-primary', { disabled: busy, on: { click: () => act(() => api.call('vpn:installZerotier'), 'ZeroTier installé') } }, busy ? h('span.spinner') : icon('download'), '1. Installer ZeroTier'));
       } else if (!st.connected) {
-        actions.append(h('button.btn.btn-primary', { disabled: busy, on: { click: () => act(() => api.call('vpn:join'), 'Connecté au VPN du Syndicate') } }, busy ? h('span.spinner') : icon('play'), 'Rejoindre le VPN du Syndicate'));
+        actions.append(h('button.btn.btn-primary', { disabled: busy, on: { click: () => act(() => api.call('vpn:join'), 'Connecté au VPN') } }, busy ? h('span.spinner') : icon('play'), 'Rejoindre le VPN'));
       } else {
         actions.append(h('button.btn.btn-sm.btn-ghost', { disabled: busy, on: { click: () => act(() => api.call('vpn:leave'), 'VPN quitté') } }, 'Quitter le VPN'));
       }
@@ -64,7 +64,7 @@ export function vpnCard({ highlight = false, onChange } = {}) {
     // Radmin VPN: guided
     box.append(
       h('div.row.wrap', h('span.tag.plain', 'Radmin VPN'), status),
-      h('p.hint', 'Gratuit et sans compte. Il marche même quand la box ne peut pas ouvrir de ports (IP partagée, 4G, 5G).'),
+      h('p.hint', 'Gratuit, sans compte. Fonctionne même sans ports ouverts.'),
     );
     if (!st.connected) {
       box.append(

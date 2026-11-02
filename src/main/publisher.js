@@ -22,7 +22,7 @@ const META_LABELS = {
   events: 'Calendrier des events modifié',
   soloPresets: 'Sessions solo modifiées',
   discord: 'Réglages Discord modifiés',
-  vpn: 'VPN du Syndicate modifié',
+  vpn: 'VPN modifié',
 };
 const SETUP_EXT = /\.(ini|sp)$/i;
 const plural = (kind) => (kind === 'car' ? 'cars' : 'tracks');

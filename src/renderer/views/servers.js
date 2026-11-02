@@ -15,7 +15,7 @@ export default function servers(root, params, { go }) {
   const detail = h('div');
   root.append(
     h('div.view-head',
-      h('div', h('h1', 'Serveurs'), h('p', 'Les serveurs du Syndicate, plus ceux que vous ajoutez vous-même.')),
+      h('div', h('h1', 'Serveurs'), h('p', 'Les serveurs du groupe et les tiens.')),
       h('div.grow'),
       h('div.actions',
         h('button.btn.btn-primary', { on: { click: joinWithCode } }, icon('play'), 'Rejoindre avec un code'),
@@ -183,7 +183,7 @@ export default function servers(root, params, { go }) {
       title: 'Rejoindre avec un code',
       small: true,
       body: h('div.grid',
-        h('p.muted', { style: { margin: 0 } }, 'Colle le code « LKS-… » que ton pote t’a envoyé (onglet Héberger de son launcher).'),
+        h('p.muted', { style: { margin: 0 } }, 'Colle le code « LKS-… » reçu.'),
         h('input.input.mono', { placeholder: 'LKS-…', autofocus: true, on: { input: (e) => { code = e.target.value; } } })),
       foot: [h('button.btn.btn-primary', { on: { click: async () => {
         let inv;
@@ -197,15 +197,15 @@ export default function servers(root, params, { go }) {
         customServers.push({ name: inv.name, ip: inv.address, httpPort: inv.httpPort, password: inv.password, private: true });
         await saveSettings({ customServers });
         m.close();
-        // VPN code: make sure this member is on the Syndicate's VPN too
+        // VPN code: make sure this member is on the VPN too
         if (inv.kind === 'zerotier' || inv.kind === 'radmin') {
           const vs = await api.call('vpn:status').catch(() => null);
           if (vs && vs.configured && vs.provider === inv.kind && !vs.connected) {
             modal({
-              title: 'Rejoins d’abord le VPN',
+              title: 'Connecte-toi au VPN',
               small: true,
               body: h('div.grid',
-                h('p.muted', { style: { margin: 0 } }, 'Ce code passe par le VPN du Syndicate. Connecte-toi au VPN, puis clique sur Rejoindre dans la liste des serveurs.'),
+                h('p.muted', { style: { margin: 0 } }, 'Ce code passe par le VPN. Connecte-toi, puis clique sur Rejoindre.'),
                 vpnCard({ highlight: true })),
             });
           }

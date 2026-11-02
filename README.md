@@ -11,7 +11,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
 - **Héberger une partie** gratuitement depuis son PC, avec le serveur inclus dans Assetto Corsa : ouverture automatique des ports de la box, codes d'invitation, compatible Radmin VPN, ZeroTier et Tailscale.
 - **Events** : calendrier des soirées, compte à rebours sur l'accueil, notification 15 min avant et bouton « Rejoindre ».
-- **Sessions du Syndicate** : sessions solo préparées par les admins, lancées en un clic depuis l'accueil.
+- **Sessions rapides** : sessions solo prêtes à lancer depuis l'accueil.
 - **Setups partagés** : les réglages des voitures LKS arrivent chez chacun, à côté de ses propres setups (préfixe `LKS_`), sans jamais rien écraser.
 - **Discord Rich Presence** : « Joue à Lowkey Syndicate — Drift sur Haruna en BMW M2 », avec des boutons pour rejoindre le Discord et télécharger le launcher.
 - **Historique des publications** : qui a publié quoi, et quand (pratique avec plusieurs admins).
@@ -108,9 +108,9 @@ Si personne n'arrive à se connecter :
 - **Box** : active l'UPnP. Avec une IP partagée, la 4G ou la 5G, l'ouverture des ports ne suffit pas.
 - **Réseau virtuel gratuit** : installez tous Radmin VPN ou ZeroTier et rejoignez le même réseau. Le launcher affiche alors un code pour ce réseau.
 
-#### VPN du Syndicate (quand l'ouverture des ports ne marche pas)
+#### VPN (quand l'ouverture des ports ne marche pas)
 
-Avec une IP partagée, la 4G ou la 5G, la box ne peut pas ouvrir de ports. Tout le monde passe alors par un réseau privé commun, configuré une fois par un admin dans **Publication → VPN du Syndicate** :
+Avec une IP partagée, la 4G ou la 5G, la box ne peut pas ouvrir de ports. Tout le monde passe alors par un réseau privé commun, configuré une fois par un admin dans **Publication → VPN** :
 
 | | ZeroTier | Radmin VPN |
 | --- | --- | --- |
@@ -130,14 +130,14 @@ Le PC de l'hôte doit rester allumé pendant la partie. L'hôte peut jouer en m�
 Tout se gère dans l'onglet **Publication** :
 
 - **Calendrier des events** : titre, date, serveur, durée et description. Les membres voient le prochain event avec un compte à rebours et reçoivent une notification Windows 15 min avant, puis au départ.
-- **Sessions solo** : dans l'onglet **Solo**, règle une session puis clique sur **Partager au Syndicate**. Elle apparaît sur l'accueil de tout le monde. Les sessions se suppriment dans Publication.
+- **Sessions solo** : dans l'onglet **Solo**, règle une session puis clique sur **Partager**. Elle apparaît sur l'accueil de tout le monde. Les sessions se suppriment dans Publication.
 - **Setups partagés** : enregistre tes setups dans le jeu, coche les voitures dans Publication, puis clique sur **Publier les setups**.
 - **Discord** : crée une application nommée « Lowkey Syndicate » sur [discord.com/developers/applications](https://discord.com/developers/applications), puis colle son *Application ID* et le lien d'invitation de ton serveur. Chaque membre peut désactiver son statut Discord dans les Paramètres.
 - **Historique** : chaque publication est enregistrée avec le compte GitHub de l'admin.
 
 ### Site vitrine (GitHub Pages)
 
-Le site présente le Syndicate et le launcher : logo, vitrine, actus, bouton de téléchargement, liens Discord et dons. Il est reconstruit à chaque release et chaque nuit, à partir du contenu publié. Le logo n'est jamais ajouté au code.
+Le site présente le groupe et le launcher : logo, vitrine, actus, bouton de téléchargement, liens Discord et dons. Il est reconstruit à chaque release et chaque nuit, à partir du contenu publié. Le logo n'est jamais ajouté au code.
 
 Mise en route, une seule fois :
 

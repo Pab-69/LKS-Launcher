@@ -13,7 +13,7 @@ export default function graphicsView(root) {
   const progBox = h('div.row.mt', { hidden: true }, h('div.progress', progFill), h('span.hint'));
 
   root.append(
-    h('div.view-head', h('div', h('h1', 'Graphismes'), h('p', 'Le Custom Shaders Patch et des réglages optimisés pour ta machine. Aucune bidouille, tout est automatique.'))),
+    h('div.view-head', h('div', h('h1', 'Graphismes'), h('p', 'Le Custom Shaders Patch et les bons réglages pour ton PC.'))),
     body,
   );
 
@@ -70,11 +70,11 @@ export default function graphicsView(root) {
         h('div.oneclick-main',
           h('div',
             h('div.picker-k', 'Configuration en 1 clic'),
-            h('div.oneclick-title', allGood ? 'Ton jeu est prêt' : 'Rends ton jeu magnifique'),
+            h('div.oneclick-title', allGood ? 'Ton jeu est prêt' : 'Configurer les graphismes'),
             h('p.muted', { style: { margin: '6px 0 0', maxWidth: '620px' } },
               allGood
                 ? `CSP v${st.csp.version} actif avec le préréglage « ${labelOf(st.preset)} ». Tu peux changer de préréglage plus bas à tout moment.`
-                : `Installe le Custom Shaders Patch officiel (ciel et météo dynamiques, lumières, reflets, nouveaux shaders) et applique les meilleurs réglages pour ta carte graphique.`),
+                : `Installe le Custom Shaders Patch et les meilleurs réglages pour ta carte graphique.`),
           ),
           h('div.oneclick-side',
             spec('Carte graphique', st.gpu.name ? shortGpu(st.gpu.name) : 'Non détectée'),
@@ -86,7 +86,7 @@ export default function graphicsView(root) {
           h('button.btn.btn-primary.btn-lg', {
             disabled: busy || st.gameRunning || !store.settings.acRoot,
             on: { click: () => run(() => guard(() => api.call('graphics:oneClick', st.gpu.recommended))) },
-          }, busy ? h('span.spinner') : icon('check'), allGood ? 'Tout réappliquer' : 'Tout configurer pour moi'),
+          }, busy ? h('span.spinner') : icon('check'), allGood ? 'Tout réappliquer' : 'Tout configurer'),
           h('span.hint', !st.csp.installed || st.needsUpdate ? `Téléchargement d'environ ${st.versions && st.versions.all.length ? sizeOf(st.target.version) : '120 Mo'} depuis le site officiel du CSP (acstuff).` : ''),
         ),
         progBox,
@@ -102,7 +102,7 @@ export default function graphicsView(root) {
       tags.push(h(`span.tag.${st.csp.enabled ? 'ok' : 'warn'}`, st.csp.enabled ? `v${st.csp.version} actif` : `v${st.csp.version} désactivé`));
       if (st.needsUpdate) tags.push(h('span.tag.warn', `Mise à jour v${st.target.version}`));
     }
-    const versionLabel = (v) => `v${v}${v === st.target.version && st.target.source === 'lks' ? ' — imposée par le Syndicate' : v === (st.versions || {}).recommended ? ' — recommandée (stable)' : v === (st.versions || {}).latest ? ' — dernière (test)' : ''}`;
+    const versionLabel = (v) => `v${v}${v === st.target.version && st.target.source === 'lks' ? ' — choisie par les admins' : v === (st.versions || {}).recommended ? ' — recommandée (stable)' : v === (st.versions || {}).latest ? ' — dernière (test)' : ''}`;
 
     body.append(
       h('h2.section', 'Custom Shaders Patch'),

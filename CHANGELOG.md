@@ -1,13 +1,16 @@
 # Journal des versions
 
+## 1.4.1
+
+- Textes plus simples dans tout le launcher.
+
 ## 1.4.0
 
-- **VPN du Syndicate** : quand la box de l'hôte ne peut pas ouvrir ses ports (IP partagée, 4G, 5G), tout le monde passe par un réseau privé commun.
-  - **ZeroTier** : installation et connexion en un clic depuis le launcher.
-  - **Radmin VPN** : rejoindre le réseau est guidé, avec le nom et le mot de passe à copier.
-- Le launcher détecte la connexion au VPN et crée un code d'invitation pour ce réseau. Il met le VPN en avant quand l'ouverture des ports échoue.
-- « Rejoindre avec un code » propose de rejoindre le VPN si le code en a besoin.
-- Pour les admins : réglage du VPN dans Publication, avec des règles ZeroTier qui ne laissent passer que le jeu.
+- **VPN** pour jouer quand la box ne peut pas ouvrir ses ports (IP partagée, 4G, 5G) :
+  - ZeroTier : installation et connexion en un clic ;
+  - Radmin VPN : connexion guidée.
+- Code d'invitation pour le VPN.
+- « Rejoindre avec un code » propose de se connecter au VPN si besoin.
 
 ## 1.3.0
 
@@ -20,10 +23,10 @@
 
 ## 1.2.0
 
-- **Events** : le prochain event du Syndicate apparaît sur l'accueil avec un compte à rebours. Une notification arrive 15 min avant, puis au départ, et le bouton « Rejoindre » mène directement au serveur.
-- **Sessions du Syndicate** : des sessions solo préparées par les admins, à lancer en un clic depuis l'accueil.
+- **Events** : le prochain event apparaît sur l'accueil avec un compte à rebours. Une notification arrive 15 min avant, puis au départ, et le bouton « Rejoindre » mène directement au serveur.
+- **Sessions rapides** : des sessions solo prêtes à lancer depuis l'accueil.
 - **Setups partagés** : les réglages des voitures LKS sont installés automatiquement, à côté des tiens, sans jamais les écraser.
-- **Discord** : ton statut Discord affiche ta session (voiture, piste, solo ou en ligne), avec un bouton pour rejoindre le Syndicate. Désactivable dans les Paramètres.
+- **Discord** : ton statut Discord affiche ta session (voiture, piste, solo ou en ligne), avec un bouton pour rejoindre le Discord. Désactivable dans les Paramètres.
 - Pour les admins : historique des publications, et réglages des events, sessions, setups et Discord dans Publication.
 
 ## 1.1.1
@@ -35,11 +38,11 @@
 
 - **Mises à jour en un clic** : quand une nouvelle version est prête, un bandeau propose « Redémarrer et mettre à jour ». Elle s'installe en silence, sans repasser par l'installeur. Elle s'installe aussi toute seule à la fermeture du launcher.
 - **Quoi de neuf** : cette fenêtre s'affiche après chaque mise à jour.
-- **Identité visuelle** : le logo et la vitrine du Syndicate sont maintenant publiés par les admins et téléchargés par le launcher (Publication → Identité visuelle).
+- **Identité visuelle** : le logo et la vitrine sont maintenant publiés par les admins et téléchargés par le launcher (Publication → Identité visuelle).
 - Le contenu du groupe est hébergé dans la release « content » du dépôt du launcher. Les anciens réglages sont migrés automatiquement.
 - Le code du launcher passe sous licence libre GPL-3.0. Le nom, le logo et les visuels restent la propriété de l'association.
 - Nouvelle icône.
 
 ## 1.0.0
 
-- Première version : synchro des voitures et circuits du Syndicate, solo, serveurs, graphismes en 1 clic (Custom Shaders Patch), pages Soutenir et Boutique, thème gothique.
+- Première version : synchro des voitures et circuits, solo, serveurs, graphismes en 1 clic (Custom Shaders Patch), pages Soutenir et Boutique, thème gothique.

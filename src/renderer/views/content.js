@@ -13,7 +13,7 @@ export default function content(root) {
 
   root.append(
     h('div.view-head',
-      h('div', h('h1', 'Contenu LKS'), h('p', 'Voitures et circuits du Syndicate. Tout ce qui est publié par les admins arrive ici automatiquement.')),
+      h('div', h('h1', 'Contenu LKS'), h('p', 'Les voitures et circuits du groupe, installés automatiquement.')),
       h('div.grow'),
       h('div.actions',
         h('button.btn', { on: { click: async () => { await guard(() => api.call('sync:refresh')); await load(); } } }, icon('refresh'), 'Actualiser'),

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * "VPN du Syndicate": a private virtual network used when the host's box can't
+ * VPN: a private virtual network used when the host's box can't
  * open its ports (shared IP, 4G/5G, UPnP disabled).
  *
  *  - ZeroTier: fully driven by the launcher (official installer + join).

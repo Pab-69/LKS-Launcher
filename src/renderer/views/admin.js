@@ -287,7 +287,7 @@ export default function admin(root) {
     const presetList = h('div.list');
     const drawPresets = () => {
       clear(presetList);
-      if (!presets.length) presetList.append(h('p.muted', { style: { margin: 0 } }, 'Aucune session. Dans l’onglet Solo, règle une session puis clique « Partager au Syndicate ».'));
+      if (!presets.length) presetList.append(h('p.muted', { style: { margin: 0 } }, 'Aucune session. Dans Solo, règle une session puis clique sur « Partager ».'));
       presets.forEach((p, idx) => presetList.append(h('div.row', { style: { padding: '6px 0', borderBottom: '1px solid var(--line)' } },
         h('div', h('div', { style: { fontWeight: 700 } }, p.name), h('div.hint', [p.settings && p.settings.car, p.settings && p.settings.track].filter(Boolean).join(' @ '))),
         h('button.btn.btn-sm.btn-danger.right', { on: { click: () => { presets.splice(idx, 1); drawPresets(); } } }, icon('trash')))));
@@ -330,7 +330,7 @@ export default function admin(root) {
     // ---------- Discord
     const discord = { clientId: '', inviteUrl: '', ...(data.manifest.discord || {}) };
 
-    // ---------- VPN du Syndicate
+    // ---------- VPN
     const vpnCfg = { provider: '', networkId: '', networkName: '', password: '', ...(data.manifest.vpn || {}) };
     const vpnBox = h('div.mt');
     const drawVpn = async () => {
@@ -367,7 +367,7 @@ export default function admin(root) {
 
     metaBox.append(
       h('div.panel', h('h3', 'Calendrier des events'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Les membres voient le prochain event sur l’accueil avec un compte à rebours, et reçoivent une notification 15 min avant.'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Affiché sur l’accueil avec un compte à rebours. Notification 15 min avant.'),
         eventList,
         h('div.row.mt',
           h('button.btn.btn-sm', { on: { click: () => { const d = new Date(Date.now() + 86400000); d.setHours(21, 0, 0, 0); events.push({ id: `e${Date.now().toString(36)}`, title: 'Soirée LKS', date: d.toISOString(), durationMinutes: 120, server: serverOptions[1] ? serverOptions[1][0] : '' }); drawEvents(); } } }, icon('plus'), 'Ajouter un event'),
@@ -375,13 +375,13 @@ export default function admin(root) {
             if (events.some((e) => !e.title || Number.isNaN(Date.parse(e.date)))) return toast('Chaque event a besoin d’un titre et d’une date', 'warn');
             guard(() => api.call('admin:updateMeta', { events }), 'Calendrier publié');
           } } }, 'Enregistrer le calendrier'))),
-      h('div.panel', h('h3', 'Sessions solo du Syndicate'), presetList,
+      h('div.panel', h('h3', 'Sessions rapides'), presetList,
         h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => guard(() => api.call('admin:updateMeta', { soloPresets: presets }), 'Sessions enregistrées') } }, 'Enregistrer'))),
       h('div.panel', h('h3', 'Setups partagés'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Les setups sont installés chez les membres à côté des leurs (préfixe LKS_), sans jamais écraser leurs propres réglages.'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Installés à côté des setups de chacun (préfixe LKS_), sans rien écraser.'),
         setupBox),
       h('div.panel', h('h3', 'Discord'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Pour afficher « Joue à Lowkey Syndicate » sur le profil Discord des membres : crée une application nommée « Lowkey Syndicate » sur discord.com/developers/applications et colle son Application ID ici.'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Crée une application « Lowkey Syndicate » sur discord.com/developers/applications et colle son Application ID ici.'),
         h('div.grid',
           field('Application ID', h('input.input.mono', { value: discord.clientId, placeholder: '123456789012345678', on: { input: (e) => { discord.clientId = e.target.value.trim(); } } })),
           field('Lien d’invitation du serveur Discord', h('input.input.mono', { value: discord.inviteUrl, placeholder: 'https://discord.gg/…', on: { input: (e) => { discord.inviteUrl = e.target.value.trim(); } } })),
@@ -391,8 +391,8 @@ export default function admin(root) {
           if (discord.inviteUrl && !/^https:\/\//.test(discord.inviteUrl)) return toast('Le lien doit commencer par https://', 'warn');
           guard(() => api.call('admin:updateMeta', { discord }), 'Réglages Discord publiés');
         } } }, 'Enregistrer'))),
-      h('div.panel', h('h3', 'VPN du Syndicate'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Quand la box d’un hôte ne peut pas ouvrir ses ports (IP partagée, 4G, 5G), tout le monde passe par ce réseau privé. Deux choix gratuits :'),
+      h('div.panel', h('h3', 'VPN'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Si la box d’un hôte ne peut pas ouvrir ses ports, tout le monde passe par ce VPN. Deux choix gratuits :'),
         field('Type', h('select.input', { on: { change: (e) => { vpnCfg.provider = e.target.value; drawVpn(); } } },
           [['', 'Aucun'], ['zerotier', 'ZeroTier : connexion en un clic dans le launcher (10 appareils max, gratuit)'], ['radmin', 'Radmin VPN : sans limite, les membres rejoignent à la main']].map(([v, l]) => h('option', { value: v, selected: (vpnCfg.provider || '') === v }, l)))),
         vpnBox,
@@ -400,7 +400,7 @@ export default function admin(root) {
           if (vpnCfg.provider === 'zerotier' && !/^[0-9a-f]{16}$/.test(vpnCfg.networkId || '')) return toast('L’identifiant ZeroTier fait 16 caractères (0-9, a-f)', 'warn');
           if (vpnCfg.provider === 'radmin' && !vpnCfg.networkName) return toast('Indique le nom du réseau Radmin VPN', 'warn');
           const value = vpnCfg.provider === 'zerotier' ? { provider: 'zerotier', networkId: vpnCfg.networkId } : vpnCfg.provider === 'radmin' ? { provider: 'radmin', networkName: vpnCfg.networkName, password: vpnCfg.password || '' } : null;
-          guard(() => api.call('admin:updateMeta', { vpn: value }), 'VPN du Syndicate publié');
+          guard(() => api.call('admin:updateMeta', { vpn: value }), 'VPN enregistré');
         } } }, 'Enregistrer'))),
       h('div.panel', h('h3', 'Historique des publications'),
         history.length
@@ -423,7 +423,7 @@ export default function admin(root) {
         )),
     );
     metaBox.append(
-      h('div.panel', h('h3', 'Serveurs du Syndicate'), srvList,
+      h('div.panel', h('h3', 'Serveurs'), srvList,
         h('div.row.mt',
           h('button.btn.btn-sm', { on: { click: () => { servers.push({ name: 'Nouveau serveur', ip: '', httpPort: 8081 }); drawServers(); } } }, icon('plus'), 'Ajouter'),
           h('button.btn.btn-sm.btn-primary.right', { on: { click: () => guard(() => api.call('admin:updateMeta', { servers: servers.filter((s) => s.ip) }), 'Serveurs publiés') } }, 'Enregistrer les serveurs'),
@@ -437,7 +437,7 @@ export default function admin(root) {
         ),
         h('div.mt', newsList)),
       h('div.panel', h('h3', 'Custom Shaders Patch du groupe'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Laisse vide pour que chacun reçoive la version recommandée par acstuff. Indique une version (ex. 0.2.11) pour que tout le Syndicate ait exactement la même, utile si un serveur exige une version précise.'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Vide : version recommandée par acstuff. Sinon, indique une version (ex. 0.2.11) pour que tout le monde ait la même.'),
         h('div.input-row',
           h('input.input.mono', { value: cspPin, placeholder: 'recommandée (auto)', on: { input: (e) => { cspPin = e.target.value.trim(); } } }),
           h('button.btn.btn-primary', { on: { click: () => {
@@ -446,7 +446,7 @@ export default function admin(root) {
           } } }, 'Enregistrer'),
         )),
       h('div.panel', h('h3', 'Dons'),
-        field('Message', h('textarea.input', { value: don.message || '', placeholder: 'Pourquoi soutenir le Syndicate…', on: { input: (e) => { don.message = e.target.value; } } })),
+        field('Message', h('textarea.input', { value: don.message || '', placeholder: 'Message (optionnel)', on: { input: (e) => { don.message = e.target.value; } } })),
         h('div.grid.grid-3.mt',
           field('Objectif (texte)', h('input.input', { value: goal.label, on: { input: (e) => { goal.label = e.target.value; } } })),
           field('Récolté', h('input.input', { type: 'number', value: goal.current, on: { input: (e) => { goal.current = Number(e.target.value); } } })),

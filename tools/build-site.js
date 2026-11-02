@@ -88,10 +88,10 @@ async function download(url, file) {
       ? `<section id="garage"><h2>Le Garage</h2><div class="garage">${showcase.map((s) => `<div class="car"><img src="${esc(brand[s.image])}" alt="${esc(s.title)}" style="object-position:${esc(s.position || 'center')}" loading="lazy" /><div><strong>${esc(s.title)}</strong><span>${esc(s.subtitle)}</span></div></div>`).join('')}</div></section>`
       : '',
     NEWS: news.length
-      ? `<section id="actus" class="news"><h2>Actus du Syndicate</h2>${news.map((n) => `<article><time>${esc(new Date(n.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))}</time><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p></article>`).join('')}</section>`
+      ? `<section id="actus" class="news"><h2>Actus</h2>${news.map((n) => `<article><time>${esc(new Date(n.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))}</time><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p></article>`).join('')}</section>`
       : '',
     SUPPORT: donateLinks.length || shop || discordUrl
-      ? `<section><h2>Soutenir le Syndicate</h2><div class="support">${donateLinks.map((l) => `<a class="btn" href="${esc(l.url)}">${esc(l.label || 'Faire un don')}</a>`).join('')}${shop ? `<a class="btn" href="${esc(shop)}">Boutique</a>` : ''}${discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Discord</a>` : ''}</div></section>`
+      ? `<section><h2>Soutenir</h2><div class="support">${donateLinks.map((l) => `<a class="btn" href="${esc(l.url)}">${esc(l.label || 'Faire un don')}</a>`).join('')}${shop ? `<a class="btn" href="${esc(shop)}">Boutique</a>` : ''}${discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Discord</a>` : ''}</div></section>`
       : '',
   };
   let html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');

@@ -150,7 +150,7 @@ function brandLogoUrl() {
 function presenceButtons() {
   const d = sync.manifest.discord || {};
   const buttons = [];
-  if (d.inviteUrl) buttons.push({ label: 'Rejoindre le Syndicate', url: d.inviteUrl });
+  if (d.inviteUrl) buttons.push({ label: 'Rejoindre le Discord', url: d.inviteUrl });
   buttons.push({ label: 'Télécharger le launcher', url: `https://github.com/${appConfig.contentRepo}/releases/latest` });
   return buttons;
 }
@@ -901,7 +901,7 @@ function setupIpc() {
   });
   handle('vpn:join', async () => {
     const cfg = sync.manifest.vpn || {};
-    if (cfg.provider !== 'zerotier') throw new Error("Le Syndicate n'utilise pas ZeroTier");
+    if (cfg.provider !== 'zerotier') throw new Error("Le VPN configuré n'est pas ZeroTier");
     await vpn.zerotierCommand('join', cfg.networkId);
     // the virtual network card takes a few seconds to get its address
     for (let i = 0; i < 15 && !vpn.vpnStatus(cfg).connected; i++) await new Promise((r) => setTimeout(r, 1000));
