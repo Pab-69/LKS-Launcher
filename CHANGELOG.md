@@ -1,5 +1,17 @@
 # Journal des versions
 
+## 1.5.0
+
+- **Télémétrie** (nouvel onglet) : chaque tour est enregistré (vitesse, pédales, rapport, angle, trajectoire).
+- **En direct** : vitesse, rapport, angle de drift, écart avec ton meilleur tour, carte.
+- **Classement** au chrono ou au drift, par circuit et par voiture, partagé entre tous les pilotes.
+- **Comparer** deux tours, les tiens ou ceux d'un autre pilote : courbes, écart et carte.
+- Export et import de tours (`.lkslap`).
+- Appli en jeu (avec le CSP) : angle, score de drift et écart en direct.
+- Tableau de bord sur téléphone, sur le même Wi-Fi.
+- SimHub et Crew Chief : lancement avec le jeu s'ils sont installés.
+- Pour les admins : réglage du classement dans Publication.
+
 ## 1.4.1
 
 - Textes plus simples dans tout le launcher.

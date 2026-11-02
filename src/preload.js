@@ -28,6 +28,8 @@ const EVENTS = [
   'navigate',
   'host:changed',
   'host:log',
+  'telemetry:live',
+  'telemetry:lap',
 ];
 
 contextBridge.exposeInMainWorld('lks', {

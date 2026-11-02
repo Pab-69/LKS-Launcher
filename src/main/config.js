@@ -28,6 +28,8 @@ const DEFAULTS = {
   lastRunVersion: '',
   discordPresence: true,
   host: {},
+  telemetry: { enabled: true, shareLaps: true, dashEnabled: false, dashPort: 8095 },
+  tools: {},
   eventNotifications: true,
   updateNotes: null,
   admin: {

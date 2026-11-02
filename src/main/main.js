@@ -26,6 +26,12 @@ const { findGateway, isPrivateIp } = require('./upnp');
 const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
 const { encodeInvite, decodeInvite } = require('../shared/invite');
 const vpn = require('./vpn');
+const { TelemetryManager } = require('./telemetry');
+const { SharedMemorySource, SimulatedSource } = require('./telemetry/source');
+const { Simulator } = require('./telemetry/simulator');
+const telemetryTools = require('./telemetry/tools');
+const ingame = require('./telemetry/ingame');
+const { Leaderboard } = require('./telemetry/leaderboard');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -54,6 +60,7 @@ const notifiedEvents = new Set();
 const host = new ServerHost();
 let hostState = null; // { name, ports, password, track, layout, upnp: {state, error, externalIp}, invites: [] }
 let gateway = null;
+let telemetry = null;
 let mappedPorts = [];
 
 const acRoot = () => settings.data.acRoot;
@@ -327,6 +334,49 @@ function setupSync() {
   setInterval(() => refreshManifest({ autoSync: true }).catch(() => {}), MANIFEST_POLL_MS);
 }
 
+// ---------------------------------------------------------------- telemetry
+const fmtLap = (ms) => `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(3).padStart(6, '0')}`;
+
+function dashUrls(port) {
+  return networkAddresses().filter((n) => n.kind === 'lan' || n.kind === 'other').map((n) => `http://${n.address}:${port}`);
+}
+
+async function applyDash() {
+  const t = settings.data.telemetry;
+  if (t.dashEnabled && !telemetry.dash.running) {
+    try {
+      await telemetry.dash.start(t.dashPort || 8095);
+    } catch (err) {
+      send('toast', { kind: 'error', text: `Tableau de bord téléphone : ${err.message}` });
+    }
+  } else if (!t.dashEnabled && telemetry.dash.running) telemetry.dash.stop();
+}
+
+function setupTelemetry() {
+  const source = process.env.LKS_TELEMETRY_SIM ? new SimulatedSource(new Simulator({ lapMs: 30000 })) : new SharedMemorySource();
+  telemetry = new TelemetryManager({
+    dataDir: app.getPath('userData'),
+    source,
+    getDriver: () => ({ name: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' }),
+    getBoardConfig: () => sync.manifest.leaderboard || null,
+    getSettings: () => settings.data.telemetry,
+  });
+  telemetry.on('lap', ({ lap, pbTime, pbDrift }) => {
+    send('telemetry:lap', lap);
+    if (pbTime) send('toast', { kind: 'success', text: `Record perso : ${fmtLap(lap.lapMs)}` });
+    else if (pbDrift) send('toast', { kind: 'success', text: `Record de drift : ${lap.drift.score} pts` });
+  });
+  telemetry.on('submitted', () => send('toast', { kind: 'info', text: 'Envoyé au classement' }));
+  telemetry.on('submitError', (err) => send('toast', { kind: 'warn', text: err.message }));
+  telemetry.on('warning', (err) => console.warn('[telemetry]', err.message));
+  telemetry.start();
+  setInterval(() => {
+    const live = telemetry.live();
+    if (live) send('telemetry:live', live);
+  }, 100);
+  applyDash();
+}
+
 function setupHosting() {
   host.on('stopped', () => {
     closePorts();
@@ -344,11 +394,21 @@ function setupSync_() {
 
 function setupGame() {
   game.on('started', () => {
+    for (const id of Object.keys(settings.data.tools || {})) {
+      if (settings.data.tools[id] && telemetryTools.findTool(id)) {
+        try {
+          telemetryTools.launchTool(id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     send('game:state', { running: true });
     if (game.presence) setPresence({ ...game.presence, startedAt: Date.now() });
     if (settings.data.closeOnLaunch && win) win.minimize();
   });
   game.on('exited', (info) => {
+    if (telemetry) telemetry.source.detach();
     send('game:state', { running: false, ...info });
     setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
     if (win) {
@@ -814,7 +874,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { leaderboard: pub.manifest.leaderboard || null, vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -915,6 +975,67 @@ function setupIpc() {
     return vpn.vpnStatus(cfg);
   });
   handle('vpn:rules', (ports) => vpn.zerotierRules(ports || undefined));
+
+  // Telemetry
+  handle('telemetry:status', () => {
+    const t = settings.data.telemetry;
+    return { ...t, board: Boolean(telemetry.board()), dash: { running: telemetry.dash.running, urls: telemetry.dash.running ? dashUrls(t.dashPort || 8095) : [] }, live: telemetry.live(), error: telemetry.source.error || telemetry.tickError ? 'Impossible de lire les données du jeu sur ce PC.' : null };
+  });
+  handle('telemetry:settings', async (patch) => {
+    settings.update({ telemetry: patch || {} });
+    await applyDash();
+    return settings.data.telemetry;
+  });
+  handle('telemetry:laps', (filter) => telemetry.store.list(filter || {}));
+  handle('telemetry:lap', async (id) => {
+    if (String(id).startsWith('remote-')) {
+      const board = telemetry.board();
+      if (!board) throw new Error('Classement partagé non configuré');
+      return board.lap(String(id).slice(7));
+    }
+    return telemetry.store.load(id);
+  });
+  handle('telemetry:board', async (q) => {
+    const local = telemetry.store.leaderboard(q);
+    const board = telemetry.board();
+    if (!board) return { local, remote: null };
+    try {
+      return { local, remote: await board.list(q) };
+    } catch (err) {
+      return { local, remote: null, error: err.message };
+    }
+  });
+  handle('telemetry:delete', (id) => telemetry.store.remove(id));
+  handle('telemetry:export', async (id) => {
+    const lap = telemetry.store.load(id);
+    const r = await dialog.showSaveDialog(win, { title: 'Exporter le tour', defaultPath: `${lap.driver.name}-${lap.track}-${fmtLap(lap.lapMs).replace(/[:.]/g, '-')}.lkslap`, filters: [{ name: 'Tour LKS', extensions: ['lkslap'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, telemetry.store.export(id));
+    return r.filePath;
+  });
+  handle('telemetry:import', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Importer des tours', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Tour LKS', extensions: ['lkslap'] }] });
+    if (r.canceled) return [];
+    return r.filePaths.map((f) => telemetry.store.import(fs.readFileSync(f)));
+  });
+  handle('tools:status', () => telemetryTools.toolsStatus().map((t) => ({ ...t, autoStart: Boolean((settings.data.tools || {})[t.id]) })));
+  handle('tools:launch', (id) => telemetryTools.launchTool(id));
+  handle('tools:autoStart', (id, on) => {
+    settings.update({ tools: { [id]: Boolean(on) } });
+    return true;
+  });
+  handle('ingame:status', () => (acRoot() ? ingame.ingameStatus(acRoot()) : { installed: null }));
+  handle('ingame:install', () => {
+    if (!acRoot()) throw new Error("Dossier d'Assetto Corsa non configuré");
+    return ingame.installIngame(acRoot());
+  });
+  handle('ingame:remove', () => ingame.removeIngame(acRoot()));
+  handle('admin:testLeaderboard', async (cfg) => {
+    const board = new Leaderboard(cfg || {});
+    await board.list({ track: '__test__', layout: '', kind: 'time', limit: 1 });
+    return true;
+  });
+  handle('admin:leaderboardSql', () => fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'leaderboard.sql'), 'utf8'));
   handle('setups:status', () => setupsSync.status());
   handle('discord:status', () => ({ configured: Boolean(presence.clientId), enabled: settings.data.discordPresence !== false, connected: presence.connected }));
   handle('admin:localSetups', () => {
@@ -970,6 +1091,7 @@ app.whenReady().then(async () => {
   setupCsp();
   setupSync_();
   setupHosting();
+  setupTelemetry();
   setupGame();
   setupIpc();
   createWindow();

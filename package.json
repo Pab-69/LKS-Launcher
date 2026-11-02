@@ -1,7 +1,7 @@
 {
   "name": "lks-launcher",
   "productName": "LKS Launcher",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Launcher Assetto Corsa du Lowkey Syndicate : synchro des voitures/circuits, solo, serveurs.",
   "main": "src/main/main.js",
   "author": "Lowkey Syndicate",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
+    "koffi": "^3.3.6",
     "yauzl": "^3.2.0",
     "yazl": "^3.3.1"
   },
@@ -36,7 +37,8 @@
       "lks.config.json",
       "package.json",
       "LICENSE",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "docs/leaderboard.sql"
     ],
     "win": {
       "target": [
@@ -67,6 +69,10 @@
         "repo": "lks-launcher",
         "releaseType": "release"
       }
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
     ]
   },
   "repository": {

@@ -135,6 +135,18 @@ Tout se gère dans l'onglet **Publication** :
 - **Discord** : crée une application nommée « Lowkey Syndicate » sur [discord.com/developers/applications](https://discord.com/developers/applications), puis colle son *Application ID* et le lien d'invitation de ton serveur. Chaque membre peut désactiver son statut Discord dans les Paramètres.
 - **Historique** : chaque publication est enregistrée avec le compte GitHub de l'admin.
 
+### Télémétrie et classement
+
+Chaque tour complet est enregistré sur le PC du pilote (onglet **Télémétrie**) : en direct, liste des tours, classement, comparaison entre deux tours, export/import `.lkslap`, appli en jeu (CSP) et tableau de bord sur téléphone. SimHub et Crew Chief sont détectés et peuvent se lancer avec le jeu.
+
+Pour un **classement partagé** entre tous les membres (gratuit) :
+
+1. Crée un projet sur [supabase.com](https://supabase.com/dashboard/new).
+2. Dans **SQL Editor**, colle le contenu de [`docs/leaderboard.sql`](docs/leaderboard.sql) (ou **Publication → Classement → Copier le script**) et lance-le.
+3. Dans **Project Settings → API**, copie l'URL du projet et la clé *anon public*, colle-les dans **Publication → Classement**, puis **Enregistrer**.
+
+Chaque pilote garde une seule entrée par voiture, circuit et type (chrono ou drift). La base ne la remplace que par un meilleur résultat. Sans Supabase, le classement montre les tours du PC et ceux importés.
+
 ### Site vitrine (GitHub Pages)
 
 Le site présente le groupe et le launcher : logo, vitrine, actus, bouton de téléchargement, liens Discord et dons. Il est reconstruit à chaque release et chaque nuit, à partir du contenu publié. Le logo n'est jamais ajouté au code.

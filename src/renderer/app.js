@@ -11,8 +11,9 @@ import graphics from './views/graphics.js';
 import donate from './views/donate.js';
 import shop from './views/shop.js';
 import host from './views/host.js';
+import telemetry from './views/telemetry.js';
 
-const routes = { home, content, solo, servers, host, graphics, donate, shop, settings, admin };
+const routes = { home, content, solo, servers, host, telemetry, graphics, donate, shop, settings, admin };
 const viewEl = document.getElementById('view');
 let current = null;
 let cleanup = null;
