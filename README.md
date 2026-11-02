@@ -147,6 +147,19 @@ Pour un **classement partagé** entre tous les membres (gratuit) :
 
 Chaque pilote garde une seule entrée par voiture, circuit et type (chrono ou drift). La base ne la remplace que par un meilleur résultat. Sans Supabase, le classement montre les tours du PC et ceux importés.
 
+#### Notation du drift
+
+Au drift, le chrono ne compte pas. Chaque run reçoit une note sur 100 :
+
+| Critère | Points | Calcul |
+| --- | --- | --- |
+| Angle | 35 | Angle moyen sur la partie notée (40° de moyenne = note max) |
+| Vitesse | 30 | Vitesse moyenne comparée à la run de référence |
+| Ligne et clips | 35 | Clips pris en glisse (plus on est près, plus ça rapporte) et écart avec la ligne de référence |
+| Pénalités | − | Tête-à-queue −20, redressement en pleine glisse −3, sortie de piste −5 |
+
+Les admins placent les clips dans **Télémétrie → Parcours drift** : choisir une run propre (elle donne la ligne et la vitesse de référence), régler le départ et l'arrivée, cliquer sur la carte pour poser les clips (intérieur : la corde, extérieur : le mur), puis **Publier**. Quand un parcours change, les runs sont notées à nouveau et le classement drift de ce circuit repart avec les nouvelles règles. Sans clips, seuls l'angle et la vitesse comptent.
+
 ### Site vitrine (GitHub Pages)
 
 Le site présente le groupe et le launcher : logo, vitrine, actus, bouton de téléchargement, liens Discord et dons. Il est reconstruit à chaque release et chaque nuit, à partir du contenu publié. Le logo n'est jamais ajouté au code.

@@ -12,13 +12,15 @@ const { TelemetryRecorder } = require('./recorder');
 const { LapStore } = require('./store');
 const { Leaderboard } = require('./leaderboard');
 const { DashServer } = require('./dash-server');
+const { courseVersion, scoreDrift } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
-    this.recorder = new TelemetryRecorder({ getDriver });
+    this.getCourse = getCourse || (() => null);
+    this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c) });
     this.getBoardConfig = getBoardConfig || (() => null);
     this.getSettings = getSettings || (() => ({}));
     this.dash = new DashServer({ getLive: () => this.live() });
@@ -87,6 +89,28 @@ class TelemetryManager extends EventEmitter {
     }
   }
 
+  /**
+   * Re-judge the drift of local laps whose course changed (admins moved the
+   * clips, or laps from an older version). Returns how many were updated.
+   */
+  rescoreAll() {
+    let n = 0;
+    for (const l of [...this.store.index]) {
+      const course = this.getCourse(l);
+      if ((l.drift.rules || '') === courseVersion(course) && l.drift.angle !== undefined) continue;
+      try {
+        const lap = this.store.load(l.id);
+        lap.drift = scoreDrift(lap.samples, course) || { score: 0, maxAngle: lap.drift.maxAngle || 0, avgAngle: 0, driftTime: 0, clips: [], penalties: [], rules: courseVersion(course) };
+        this.store.save(lap, { imported: Boolean(l.imported) });
+        n++;
+      } catch {
+        /* unreadable lap: leave it */
+      }
+    }
+    if (n) this.synced.clear(); // new bests may need sending
+    return n;
+  }
+
   loadReference(combo) {
     const best = this.store.best({ ...combo, kind: 'time' });
     this.recorder.setReference(best ? this.store.load(best.id) : null);
@@ -105,7 +129,8 @@ class TelemetryManager extends EventEmitter {
     try {
       const mine = this.store.list({ ...combo, layout: combo.layout || '' }).filter((l) => !l.imported && (l.driver.steamId || '') === (steamId || ''));
       const bestTime = mine.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0];
-      const bestDrift = mine.filter((l) => l.drift.score > 0).sort((a, b) => b.drift.score - a.drift.score)[0];
+      const rules = courseVersion(this.getCourse(combo));
+      const bestDrift = mine.filter((l) => l.drift.score > 0 && (l.drift.rules || '') === rules).sort((a, b) => b.drift.score - a.drift.score)[0];
       if (bestTime) await board.submit(this.store.load(bestTime.id), 'time');
       if (bestDrift) await board.submit(this.store.load(bestDrift.id), 'drift');
     } catch {
@@ -115,7 +140,7 @@ class TelemetryManager extends EventEmitter {
 
   async onLap(lap) {
     const prevBest = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'time', steamId: lap.driver.steamId });
-    const prevDrift = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'drift', steamId: lap.driver.steamId });
+    const prevDrift = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'drift', steamId: lap.driver.steamId, rules: lap.drift.rules || '' });
     this.store.save(lap);
     const pbTime = lap.valid && (!prevBest || lap.lapMs < prevBest.lapMs);
     const pbDrift = lap.drift.score > 0 && (!prevDrift || lap.drift.score > prevDrift.drift.score);

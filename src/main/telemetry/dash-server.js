@@ -23,7 +23,7 @@ const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta n
 <div class="c"><div class="k">Rapport</div><div class="big" id="gear">N</div></div>
 <div class="c full"><div class="k">Régime</div><div class="bar rpm"><i id="rpm"></i></div></div>
 <div class="c"><div class="k">Gaz</div><div class="bar gas"><i id="gas"></i></div><div class="k" style="margin-top:10px">Frein</div><div class="bar brk"><i id="brk"></i></div></div>
-<div class="c"><div class="k">Angle</div><div class="mid" id="angle">0°</div><div class="k">Score du tour <span id="score">0</span></div></div>
+<div class="c"><div class="k">Angle</div><div class="mid" id="angle">0°</div><div class="k">Clips <span id="clips">—</span></div></div>
 <div class="c"><div class="k">Tour</div><div class="mid" id="lap">0:00.000</div><div class="k">Meilleur <span id="best">—</span></div></div>
 <div class="c"><div class="k">Écart</div><div class="mid" id="delta">—</div><div class="k">Dernier <span id="last">—</span></div></div>
 <div class="c full"><div class="k">Pneus (°C)</div><div class="tyres" id="tyres"></div></div>
@@ -31,7 +31,7 @@ const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta n
 const $=(i)=>document.getElementById(i);const fmt=(ms)=>ms>0?Math.floor(ms/60000)+':'+((ms%60000)/1000).toFixed(3).padStart(6,'0'):'—';
 const es=new EventSource('live');es.onmessage=(e)=>{const s=JSON.parse(e.data);const on=s&&s.status===2;$('off').hidden=on;$('d').hidden=!on;if(!on)return;
 $('speed').textContent=Math.round(s.speed);$('gear').textContent=s.gear;$('rpm').style.width=(s.maxRpm?Math.min(100,s.rpm/s.maxRpm*100):0)+'%';
-$('gas').style.width=s.gas*100+'%';$('brk').style.width=s.brake*100+'%';$('angle').textContent=Math.round(s.angle)+'°';$('score').textContent=s.lapScore;
+$('gas').style.width=s.gas*100+'%';$('brk').style.width=s.brake*100+'%';$('angle').textContent=Math.round(s.angle)+'°';$('clips').textContent=s.clips&&s.clips.total?s.clips.hit+' / '+s.clips.total:'—';
 $('lap').textContent=fmt(s.lapMs);$('best').textContent=fmt(s.bestMs);$('last').textContent=fmt(s.lastMs);
 const d=$('delta');if(s.delta==null){d.textContent='—';d.className='mid'}else{d.textContent=(s.delta>0?'+':'')+(s.delta/1000).toFixed(2);d.className='mid '+(s.delta<=0?'pos':'neg')}
 $('tyres').innerHTML=(s.tyreTemps||[]).map(t=>'<div>'+Math.round(t)+'</div>').join('')};

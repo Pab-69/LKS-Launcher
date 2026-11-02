@@ -9,12 +9,13 @@
 
 const { EventEmitter } = require('events');
 const { driftAngle } = require('./layout');
+const { scoreDrift, courseVersion, LiveClips } = require('./drift');
 
 const STATUS_LIVE = 2;
 const SESSION_NAMES = { 0: 'practice', 1: 'qualify', 2: 'race', 3: 'hotlap', 4: 'timeattack', 5: 'drift', 6: 'drag' };
 
-// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z]
-const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z'];
+// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z, wheels out]
+const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z', 'out'];
 
 const round = (v, n) => Math.round(v * 10 ** n) / 10 ** n;
 
@@ -42,16 +43,11 @@ function timeAt(samples, d) {
   return a[1] + (b[1] - a[1]) * k;
 }
 
-/** Homemade drift score: angle x speed while really drifting. */
-function driftPoints(angle, speed, dt) {
-  if (angle < 15 || angle > 75 || speed < 30) return 0;
-  return (angle * speed * dt) / 100;
-}
-
 class TelemetryRecorder extends EventEmitter {
-  constructor({ getDriver } = {}) {
+  constructor({ getDriver, getCourse } = {}) {
     super();
     this.getDriver = getDriver || (() => ({ name: 'Pilote', steamId: '' }));
+    this.getCourse = getCourse || (() => null); // drift course (clips, line) for a car/track
     this.lap = null;
     this.combo = null;
     this.reference = null; // { lapMs, samples }
@@ -69,7 +65,8 @@ class TelemetryRecorder extends EventEmitter {
   }
 
   newLap(g, now) {
-    this.lap = { completedLaps: g.completedLaps, samples: [], cutFrames: 0, pit: false, score: 0, maxAngle: 0, angleSum: 0, angleFrames: 0, driftTime: 0, topSpeed: 0, startedAt: now, lastSampleAt: 0 };
+    const course = this.combo ? this.getCourse(this.combo) : null;
+    this.lap = { completedLaps: g.completedLaps, samples: [], cutFrames: 0, pit: false, maxAngle: 0, topSpeed: 0, startedAt: now, lastSampleAt: 0, course, clips: new LiveClips(course) };
   }
 
   /** frame = { physics, graphics, static } (parsed), now = ms timestamp */
@@ -82,7 +79,6 @@ class TelemetryRecorder extends EventEmitter {
       this.lap = null;
       this.emit('combo', combo);
     }
-    const dt = this.lastFrameAt ? Math.min(0.2, (now - this.lastFrameAt) / 1000) : 0;
     this.lastFrameAt = now;
     const angle = driftAngle(p);
     const d = g.normalizedCarPosition;
@@ -97,21 +93,14 @@ class TelemetryRecorder extends EventEmitter {
       const last = lap.samples[lap.samples.length - 1];
       // sample by distance (or time when stopped), never backwards
       if (!last || (d > last[0] && (d - last[0] >= 0.0005 || now - lap.lastSampleAt >= 100))) {
-        lap.samples.push([round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1)]);
+        lap.samples.push([round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1), p.numberOfTyresOut]);
         lap.lastSampleAt = now;
       }
       if (p.numberOfTyresOut > 2) lap.cutFrames++;
       if (g.isInPitLane || g.isInPit) lap.pit = true;
       lap.topSpeed = Math.max(lap.topSpeed, p.speedKmh);
-      if (p.speedKmh > 20) {
-        lap.maxAngle = Math.max(lap.maxAngle, angle);
-        if (angle > 15) {
-          lap.angleSum += angle;
-          lap.angleFrames++;
-          lap.driftTime += dt;
-        }
-        lap.score += driftPoints(angle, p.speedKmh, dt);
-      }
+      if (p.speedKmh > 20) lap.maxAngle = Math.max(lap.maxAngle, Math.min(angle, 90));
+      lap.clips.feed(g.carCoordinates[0], g.carCoordinates[2], angle, p.speedKmh);
     }
 
     // live state for the dashboard
@@ -145,7 +134,7 @@ class TelemetryRecorder extends EventEmitter {
       z: g.carCoordinates[2],
       laps: g.completedLaps,
       position: g.position,
-      lapScore: this.lap ? Math.round(this.lap.score) : 0,
+      clips: this.lap ? this.lap.clips.summary() : null,
     };
   }
 
@@ -155,6 +144,7 @@ class TelemetryRecorder extends EventEmitter {
     // a lap counts only if it was recorded from the line to the line
     if (s.length < 20 || s[0][0] > 0.03 || s[s.length - 1][0] < 0.97 || !(g.iLastTime > 0)) return;
     const driver = this.getDriver() || {};
+    const course = this.getCourse(this.combo); // judged with the course published now
     const valid = lap.cutFrames < 30 && !lap.pit;
     const record = {
       version: 1,
@@ -168,12 +158,7 @@ class TelemetryRecorder extends EventEmitter {
       valid,
       cuts: lap.cutFrames,
       topSpeed: round(lap.topSpeed, 1),
-      drift: {
-        score: Math.round(lap.score),
-        maxAngle: round(lap.maxAngle, 1),
-        avgAngle: lap.angleFrames ? round(lap.angleSum / lap.angleFrames, 1) : 0,
-        driftTime: round(lap.driftTime, 1),
-      },
+      drift: scoreDrift(s, course) || { score: 0, maxAngle: round(lap.maxAngle, 1), avgAngle: 0, driftTime: 0, clips: [], penalties: [], rules: courseVersion(course) },
       date: new Date().toISOString(),
       columns: COLUMNS,
       samples: s,
@@ -182,4 +167,4 @@ class TelemetryRecorder extends EventEmitter {
   }
 }
 
-module.exports = { TelemetryRecorder, timeAt, driftPoints, gearLabel, COLUMNS };
+module.exports = { TelemetryRecorder, timeAt, gearLabel, COLUMNS };

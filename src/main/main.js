@@ -32,6 +32,7 @@ const { Simulator } = require('./telemetry/simulator');
 const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
 const { Leaderboard } = require('./telemetry/leaderboard');
+const { courseVersion, referenceFrom } = require('./telemetry/drift');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -295,6 +296,7 @@ async function refreshManifest({ autoSync } = {}) {
   send('sync:changed', sync.summary());
   syncBranding();
   syncSetups();
+  applyDriftCourses();
   configurePresence();
   checkEvents();
   const pending = sync.summary();
@@ -352,6 +354,27 @@ async function applyDash() {
   } else if (!t.dashEnabled && telemetry.dash.running) telemetry.dash.stop();
 }
 
+/** Drift course (clips, reference line) published by the admins for a track/layout. */
+function driftCourse(c) {
+  const all = (sync && sync.manifest && sync.manifest.drift) || {};
+  return all[`${c.track}|${c.layout || ''}`] || null;
+}
+
+let driftSignature = null;
+/** After a manifest change: re-judge local laps and update the in-game app's clips. */
+function applyDriftCourses() {
+  if (!telemetry || !sync) return;
+  const sig = JSON.stringify((sync.manifest && sync.manifest.drift) || {});
+  if (sig === driftSignature) return;
+  driftSignature = sig;
+  try {
+    if (telemetry.rescoreAll()) send('telemetry:lap', null);
+    if (acRoot()) ingame.writeCourses(acRoot(), sync.manifest.drift || {});
+  } catch (err) {
+    console.warn('[drift]', err.message);
+  }
+}
+
 function setupTelemetry() {
   const source = process.env.LKS_TELEMETRY_SIM ? new SimulatedSource(new Simulator({ lapMs: 30000 })) : new SharedMemorySource();
   telemetry = new TelemetryManager({
@@ -360,11 +383,13 @@ function setupTelemetry() {
     getDriver: () => ({ name: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' }),
     getBoardConfig: () => sync.manifest.leaderboard || null,
     getSettings: () => settings.data.telemetry,
+    getCourse: driftCourse,
   });
+  applyDriftCourses();
   telemetry.on('lap', ({ lap, pbTime, pbDrift }) => {
     send('telemetry:lap', lap);
     if (pbTime) send('toast', { kind: 'success', text: `Record perso : ${fmtLap(lap.lapMs)}` });
-    else if (pbDrift) send('toast', { kind: 'success', text: `Record de drift : ${lap.drift.score} pts` });
+    else if (pbDrift) send('toast', { kind: 'success', text: `Record de drift : ${lap.drift.score}/100` });
   });
   telemetry.on('submitted', () => send('toast', { kind: 'info', text: 'Envoyé au classement' }));
   telemetry.on('submitError', (err) => send('toast', { kind: 'warn', text: err.message }));
@@ -874,7 +899,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { leaderboard: pub.manifest.leaderboard || null, vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { drift: pub.manifest.drift || {}, leaderboard: pub.manifest.leaderboard || null, vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -995,7 +1020,12 @@ function setupIpc() {
     }
     return telemetry.store.load(id);
   });
+  handle('drift:course', ({ track, layout }) => {
+    const course = driftCourse({ track, layout });
+    return { course, version: courseVersion(course) };
+  });
   handle('telemetry:board', async (q) => {
+    if (q.kind === 'drift') q.rules = courseVersion(driftCourse(q));
     const local = telemetry.store.leaderboard(q);
     const board = telemetry.board();
     if (!board) return { local, remote: null };
@@ -1027,7 +1057,7 @@ function setupIpc() {
   handle('ingame:status', () => (acRoot() ? ingame.ingameStatus(acRoot()) : { installed: null }));
   handle('ingame:install', () => {
     if (!acRoot()) throw new Error("Dossier d'Assetto Corsa non configuré");
-    return ingame.installIngame(acRoot());
+    return ingame.installIngame(acRoot(), sync.manifest.drift || {});
   });
   handle('ingame:remove', () => ingame.removeIngame(acRoot()));
   handle('admin:testLeaderboard', async (cfg) => {
@@ -1065,6 +1095,29 @@ function setupIpc() {
       const r = await pub.publishBranding(dir);
       await refreshManifest({ autoSync: false });
       return r;
+    }),
+  );
+  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, remove }) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      if (!pub.manifest) await pub.open();
+      const key = `${track}|${layout}`;
+      const all = { ...(pub.manifest.drift || {}) };
+      if (remove) delete all[key];
+      else {
+        const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
+        if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)) })), refLine: [], refSpeed: 0 };
+        if (lapId) {
+          const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
+          if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
+          Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
+        } else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver });
+        all[key] = course;
+      }
+      await pub.updateMeta({ drift: all });
+      await refreshManifest({ autoSync: false });
+      return true;
     }),
   );
   handle('admin:updateMeta', (patch) =>

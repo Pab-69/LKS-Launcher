@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const L = require('../src/main/telemetry/layout');
-const { TelemetryRecorder, timeAt, driftPoints } = require('../src/main/telemetry/recorder');
+const { TelemetryRecorder, timeAt } = require('../src/main/telemetry/recorder');
+const { scoreDrift, courseVersion, referenceFrom, LiveClips } = require('../src/main/telemetry/drift');
 const { LapStore } = require('../src/main/telemetry/store');
 const { Leaderboard, packSamples, unpackSamples, downsample } = require('../src/main/telemetry/leaderboard');
 const { DashServer } = require('../src/main/telemetry/dash-server');
@@ -58,7 +59,8 @@ test('recorder: complete laps only, validity, drift score, live delta', () => {
   assert.strictEqual(laps.length, 4);
   assert.deepStrictEqual(laps.map((l) => l.valid), [true, false, false, true]);
   assert.ok(laps.every((l) => l.samples.length > 1000 && l.samples[0][0] < 0.01));
-  assert.ok(laps[0].drift.score > 100 && laps[0].drift.maxAngle > 40);
+  assert.ok(laps[0].drift.score > 0 && laps[0].drift.score <= 100 && laps[0].drift.maxAngle > 40);
+  assert.strictEqual(laps[0].drift.line, null, 'no course: no line score');
   assert.strictEqual(laps[0].driver.name, 'Pab');
   assert.strictEqual(laps[0].layout, 'downhill');
 
@@ -78,7 +80,56 @@ test('recorder: complete laps only, validity, drift score, live delta', () => {
   assert.ok(Math.abs(r.live.delta) < 2000);
   assert.strictEqual(r.live.gear, String(L.parsePhysics(sim.step(16).physics).gear - 1));
   assert.strictEqual(timeAt([[0, 0], [0.5, 1000], [1, 3000]], 0.75), 2000);
-  assert.strictEqual(driftPoints(10, 100, 1), 0);
+});
+
+test('drift judging: angle, speed, line, clips and penalties (not the clock)', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const r = new TelemetryRecorder({ getDriver: () => ({ name: 'Pab', steamId: '1' }) });
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  run(r, sim, 2600);
+  const lap = laps[0];
+  // clip where the simulated car is sideways (a = 45°) and one it never reaches
+  const a = Math.PI / 4;
+  const onLine = { x: Math.cos(a) * 300 + Math.cos(3 * a) * 40, z: Math.sin(a) * 180 };
+  const course = { section: [0, 1], clips: [{ name: 'Mur', kind: 'outer', ...onLine, r: 3 }, { name: 'Loin', kind: 'inner', x: 9999, z: 9999, r: 3 }], ...referenceFrom(lap.samples) };
+  const res = scoreDrift(lap.samples, course);
+  assert.deepStrictEqual(res.clips.map((c) => c.hit), [true, false]);
+  assert.ok(res.clips[0].q > 0.8);
+  assert.ok(res.lineDist < 1.5, 'same line as the reference');
+  assert.ok(res.angle > 0 && res.speed > 0 && res.line > 0);
+  assert.ok(Math.abs(res.score - (res.angle + res.speed + res.line - res.penalty)) < 0.2);
+  assert.strictEqual(res.rules, courseVersion(course));
+
+  // 8 m off the reference line: clips missed and a worse line
+  const off = lap.samples.map((s) => { const c = [...s]; c[9] += 8; return c; });
+  const worse = scoreDrift(off, course);
+  assert.ok(worse.line < res.line && worse.score < res.score);
+  assert.ok(!worse.clips[0].hit);
+
+  // spin and wheels off: penalties
+  const bad = lap.samples.map((s, i) => { const c = [...s]; if (i === 600) c[8] = 150; if (i > 900 && i < 1000) c[11] = 4; return c; });
+  const pen = scoreDrift(bad, course);
+  assert.deepStrictEqual(pen.penalties.map((p) => p.kind).filter((k) => k !== 'straight').sort(), ['off', 'spin']);
+  assert.ok(pen.score < res.score);
+
+  // grip driving: no drift at all
+  assert.strictEqual(scoreDrift(lap.samples.map((s) => { const c = [...s]; c[8] = 2; return c; }), course), null);
+
+  // moving a clip changes the rules, so old scores don't mix
+  assert.notStrictEqual(courseVersion({ ...course, clips: [{ ...course.clips[0], x: onLine.x + 2 }] }), res.rules);
+  assert.strictEqual(courseVersion(null), '');
+
+  // recorder uses the course and gives live clip feedback
+  const r2 = new TelemetryRecorder({ getCourse: () => course });
+  const got = [];
+  r2.on('lap', (l) => got.push(l));
+  run(r2, new Simulator({ lapMs: 20000, seed: 4 }), 2600);
+  assert.strictEqual(got[0].drift.rules, res.rules);
+  assert.ok(got[0].drift.clips[0].hit);
+  const live = new LiveClips(course);
+  live.feed(onLine.x + 1, onLine.z, 30, 80);
+  assert.deepStrictEqual([live.summary().hit, live.summary().total], [1, 2]);
 });
 
 test('lap store: bests, leaderboard, export/import, pruning', () => {
@@ -138,8 +189,11 @@ test('shared leaderboard client (Supabase REST)', async (t) => {
   assert.deepStrictEqual([sent.p_kind, sent.p_lap_ms, sent.p_score], ['time', 60500, null]);
   assert.strictEqual(unpackSamples(sent.p_samples).length, 1500, 'downsampled before upload');
   await board.list({ track: 't', layout: 'l', kind: 'time' });
-  assert.match(calls[1].url, /track=eq\.t&layout=eq\.l&kind=eq\.time&order=lap_ms\.asc/);
+  assert.match(calls[1].url, /track=eq\.t&layout=eq\.l&kind=eq\.time&rules=eq\.&order=lap_ms\.asc/);
+  await board.list({ track: 't', layout: 'l', kind: 'drift', rules: 'abc' });
+  assert.match(calls[2].url, /kind=eq\.drift&rules=eq\.abc&order=score\.desc/);
   const remote = await board.lap(1);
+  assert.strictEqual(JSON.parse(calls[0].body).p_rules, '');
   assert.strictEqual(remote.driver.name, 'Pab');
   assert.strictEqual(remote.samples.length, 1500);
   assert.throws(() => new Leaderboard({ url: 'ftp://x', anonKey: 'k' }), /invalide/);

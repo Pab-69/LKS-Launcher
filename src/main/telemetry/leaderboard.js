@@ -63,14 +63,15 @@ class Leaderboard {
         p_kind: kind,
         p_lap_ms: kind === 'time' ? lap.lapMs : null,
         p_score: kind === 'drift' ? lap.drift.score : null,
+        p_rules: kind === 'drift' ? lap.drift.rules || '' : '',
         p_samples: packSamples(lap.samples),
         p_meta: { lapMs: lap.lapMs, topSpeed: lap.topSpeed, drift: lap.drift, session: lap.session, date: lap.date },
       }),
     });
   }
 
-  list({ track, layout = '', car, kind = 'time', limit = 50 }) {
-    const q = new URLSearchParams({ select: 'id,steam_id,driver,car,track,layout,kind,lap_ms,score,meta,created_at', track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
+  list({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
+    const q = new URLSearchParams({ select: 'id,steam_id,driver,car,track,layout,kind,rules,lap_ms,score,meta,created_at', track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'drift' ? rules : ''}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
     if (car) q.set('car', `eq.${car}`);
     return this.request(`/rest/v1/lks_laps?${q}`);
   }

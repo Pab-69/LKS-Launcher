@@ -596,3 +596,23 @@ select.input.board-select { width: auto; min-width: 240px; }
   .cmp-layout { grid-template-columns: 1fr; }
   .cmp-map { position: static; }
 }
+.clip-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.clip-chip { display: inline-block; padding: 3px 9px; font: 700 13px var(--display); letter-spacing: 0.04em; border: 1px solid var(--line-2); color: var(--text-3); background: var(--bg-2); }
+.clip-chip.hit { color: var(--ok); border-color: rgba(63, 207, 134, 0.45); background: var(--ok-soft); }
+.board-v small { font-size: 12px; color: var(--text-3); font-weight: 600; }
+.mt-s { margin-top: 8px; }
+.judge-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) 44px; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.judge-row:last-child { border-bottom: 0; }
+.judge-bars { display: grid; gap: 4px; }
+.judge-bar { position: relative; height: 16px; background: var(--bg-2); }
+.judge-bar i { position: absolute; inset: 0 auto 0 0; }
+.judge-bar.a i { background: rgba(224, 27, 58, 0.55); }
+.judge-bar.b i { background: rgba(236, 229, 218, 0.35); }
+.judge-bar b { position: relative; padding-left: 6px; font: 700 12px/16px var(--display); font-variant-numeric: tabular-nums; }
+.clip-table { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px 14px; align-items: center; }
+.course-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px; align-items: start; }
+.course-clips { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
+.course-clip { display: grid; grid-template-columns: 18px minmax(0, 1fr) 110px; gap: 6px 8px; align-items: center; padding: 8px; background: var(--bg-2); border: 1px solid var(--line); }
+.course-clip .range { grid-column: 2 / 3; }
+.course-clip button { grid-column: 3; justify-self: end; }
+@media (max-width: 1100px) { .course-layout { grid-template-columns: 1fr; } }

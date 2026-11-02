@@ -1,5 +1,18 @@
 # Journal des versions
 
+## 1.6.0
+
+- **Drift noté comme en compétition**, sans chrono : note sur 100.
+  - Angle : 35 points.
+  - Vitesse : 30 points.
+  - Ligne et clips : 35 points.
+  - Pénalités : tête-à-queue, redressement, sortie de piste.
+- **Clips** : les admins les placent sur la carte de chaque circuit (onglet Télémétrie → Parcours drift), avec une run de référence pour la ligne.
+- En direct, sur le téléphone et dans l'appli en jeu : clips validés pendant la run.
+- Comparer en mode drift : détail de la note, clip par clip, et courbe d'angle.
+- Classement drift : détail de la note pour chaque pilote.
+- Pour les admins : si le classement est déjà configuré, relance le script SQL (Publication → Classement → Copier le script).
+
 ## 1.5.0
 
 - **Télémétrie** (nouvel onglet) : chaque tour est enregistré (vitesse, pédales, rapport, angle, trajectoire).

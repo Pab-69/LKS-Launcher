@@ -33,6 +33,9 @@ function validLap(lap) {
   );
 }
 
+// drift scores only compare when judged with the same course (clips, line)
+const sameRules = (l, rules) => rules === undefined || (l.drift.rules || '') === rules;
+
 const comboKey = (l) => `${l.car}|${l.track}|${l.layout || ''}`;
 
 class LapStore {
@@ -105,17 +108,18 @@ class LapStore {
   }
 
   /** Best valid lap (time) or best drift score for a combo, optionally for one driver. */
-  best({ car, track, layout = '', kind = 'time', steamId } = {}) {
+  best({ car, track, layout = '', kind = 'time', steamId, rules } = {}) {
     const laps = this.list({ car, track, layout }).filter((l) => !steamId || l.driver.steamId === steamId);
-    if (kind === 'drift') return laps.sort((a, b) => b.drift.score - a.drift.score)[0] || null;
+    if (kind === 'drift') return laps.filter((l) => l.drift.score > 0 && sameRules(l, rules)).sort((a, b) => b.drift.score - a.drift.score)[0] || null;
     return laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || null;
   }
 
   /** Leaderboard from the laps on this PC (own + imported): best per driver. */
-  leaderboard({ track, layout = '', car, kind = 'time' }) {
+  leaderboard({ track, layout = '', car, kind = 'time', rules }) {
     const best = {};
     for (const l of this.list({ track, layout, car })) {
       if (kind === 'time' && !l.valid) continue;
+      if (kind === 'drift' && !(l.drift.score > 0 && sameRules(l, rules))) continue;
       const key = l.driver.steamId || l.driver.name;
       const better = !best[key] || (kind === 'time' ? l.lapMs < best[key].lapMs : l.drift.score > best[key].drift.score);
       if (better) best[key] = l;

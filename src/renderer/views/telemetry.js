@@ -1,16 +1,31 @@
-import { api, h, clear, icon, guard, toast, seg, select, field, toggle, lapTime, dateFr, confirmBox } from '../ui.js';
+import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox } from '../ui.js';
 import { store } from '../store.js';
 
 // state kept while switching tabs
 let tab = 'live';
 let compare = { a: null, b: null };
 let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
+let compareMode = 'time';
+let editor = null; // drift course editor state
 
 const COLORS = { a: '#e01b3a', b: '#ece5da', grid: '#261e22', text: '#6c615c' };
 const COL = { d: 0, t: 1, speed: 2, gas: 3, brake: 4, gear: 5, rpm: 6, steer: 7, angle: 8, x: 9, z: 10 };
 
 const fmtDelta = (ms) => (ms == null ? '—' : `${ms > 0 ? '+' : ''}${(ms / 1000).toFixed(2)}`);
 const comboLabel = (l) => [trackName(l.track, l.layout), carName(l.car)].join(' · ');
+const note = (d) => (d && d.score > 0 ? `${d.score.toFixed(1)}/100` : 'Pas de drift');
+const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.hasToken);
+const getCourse = (track, layout) => api.call('drift:course', { track, layout: layout || '' }).then((r) => r.course).catch(() => null);
+
+/** "Angle 28 · Vitesse 24 · Ligne 30 · Clips 3/4 · −3" */
+function breakdown(d) {
+  if (!d || !(d.score > 0) || d.angle === undefined) return '';
+  const parts = [`Angle ${Math.round(d.angle)}`, `Vitesse ${Math.round(d.speed)}`];
+  if (d.line !== null && d.line !== undefined) parts.push(`Ligne ${Math.round(d.line)}`);
+  if (d.clips && d.clips.length) parts.push(`Clips ${d.clips.filter((c) => c.hit).length}/${d.clips.length}`);
+  if (d.penalty) parts.push(`−${d.penalty}`);
+  return parts.join(' · ');
+}
 
 function carName(id) {
   const c = store.content && store.content.cars.find((x) => x.id === id);
@@ -120,10 +135,19 @@ function chart({ height = 130, series, yMin, yMax, label, unit = '', zero = fals
   return wrap;
 }
 
-function trackMap(laps, { height = 260, live } = {}) {
+const CLIP_COLORS = { inner: '#e3a33a', outer: '#9fb4d8' };
+
+/**
+ * Track map from lap trajectories. Options: live (no hover cursor), course
+ * (drift clips + reference line), section (judged part, editor), onClick(x, z)
+ * for the course editor.
+ */
+function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
   const canvas = h('canvas.map');
+  let proj = null;
   const draw = (pos) => {
     const all = laps.flatMap((l) => l.samples.map((s) => [s[COL.x], s[COL.z]]));
+    if (course) all.push(...(course.refLine || []), ...(course.clips || []).map((c) => [c.x, c.z]));
     if (!all.length) return;
     const w = canvas.parentElement ? canvas.parentElement.clientWidth : 300;
     const dpr = window.devicePixelRatio || 1;
@@ -135,15 +159,48 @@ function trackMap(laps, { height = 260, live } = {}) {
     const xs = all.map((p) => p[0]);
     const zs = all.map((p) => p[1]);
     const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
-    const k = Math.min((w - 20) / (maxX - minX || 1), (height - 20) / (maxZ - minZ || 1));
-    const px = (x) => 10 + (x - minX) * k + (w - 20 - (maxX - minX) * k) / 2;
-    const pz = (z) => 10 + (maxZ - z) * k;
+    const k = Math.min((w - 24) / (maxX - minX || 1), (height - 24) / (maxZ - minZ || 1));
+    const ox = 12 + (w - 24 - (maxX - minX) * k) / 2;
+    const px = (x) => ox + (x - minX) * k;
+    const pz = (z) => 12 + (maxZ - z) * k;
+    proj = { toWorld: (cx, cy) => [minX + (cx - ox) / k, maxZ - (cy - 12) / k], k };
+    const path = (pts) => {
+      g.beginPath();
+      pts.forEach(([x, z], j) => (j ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z))));
+      g.stroke();
+    };
+    if (course && course.refLine && course.refLine.length) {
+      g.strokeStyle = 'rgba(236,229,218,0.25)';
+      g.lineWidth = 6;
+      path(course.refLine);
+    }
     laps.forEach((l, i) => {
       g.strokeStyle = i === 0 ? COLORS.a : COLORS.b;
-      g.lineWidth = i === 0 ? 3 : 1.5;
+      g.lineWidth = i === 0 ? 2.5 : 1.5;
+      const pts = l.samples.map((s) => [s[COL.x], s[COL.z]]);
+      if (section) {
+        g.globalAlpha = 0.3;
+        path(pts);
+        g.globalAlpha = 1;
+        path(l.samples.filter((s) => s[0] >= section[0] && s[0] <= section[1]).map((s) => [s[COL.x], s[COL.z]]));
+        for (const [d, label] of [[section[0], 'Départ'], [section[1], 'Arrivée']]) {
+          const s = l.samples.find((x) => x[0] >= d) || l.samples[l.samples.length - 1];
+          g.fillStyle = '#ece5da';
+          g.font = '600 11px Barlow Condensed, sans-serif';
+          g.fillRect(px(s[COL.x]) - 3, pz(s[COL.z]) - 3, 6, 6);
+          g.fillText(label, px(s[COL.x]) + 6, pz(s[COL.z]) - 6);
+        }
+      } else path(pts);
+    });
+    ((course && course.clips) || []).forEach((c, i) => {
+      g.strokeStyle = CLIP_COLORS[c.kind] || CLIP_COLORS.inner;
+      g.fillStyle = g.strokeStyle;
+      g.lineWidth = 2;
       g.beginPath();
-      l.samples.forEach((s, j) => (j ? g.lineTo(px(s[COL.x]), pz(s[COL.z])) : g.moveTo(px(s[COL.x]), pz(s[COL.z]))));
+      g.arc(px(c.x), pz(c.z), Math.max(5, (c.r || 3) * k), 0, Math.PI * 2);
       g.stroke();
+      g.font = '700 12px Barlow Condensed, sans-serif';
+      g.fillText(String(i + 1), px(c.x) + Math.max(7, (c.r || 3) * k) + 2, pz(c.z) + 4);
     });
     const dot = (x, z, color) => {
       g.fillStyle = color;
@@ -152,7 +209,7 @@ function trackMap(laps, { height = 260, live } = {}) {
       g.fill();
     };
     if (pos) dot(pos.x, pos.z, '#fff');
-    else if (cursorD != null) {
+    else if (cursorD != null && !onClick) {
       laps.forEach((l, i) => {
         const s = l.samples.find((x) => x[0] >= cursorD) || l.samples[l.samples.length - 1];
         dot(s[COL.x], s[COL.z], i === 0 ? COLORS.a : COLORS.b);
@@ -160,6 +217,15 @@ function trackMap(laps, { height = 260, live } = {}) {
     }
   };
   canvas.redraw = draw;
+  if (onClick) {
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('click', (e) => {
+      if (!proj) return;
+      const r = canvas.getBoundingClientRect();
+      const [x, z] = proj.toWorld(e.clientX - r.left, e.clientY - r.top);
+      onClick(x, z, proj.k);
+    });
+  }
   if (!live) charts.add({ draw: () => draw() });
   requestAnimationFrame(() => draw());
   return canvas;
@@ -179,7 +245,11 @@ export default function telemetryView(root, params = {}) {
 
   function renderTabs() {
     clear(tabsEl);
-    tabsEl.append(seg([['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['tools', 'Outils']], tab, (v) => { tab = v; render(); }));
+    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer']];
+    if (isAdmin()) tabs.push(['course', 'Parcours drift']);
+    tabs.push(['tools', 'Outils']);
+    if (!tabs.some(([k]) => k === tab)) tab = 'live';
+    tabsEl.append(seg(tabs, tab, (v) => { tab = v; render(); }));
   }
 
   function render() {
@@ -190,7 +260,7 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
@@ -207,14 +277,14 @@ export default function telemetryView(root, params = {}) {
     const tile = (k, label, cls = '') => h(`div.live-tile${cls}`, h('div.label', label), (el[k] = h('div.live-v', '—')));
     const bar = (k, cls) => h('div.live-bar', (el[k] = h(`i.${cls}`)));
     let map = null;
-    let mapLap = null;
+    let mapKey = null;
     panel.append(
       h('div.live-grid',
         tile('speed', 'Vitesse', '.big'), tile('gear', 'Rapport', '.big'), tile('angle', 'Angle', '.big'), tile('delta', 'Écart', '.big'),
         h('div.live-tile.wide', h('div.label', 'Régime'), bar('rpm', 'rpm'), h('div.label.mt', 'Gaz'), bar('gas', 'gas'), h('div.label.mt', 'Frein'), bar('brake', 'brake')),
-        h('div.live-tile.wide', h('div.label', 'Tour'), (el.lap = h('div.live-v', '—')), h('div.hint', 'Dernier ', (el.last = h('strong', '—')), ' · Meilleur ', (el.best = h('strong', '—')), ' · Score ', (el.score = h('strong', '0')))),
-        h('div.live-tile.wide', h('div.label', 'Pneus (°C)'), (el.tyres = h('div.live-tyres'))),
-        h('div.live-tile.wide', h('div.label', 'Session'), (el.session = h('div.hint', '—'))),
+        h('div.live-tile.wide', h('div.label', 'Tour'), (el.lap = h('div.live-v', '—')), h('div.hint', 'Dernier ', (el.last = h('strong', '—')), ' · Meilleur ', (el.best = h('strong', '—')))),
+        h('div.live-tile.wide', h('div.label', 'Clips'), (el.clips = h('div.clip-chips'))),
+        h('div.live-tile.wide', h('div.label', 'Pneus (°C)'), (el.tyres = h('div.live-tyres')), h('div.hint.mt', (el.session = h('span', '—')))),
       ),
       (el.mapWrap = h('div.panel.mt')),
     );
@@ -235,19 +305,21 @@ export default function telemetryView(root, params = {}) {
       el.lap.textContent = lapTime(s.lapMs);
       el.last.textContent = lapTime(s.lastMs);
       el.best.textContent = lapTime(s.bestMs);
-      el.score.textContent = s.lapScore;
       el.tyres.textContent = (s.tyreTemps || []).map((t) => Math.round(t)).join('  ·  ');
       el.session.textContent = `${carName(s.car)} · ${trackName(s.track, s.layout)} · tour ${s.laps + 1}`;
+      clear(el.clips);
+      if (s.clips && s.clips.total) s.clips.clips.forEach((c, i) => el.clips.append(h(`span.clip-chip${c.hit ? '.hit' : ''}`, { title: c.dist == null ? '' : `${c.dist} m` }, `${i + 1}`, c.hit ? ' ✓' : '')));
+      else el.clips.append(h('span.hint', 'Pas de clips sur ce circuit'));
       // map from the best lap on this car/track
       const key = `${s.car}|${s.track}|${s.layout}`;
-      if (mapLap !== key) {
-        mapLap = key;
+      if (mapKey !== key) {
+        mapKey = key;
         clear(el.mapWrap);
-        const laps = await api.call('telemetry:laps', { car: s.car, track: s.track, layout: s.layout }).catch(() => []);
+        const [laps, course] = await Promise.all([api.call('telemetry:laps', { car: s.car, track: s.track, layout: s.layout }).catch(() => []), getCourse(s.track, s.layout)]);
         const ref = laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || laps[0];
-        if (ref) {
-          const full = await api.call('telemetry:lap', ref.id);
-          map = trackMap([full], { height: 240, live: true });
+        if (ref || (course && course.refLine && course.refLine.length)) {
+          const full = ref ? await api.call('telemetry:lap', ref.id) : null;
+          map = trackMap(full ? [full] : [], { height: 240, live: true, course });
           el.mapWrap.append(h('h3', 'Carte'), map);
         } else el.mapWrap.append(h('p.muted', { style: { margin: 0 } }, 'La carte apparaît après ton premier tour complet.'));
       }
@@ -274,7 +346,7 @@ export default function telemetryView(root, params = {}) {
         h('span.s', dateFr(l.date)),
         h('div', h('div.t', `${l.driver.name}${l.imported ? ' (importé)' : ''}`), h('div.s', comboLabel(l))),
         h('div', h('strong', lapTime(l.lapMs)), ' ', l.valid ? null : h('span.tag.warn', 'invalide')),
-        h('span.s', `${l.drift.score} pts · ${Math.round(l.drift.maxAngle)}°`),
+        h('div', h('strong', note(l.drift)), h('div.s', l.drift.score > 0 ? `${Math.round(l.drift.avgAngle)}° moy. · ${Math.round(l.drift.maxAngle)}° max` : '')),
         h('div.row',
           h('button.btn.btn-sm', { title: 'Tour A', on: { click: () => pick('a', l.id) } }, 'A'),
           h('button.btn.btn-sm', { title: 'Tour B', on: { click: () => pick('b', l.id) } }, 'B'),
@@ -288,7 +360,7 @@ export default function telemetryView(root, params = {}) {
     const lap = await guard(() => api.call('telemetry:lap', id));
     if (!lap) return;
     compare[slot] = lap;
-    toast(`Tour ${slot.toUpperCase()} : ${lap.driver.name} ${lapTime(lap.lapMs)}`, 'info');
+    toast(`Tour ${slot.toUpperCase()} : ${lap.driver.name}`, 'info');
     if (compare.a && compare.b) {
       tab = 'compare';
       render();
@@ -296,59 +368,81 @@ export default function telemetryView(root, params = {}) {
   }
 
   // ------------------------------------------------------------ leaderboard
-  async function renderBoard() {
+  async function combos() {
     const laps = (await api.call('telemetry:laps', {}).catch(() => [])) || [];
-    const combos = new Map();
-    for (const l of laps) combos.set(`${l.track}|${l.layout || ''}`, { track: l.track, layout: l.layout || '' });
-    for (const t of (store.content && store.content.tracks) || []) for (const ly of t.layouts) combos.set(`${t.id}|${ly.id}`, { track: t.id, layout: ly.id });
-    const keys = [...combos.keys()];
+    const map = new Map();
+    for (const l of laps) map.set(`${l.track}|${l.layout || ''}`, { track: l.track, layout: l.layout || '' });
+    for (const t of (store.content && store.content.tracks) || []) for (const ly of t.layouts) map.set(`${t.id}|${ly.id}`, { track: t.id, layout: ly.id });
+    return { laps, map };
+  }
+
+  async function renderBoard() {
+    const { laps, map: combosMap } = await combos();
+    const keys = [...combosMap.keys()];
     if (!boardQuery.track && keys.length) {
       const first = laps[0] ? `${laps[0].track}|${laps[0].layout || ''}` : keys[0];
-      Object.assign(boardQuery, combos.get(first));
+      Object.assign(boardQuery, combosMap.get(first));
     }
     const cars = [...new Set([...laps.map((l) => l.car), ...((store.content && store.content.cars) || []).filter((c) => c.lks).map((c) => c.id)])];
     body.append(h('div.toolbar',
-      select(keys.map((k) => [k, trackName(combos.get(k).track, combos.get(k).layout)]), `${boardQuery.track}|${boardQuery.layout}`, (v) => { Object.assign(boardQuery, combos.get(v)); render(); }, 'board-select'),
+      select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${boardQuery.track}|${boardQuery.layout}`, (v) => { Object.assign(boardQuery, combosMap.get(v)); render(); }, 'board-select'),
       select([['', 'Toutes les voitures'], ...cars.map((c) => [c, carName(c)])], boardQuery.car, (v) => { boardQuery.car = v; render(); }, 'board-select'),
       seg([['time', 'Chrono'], ['drift', 'Drift']], boardQuery.kind, (v) => { boardQuery.kind = v; render(); })));
     if (!boardQuery.track) {
       body.append(h('div.empty', h('strong', 'Pas encore de tours'), 'Le classement se remplit dès ton premier tour.'));
       return;
     }
-    const res = await guard(() => api.call('telemetry:board', { ...boardQuery, car: boardQuery.car || undefined }));
+    const drift = boardQuery.kind === 'drift';
+    const [res, course] = await Promise.all([guard(() => api.call('telemetry:board', { ...boardQuery, car: boardQuery.car || undefined })), drift ? getCourse(boardQuery.track, boardQuery.layout) : null]);
     if (!res) return;
     const remote = res.remote;
     if (res.error) body.append(h('div.notice', res.error));
     else if (!remote) body.append(h('div.notice.info', 'Classement partagé pas encore configuré : seuls tes tours et ceux importés apparaissent.'));
+    if (drift) {
+      const clips = course && course.clips ? course.clips.length : 0;
+      body.append(h('div.notice.info.mt-s',
+        h('span.grow', 'Note sur 100 : angle 35, vitesse 30, ligne et clips 35, moins les pénalités. ',
+          course ? `${clips} clip(s)${course.refLine && course.refLine.length ? `, ligne de ${course.refDriver || 'référence'}` : ''}.` : 'Pas encore de clips sur ce circuit : seuls l’angle et la vitesse comptent.'),
+        isAdmin() ? h('button.btn.btn-sm', { on: { click: () => { editor = null; tab = 'course'; render(); } } }, course ? 'Modifier les clips' : 'Placer les clips') : null));
+    }
     const rows = remote
-      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: r.score, date: r.created_at, me: r.steam_id === store.settings.steamId }))
-      : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.drift.score, date: l.date, me: l.driver.steamId === store.settings.steamId }));
+      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && r.meta.drift) || null, date: r.created_at, me: r.steam_id === store.settings.steamId }))
+      : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.drift.score, d: l.drift, date: l.date, me: l.driver.steamId === store.settings.steamId }));
     if (!rows.length) {
-      body.append(h('div.empty', h('strong', 'Personne pour l’instant'), 'Sois le premier à poser un temps.'));
+      body.append(h('div.empty.mt', h('strong', 'Personne pour l’instant'), drift ? 'Sois le premier à poser une run.' : 'Sois le premier à poser un temps.'));
       return;
     }
-    const time = boardQuery.kind === 'time';
-    const top = time ? rows[0].lapMs : rows[0].score;
-    const list = h('div.list');
+    const top = drift ? rows[0].score : rows[0].lapMs;
+    const list = h('div.list.mt');
     rows.forEach((r, i) => {
-      const value = time ? lapTime(r.lapMs) : `${r.score} pts`;
-      const gap = i === 0 ? '' : time ? `+${((r.lapMs - top) / 1000).toFixed(3)}` : `${r.score - top}`;
+      const value = drift ? `${r.score.toFixed(1)}` : lapTime(r.lapMs);
+      const gap = i === 0 ? '' : drift ? `−${(top - r.score).toFixed(1)}` : `+${((r.lapMs - top) / 1000).toFixed(3)}`;
       list.append(h('div.list-row.board-row', { class: r.me ? 'me' : '' },
         h('span.board-pos', `${i + 1}`),
-        h('div', h('div.t', r.driver), h('div.s', carName(r.car))),
-        h('strong.board-v', value),
+        h('div', h('div.t', r.driver), h('div.s', carName(r.car)), drift && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
+        h('strong.board-v', value, drift ? h('small', ' /100') : null),
         h('span.s', gap),
-        h('div.row', h('span.s', dateFr(r.date)), h('button.btn.btn-sm', { on: { click: () => compareWith(r) } }, 'Comparer'))));
+        h('div.row', h('span.s', dateFr(r.date)), rows.length > 1 || !r.me ? h('button.btn.btn-sm', { on: { click: () => compareWith(r, r.me ? rows[i === 0 ? 1 : i - 1] : null) } }, 'Comparer') : null)));
     });
     body.append(list);
   }
 
-  async function compareWith(row) {
+  async function compareWith(row, rival) {
+    const drift = boardQuery.kind === 'drift';
+    compareMode = drift ? 'drift' : 'time';
+    if (rival) {
+      // my own row: me against the driver just above (or below when I'm first)
+      const [mine, theirs] = await Promise.all([guard(() => api.call('telemetry:lap', row.id)), guard(() => api.call('telemetry:lap', rival.id))]);
+      if (!mine || !theirs) return;
+      compare = { a: mine, b: theirs };
+      tab = 'compare';
+      render();
+      return;
+    }
     const other = await guard(() => api.call('telemetry:lap', row.id));
     if (!other) return;
     // A = my best on the same track (same car first), B = the chosen lap
-    const mine = (await api.call('telemetry:laps', { track: other.track, layout: other.layout || '' })).filter((l) => !l.imported && l.driver.steamId === store.settings.steamId && (boardQuery.kind === 'drift' || l.valid));
-    const drift = boardQuery.kind === 'drift';
+    const mine = (await api.call('telemetry:laps', { track: other.track, layout: other.layout || '' })).filter((l) => !l.imported && l.driver.steamId === store.settings.steamId && (drift ? l.drift.score > 0 : l.valid));
     const otherCar = (l) => (l.car === other.car ? 0 : 1);
     mine.sort((a, b) => otherCar(a) - otherCar(b) || (drift ? b.drift.score - a.drift.score : a.lapMs - b.lapMs));
     compare = { a: mine[0] ? await api.call('telemetry:lap', mine[0].id) : null, b: other };
@@ -358,39 +452,159 @@ export default function telemetryView(root, params = {}) {
   }
 
   // ------------------------------------------------------------ compare
-  function renderCompare() {
+  async function renderCompare() {
     const { a, b } = compare;
+    const drift = compareMode === 'drift';
+    body.append(h('div.toolbar', seg([['time', 'Chrono'], ['drift', 'Drift']], compareMode, (v) => { compareMode = v; render(); })));
     const card = (lap, slot) => h(`div.panel.cmp-card.${slot}`,
       h('div.picker-k', `Tour ${slot.toUpperCase()}`),
-      lap ? [h('div.cmp-time', lapTime(lap.lapMs)), h('div.t', lap.driver.name), h('div.s', comboLabel(lap)), h('div.s', `${lap.drift.score} pts drift · ${Math.round(lap.drift.maxAngle)}° max · ${Math.round(lap.topSpeed)} km/h`)]
+      lap ? [h('div.cmp-time', drift ? note(lap.drift) : lapTime(lap.lapMs)), h('div.t', lap.driver.name), h('div.s', comboLabel(lap)),
+        h('div.s', drift ? `${Math.round(lap.drift.avgAngle || 0)}° moy. · ${Math.round(lap.drift.maxAngle || 0)}° max · ${Math.round(lap.drift.avgSpeed || lap.topSpeed)} km/h moy.` : `${Math.round(lap.topSpeed)} km/h max${lap.valid ? '' : ' · invalide'}`)]
         : h('p.muted', 'Choisis un tour dans « Tours » ou « Classement ».'));
     body.append(h('div.grid.grid-2', card(a, 'a'), card(b, 'b')));
     if (!a || !b) return;
     if (a.track !== b.track || (a.layout || '') !== (b.layout || '')) body.append(h('div.notice.mt', 'Ces deux tours ne sont pas sur le même circuit : la comparaison n’a pas de sens.'));
+    const course = drift ? await getCourse(a.track, a.layout) : null;
     const pts = (lap, col) => lap.samples.map((s) => [s[COL.d], s[col]]);
     const at = (lap, col, unit = '', digits = 0) => (d) => {
       const v = valueAt(lap.samples, d, col);
       return v == null ? '' : `${Number(v).toFixed(digits)}${unit}`;
     };
-    const total = (b.lapMs - a.lapMs) / 1000;
-    const delta = a.samples.map((s) => [s[0], ((timeAt(b.samples, s[0]) - s[1]) / 1000)]);
-    const dMax = Math.max(0.5, ...delta.map((x) => Math.abs(x[1])));
     const maxSpeed = Math.max(...a.samples.map((s) => s[COL.speed]), ...b.samples.map((s) => s[COL.speed]));
-    const maxAngle = Math.max(10, ...a.samples.map((s) => s[COL.angle]), ...b.samples.map((s) => s[COL.angle]));
+    const maxAngle = Math.max(10, ...a.samples.map((s) => Math.min(90, s[COL.angle])), ...b.samples.map((s) => Math.min(90, s[COL.angle])));
+    const speedChart = chart({ label: 'Vitesse (km/h)', yMin: 0, yMax: Math.ceil(maxSpeed / 20) * 20, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.speed), at: at(a, COL.speed, ' km/h') }, { name: 'B', color: COLORS.b, points: pts(b, COL.speed), at: at(b, COL.speed, ' km/h') }] });
+    const angleChart = (height) => chart({ label: 'Angle (°)', height, yMin: 0, yMax: Math.ceil(maxAngle / 10) * 10, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.angle).map(([d, v]) => [d, Math.min(90, v)]), at: at(a, COL.angle, '°') }, { name: 'B', color: COLORS.b, points: pts(b, COL.angle).map(([d, v]) => [d, Math.min(90, v)]), at: at(b, COL.angle, '°') }] });
+    const pedals = [
+      chart({ label: 'Gaz', height: 80, yMin: 0, yMax: 1, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.gas), at: at(a, COL.gas, '', 2) }, { name: 'B', color: COLORS.b, points: pts(b, COL.gas), at: at(b, COL.gas, '', 2) }] }),
+      chart({ label: 'Frein', height: 80, yMin: 0, yMax: 1, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.brake), at: at(a, COL.brake, '', 2) }, { name: 'B', color: COLORS.b, points: pts(b, COL.brake), at: at(b, COL.brake, '', 2) }] }),
+      chart({ label: 'Rapport', height: 70, yMin: 0, yMax: 8, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.gear).map(([d, g]) => [d, g - 1]), at: (d) => String(valueAt(a.samples, d, COL.gear) - 1) }, { name: 'B', color: COLORS.b, points: pts(b, COL.gear).map(([d, g]) => [d, g - 1]), at: (d) => String(valueAt(b.samples, d, COL.gear) - 1) }] }),
+    ];
+    const mapPanel = h('div.panel.cmp-map', h('h3', 'Carte'), trackMap([a, b], { course }), h('div.hint', h('span', { style: { color: COLORS.a } }, '■ A'), '  ', h('span', { style: { color: COLORS.b } }, '■ B'), course && course.clips && course.clips.length ? ['  ', h('span', { style: { color: CLIP_COLORS.inner } }, '○ clip intérieur'), '  ', h('span', { style: { color: CLIP_COLORS.outer } }, '○ extérieur')] : null));
+
+    if (!drift) {
+      const total = (b.lapMs - a.lapMs) / 1000;
+      const delta = a.samples.map((s) => [s[0], (timeAt(b.samples, s[0]) - s[1]) / 1000]);
+      const dMax = Math.max(0.5, ...delta.map((x) => Math.abs(x[1])));
+      body.append(
+        h('div.notice.info.mt', `${b.driver.name} est ${total > 0 ? `${total.toFixed(3)} s plus lent` : `${Math.abs(total).toFixed(3)} s plus rapide`} que ${a.driver.name}. Survole les courbes pour voir les valeurs.`),
+        h('div.cmp-layout',
+          h('div.cmp-charts',
+            speedChart,
+            chart({ label: 'Écart B − A (s)', yMin: -dMax, yMax: dMax, zero: true, series: [{ name: 'Écart', color: '#e3a33a', points: delta, at: (d) => { const v = valueAt(delta.map((x) => [x[0], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x[1]]), d, 11); return v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(2)} s`; } }] }),
+            ...pedals,
+            angleChart(100)),
+          mapPanel));
+      return;
+    }
+
+    // drift: judged like a run, not on the clock
+    const da = a.drift || {};
+    const db = b.drift || {};
+    const diff = (db.score || 0) - (da.score || 0);
+    const judge = h('div.panel.judge', h('h3', 'Jugement'));
+    const line = (label, va, vb, max) => judge.append(h('div.judge-row',
+      h('span.label', label),
+      h('div.judge-bars',
+        h('div.judge-bar.a', h('i', { style: { width: `${max ? Math.max(0, Math.min(100, ((va || 0) / max) * 100)) : 0}%` } }), h('b', va == null ? '—' : String(Math.round(va * 10) / 10))),
+        h('div.judge-bar.b', h('i', { style: { width: `${max ? Math.max(0, Math.min(100, ((vb || 0) / max) * 100)) : 0}%` } }), h('b', vb == null ? '—' : String(Math.round(vb * 10) / 10)))),
+      h('span.s', max ? `/ ${max}` : '')));
+    line('Angle', da.angle, db.angle, 35);
+    line('Vitesse', da.speed, db.speed, 30);
+    if (da.line != null || db.line != null) line('Ligne', da.line, db.line, 35);
+    line('Pénalités', da.penalty ? -da.penalty : 0, db.penalty ? -db.penalty : 0, 0);
+    line('Note', da.score, db.score, 100);
+    const clipsPanel = h('div.panel', h('h3', 'Clips'));
+    const clipsA = da.clips || [];
+    const clipsB = db.clips || [];
+    if (!clipsA.length && !clipsB.length) clipsPanel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de clips sur ce circuit.'));
+    else {
+      const cell = (c) => (c ? h(`span.clip-chip${c.hit ? '.hit' : ''}`, c.hit ? `✓ ${c.dist} m` : c.dist == null ? '✗' : `✗ ${c.dist} m`) : h('span.s', '—'));
+      clipsPanel.append(h('div.clip-table', h('span.label', 'Clip'), h('span.label', 'A'), h('span.label', 'B'),
+        ...(clipsA.length >= clipsB.length ? clipsA : clipsB).flatMap((c, i) => [h('span', `${i + 1}. ${c.name}`), cell(clipsA[i]), cell(clipsB[i])])));
+    }
+    const pens = [['A', da], ['B', db]].flatMap(([slot, d]) => (d.penalties || []).map((p) => `${slot} : ${p.label} (−${p.points}) à ${Math.round(p.d * 100)} %`));
+    if (pens.length) clipsPanel.append(h('div.hint.mt', pens.join(' · ')));
     body.append(
-      h('div.notice.info.mt', `${b.driver.name} est ${total > 0 ? `${total.toFixed(3)} s plus lent` : `${Math.abs(total).toFixed(3)} s plus rapide`} que ${a.driver.name}. Survole les courbes pour voir les valeurs.`),
-      h('div.cmp-layout',
-        h('div.cmp-charts',
-          chart({ label: 'Vitesse (km/h)', yMin: 0, yMax: Math.ceil(maxSpeed / 20) * 20, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.speed), at: at(a, COL.speed, ' km/h') }, { name: 'B', color: COLORS.b, points: pts(b, COL.speed), at: at(b, COL.speed, ' km/h') }] }),
-          chart({ label: 'Écart B − A (s)', yMin: -dMax, yMax: dMax, zero: true, series: [{ name: 'Écart', color: '#e3a33a', points: delta, at: (d) => { const v = valueAt(delta.map((x) => [x[0], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, x[1]]), d, 11); return v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(2)} s`; } }] }),
-          chart({ label: 'Gaz', height: 80, yMin: 0, yMax: 1, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.gas), at: at(a, COL.gas, '', 2) }, { name: 'B', color: COLORS.b, points: pts(b, COL.gas), at: at(b, COL.gas, '', 2) }] }),
-          chart({ label: 'Frein', height: 80, yMin: 0, yMax: 1, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.brake), at: at(a, COL.brake, '', 2) }, { name: 'B', color: COLORS.b, points: pts(b, COL.brake), at: at(b, COL.brake, '', 2) }] }),
-          chart({ label: 'Angle (°)', height: 100, yMin: 0, yMax: Math.ceil(maxAngle / 10) * 10, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.angle), at: at(a, COL.angle, '°') }, { name: 'B', color: COLORS.b, points: pts(b, COL.angle), at: at(b, COL.angle, '°') }] }),
-          chart({ label: 'Rapport', height: 70, yMin: 0, yMax: 8, series: [{ name: 'A', color: COLORS.a, points: pts(a, COL.gear).map(([d, g]) => [d, g - 1]), at: (d) => String(valueAt(a.samples, d, COL.gear) - 1) }, { name: 'B', color: COLORS.b, points: pts(b, COL.gear).map(([d, g]) => [d, g - 1]), at: (d) => String(valueAt(b.samples, d, COL.gear) - 1) }] }),
-        ),
-        h('div.panel.cmp-map', h('h3', 'Carte'), trackMap([a, b]), h('div.hint', h('span', { style: { color: COLORS.a } }, '■ A'), '  ', h('span', { style: { color: COLORS.b } }, '■ B'))),
-      ),
-    );
+      h('div.notice.info.mt', diff === 0 ? 'Même note.' : `${b.driver.name} a ${Math.abs(diff).toFixed(1)} point(s) de ${diff > 0 ? 'plus' : 'moins'} que ${a.driver.name}. Survole les courbes pour voir les valeurs.`),
+      h('div.grid.grid-2.mt', judge, clipsPanel),
+      h('div.cmp-layout', h('div.cmp-charts', angleChart(130), speedChart, ...pedals), mapPanel));
+  }
+
+  // ------------------------------------------------------------ drift course editor (admins)
+  async function renderCourse() {
+    const { laps, map: combosMap } = await combos();
+    const keys = [...combosMap.keys()];
+    if (!keys.length) {
+      body.append(h('div.empty', h('strong', 'Aucun circuit'), 'Installe le contenu ou roule une première fois.'));
+      return;
+    }
+    if (!editor) {
+      const start = boardQuery.track ? `${boardQuery.track}|${boardQuery.layout}` : laps[0] ? `${laps[0].track}|${laps[0].layout || ''}` : keys[0];
+      editor = { key: combosMap.has(start) ? start : keys[0] };
+    }
+    const { track, layout } = combosMap.get(editor.key);
+    if (!editor.loaded) {
+      const course = await getCourse(track, layout);
+      Object.assign(editor, { loaded: true, existing: course, section: course ? [...course.section] : [0, 1], clips: course ? course.clips.map((c) => ({ ...c })) : [], lapId: '', lap: null });
+    }
+    const onTrack = laps.filter((l) => l.track === track && (l.layout || '') === layout).sort((x, y) => y.drift.score - x.drift.score);
+    if (!editor.lapId && !(editor.existing && editor.existing.refLine && editor.existing.refLine.length) && onTrack[0]) editor.lapId = onTrack[0].id;
+    if (editor.lapId && (!editor.lap || editor.lap.id !== editor.lapId)) editor.lap = await guard(() => api.call('telemetry:lap', editor.lapId));
+
+    body.append(h('div.toolbar',
+      select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), editor.key, (v) => { editor = { key: v }; render(); }, 'board-select'),
+      select([...(editor.existing && editor.existing.refLine && editor.existing.refLine.length ? [['', `Ligne actuelle (${editor.existing.refDriver || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(l.drift)} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; render(); }, 'board-select')));
+    if (!editor.lap && !(editor.existing && editor.existing.refLine && editor.existing.refLine.length)) {
+      body.append(h('div.empty', h('strong', 'Pas de run sur ce circuit'), 'Fais d’abord une run propre ici : elle sert de ligne de référence et de carte.'));
+      return;
+    }
+    const mapWrap = h('div.panel.course-map');
+    const list = h('div.course-clips');
+    let map = null;
+    const courseView = () => ({ refLine: editor.lap ? [] : editor.existing.refLine, clips: editor.clips });
+    const redraw = () => map && map.redraw();
+    const drawMap = () => {
+      clear(mapWrap);
+      charts.clear();
+      map = trackMap(editor.lap ? [editor.lap] : [], { height: 470, course: courseView(), section: editor.lap ? editor.section : null, onClick: (x, z) => {
+        if (editor.clips.length >= 30) return toast('30 clips maximum', 'warn');
+        editor.clips.push({ name: `Clip ${editor.clips.length + 1}`, kind: 'inner', x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, r: 3 });
+        drawList();
+        drawMap();
+      } });
+      mapWrap.append(h('h3', 'Carte'), map, h('div.hint', 'Clique sur la carte pour placer un clip. ', h('span', { style: { color: CLIP_COLORS.inner } }, 'Intérieur'), ' : la corde à frôler. ', h('span', { style: { color: CLIP_COLORS.outer } }, 'Extérieur'), ' : le mur ou la zone à approcher avec l’arrière.'));
+    };
+    const drawList = () => {
+      clear(list);
+      if (!editor.clips.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Aucun clip pour l’instant.'));
+      editor.clips.forEach((c, i) => list.append(h('div.course-clip',
+        h('strong', `${i + 1}`),
+        h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
+        select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
+        range('Taille', { min: 1, max: 10, step: 0.5, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
+        h('button.btn.btn-sm.btn-ghost', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); drawList(); drawMap(); } } }, icon('trash')))));
+    };
+    const side = h('div.panel',
+      h('h3', 'Parcours'),
+      editor.lap ? [
+        range('Départ', { min: 0, max: 0.99, step: 0.01, value: editor.section[0], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[0] = Math.min(v, editor.section[1] - 0.01); redraw(); } }),
+        range('Arrivée', { min: 0.01, max: 1, step: 0.01, value: editor.section[1], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[1] = Math.max(v, editor.section[0] + 0.01); redraw(); } }),
+        h('p.hint', 'La partie notée de la run. La ligne et la vitesse de ce tour servent de référence.'),
+      ] : h('p.hint', { style: { marginTop: 0 } }, 'Choisis une run pour changer la ligne de référence ou le départ et l’arrivée.'),
+      h('h3.mt', 'Clips'),
+      list,
+      h('div.row.mt',
+        editor.existing ? h('button.btn.btn-sm.btn-ghost', { on: { click: async () => {
+          if (!(await confirmBox('Supprimer le parcours', 'Les notes de drift de ce circuit ne compteront plus que l’angle et la vitesse.', 'Supprimer'))) return;
+          if (await guard(() => api.call('admin:saveDriftCourse', { track, layout, remove: true }), 'Parcours supprimé')) { editor = { key: editor.key }; render(); }
+        } } }, 'Supprimer') : null,
+        h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
+          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips }), 'Parcours publié : les runs sont notées avec ces clips');
+          if (ok) { editor = { key: editor.key }; render(); }
+        } } }, icon('upload'), 'Publier')));
+    body.append(h('div.course-layout', mapWrap, side));
+    drawList();
+    drawMap();
   }
 
   // ------------------------------------------------------------ tools
@@ -403,7 +617,7 @@ export default function telemetryView(root, params = {}) {
           toggle('Enregistrer mes tours', st.enabled !== false, (v) => setT({ enabled: v })),
           toggle('Envoyer mes records au classement', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Seuls tes meilleurs tours sont envoyés.' : 'Classement partagé pas encore configuré par les admins.')),
         h('div.panel', h('h3', 'Appli en jeu'),
-          h('p.muted', { style: { marginTop: 0 } }, 'Angle de drift, score et écart avec ton meilleur tour, affichés pendant que tu roules (Custom Shaders Patch requis).'),
+          h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips et écart avec ton meilleur tour, affichés pendant que tu roules (Custom Shaders Patch requis).'),
           h('div.row.wrap',
             game.installed ? h(`span.tag.${game.upToDate ? 'ok' : 'warn'}`, game.upToDate ? `Installée (v${game.installed})` : `Mise à jour v${game.available}`) : h('span.tag.plain', 'Non installée'),
             h('button.btn.btn-sm.btn-primary', { on: { click: async () => { if (await guard(() => api.call('ingame:install'), 'Appli installée')) render(); } } }, game.installed && game.upToDate ? 'Réinstaller' : 'Installer'),
