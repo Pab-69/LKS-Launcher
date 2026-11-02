@@ -1,5 +1,5 @@
 import { api, h, clear, icon, guard, field, select, seg, toggle, range, toast, localImg, modal } from '../ui.js';
-import { store, loadContent } from '../store.js';
+import { store, loadContent, playable } from '../store.js';
 import { vpnCard } from './vpnCard.js';
 
 const TIME_FMT = (v) => `${String(Math.floor(v)).padStart(2, '0')}:${v % 1 ? '30' : '00'}`;
@@ -39,7 +39,7 @@ export default function hostView(root, _params, { go }) {
     ports: saved.ports || { tcp: 9600, udp: 9600, http: 8081 },
   };
   let st = null;
-  let content = store.content;
+  let content = playable(store.content);
   let busy = false;
   let carQuery = '';
   let vpnEl = null; // kept across refreshes (an install can take a while)
@@ -50,7 +50,7 @@ export default function hostView(root, _params, { go }) {
   );
 
   async function load() {
-    if (!content) content = await loadContent().catch(() => null);
+    if (!content) content = playable(await loadContent().catch(() => null));
     st = await guard(() => api.call('host:status'));
     render();
   }
@@ -71,6 +71,20 @@ export default function hostView(root, _params, { go }) {
     if (st.running) renderRunning();
     else renderForm();
     renderHelp();
+  }
+
+  /** Windows firewall: allowed, or blocking the players (with a fix). */
+  function firewallBox(fw) {
+    if (!fw) return null;
+    if (fw.checking) return h('p.hint.mt', 'Vérification du pare-feu Windows…');
+    if (!fw.checked) return null;
+    if (fw.ok) return h('div.mt', h('span.tag.ok', 'Pare-feu Windows : serveur autorisé'));
+    const why = fw.blocked
+      ? 'Windows bloque le serveur (souvent après un clic sur « Annuler » quand il a demandé l’autorisation).'
+      : `Le serveur n’est pas autorisé sur ton réseau actuel (${(fw.missingFor || []).join(', ').replace('Public', 'public').replace('Private', 'privé')}).`;
+    return h('div.notice.mt',
+      h('span.grow', h('strong', 'Le pare-feu Windows bloque les joueurs. '), why),
+      h('button.btn.btn-sm.btn-primary', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:fixFirewall'), 'Serveur autorisé dans le pare-feu'); busy = false; await load(); } } }, 'Autoriser le serveur'));
   }
 
   // ---------------------------------------------------------------- running server
@@ -117,6 +131,13 @@ export default function hostView(root, _params, { go }) {
         h('p.hint', 'Envoie un code. Il se colle dans Serveurs → Rejoindre avec un code (mot de passe inclus).'),
         inv),
       portsKo ? h('div.notice.mt', h('span.grow', 'Ports non ouverts : les joueurs hors de chez toi ne peuvent pas se connecter. Passez par le VPN et envoie le code VPN.')) : null,
+      up.state === 'failed' ? h('div.panel.mt', h('h3', 'Ouvrir les ports à la main'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Si la box refuse l’ouverture automatique, ajoute ces redirections dans son interface (souvent « NAT / PAT », « Redirection de ports » ou « Gestion des ports »), vers ce PC :'),
+        h('div.ports-table',
+          h('span.label', 'Protocole'), h('span.label', 'Port'), h('span.label', 'Vers'),
+          ...[['TCP', s.ports && s.ports.tcp], ['UDP', s.ports && s.ports.udp], ['TCP', s.ports && s.ports.http]].flatMap(([proto, port]) => [h('span', proto), h('strong', String(port || '?')), h('code', s.lanAddress || 'ce PC')])),
+        h('div.row.mt', h('button.btn.btn-sm', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, icon('refresh'), 'Réessayer l’ouverture automatique'))) : null,
+      firewallBox(s.firewall) || '',
       h('div.mt', (() => { vpnEl = vpnEl || vpnCard(); vpnEl.classList.toggle('vpn-highlight', portsKo); return vpnEl; })()),
     );
     body.append(h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Journal du serveur'), h('div.log.mt', (st.log || []).join('\n') || '…')));

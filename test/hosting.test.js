@@ -116,7 +116,7 @@ test('UPnP: finds the box, opens and closes ports, reads public IP', async (t) =
   await new Promise((r) => ssdp.bind(0, '127.0.0.1', r));
   t.after(() => { web.close(); ssdp.close(); });
 
-  const gw = await findGateway({ address: '127.0.0.1', port: ssdp.address().port, localAddress: '192.168.1.42' });
+  const gw = await findGateway({ address: '127.0.0.1', port: ssdp.address().port, localAddress: '192.168.1.42', interfaces: ['127.0.0.1'], unicast: [] });
   assert.match(gw.controlUrl, /\/ctl\/IPConn$/);
   assert.strictEqual(await gw.externalIp(), '203.0.113.7');
   await gw.map(9600, 'UDP', 'LKS');
@@ -128,6 +128,44 @@ test('UPnP: finds the box, opens and closes ports, reads public IP', async (t) =
   assert.strictEqual(isPrivateIp('203.0.113.7'), false);
   assert.strictEqual(isPrivateIp('100.70.1.2'), true, 'CGNAT');
   assert.strictEqual(isPrivateIp('192.168.1.1'), true);
+});
+
+test('UPnP: skips a TV that answers first, port already taken, box refusing', async (t) => {
+  const { friendlyUpnpError } = require('../src/main/upnp');
+  const calls = [];
+  let conflict = true;
+  const web = http.createServer((req, res) => {
+    if (req.url === '/tv.xml') return res.end('<?xml version="1.0"?><root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>/rc</controlURL></service></serviceList></device></root>');
+    if (req.url === '/box.xml') return res.end('<?xml version="1.0"?><root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:2</serviceType><controlURL>/ipc</controlURL></service></serviceList></device></root>');
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      const action = String(req.headers.soapaction).split('#')[1].replace('"', '');
+      calls.push(action);
+      if (action === 'AddPortMapping' && conflict) {
+        conflict = false;
+        res.statusCode = 500;
+        return res.end('<s:Envelope><s:Body><s:Fault><detail><UPnPError><errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>');
+      }
+      res.end('<ok/>');
+    });
+  });
+  await new Promise((r) => web.listen(0, '127.0.0.1', r));
+  const ssdp = dgram.createSocket('udp4');
+  ssdp.on('message', (msg, rinfo) => {
+    if (!String(msg).startsWith('M-SEARCH')) return;
+    const p = web.address().port;
+    ssdp.send(Buffer.from(`HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:${p}/tv.xml\r\n\r\n`), rinfo.port, rinfo.address);
+    setTimeout(() => ssdp.send(Buffer.from(`HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:${p}/box.xml\r\n\r\n`), rinfo.port, rinfo.address), 50);
+  });
+  await new Promise((r) => ssdp.bind(0, '127.0.0.1', r));
+  t.after(() => { web.close(); ssdp.close(); });
+  const gw = await findGateway({ address: '127.0.0.1', port: ssdp.address().port, localAddress: '192.168.1.42', interfaces: ['127.0.0.1'], unicast: [], timeout: 600 });
+  assert.match(gw.controlUrl, /\/ipc$/, 'the TV is skipped');
+  await gw.map(9600, 'TCP', 'LKS');
+  assert.deepStrictEqual(calls, ['AddPortMapping', 'DeletePortMapping', 'AddPortMapping'], 'old mapping closed then opened again');
+  assert.match(friendlyUpnpError({ code: '606', message: 'x' }, 9600, 'TCP').message, /UPnP complet/);
+  assert.strictEqual(friendlyUpnpError({ code: '999', message: 'brut' }, 1, 'TCP').message, 'brut');
 });
 
 test('network detection and invitation codes', () => {
@@ -175,4 +213,40 @@ test('VPN du Syndicate: status, elevated ZeroTier commands, rules', async () => 
   assert.match(rules, /accept ipprotocol udp and dport 9600;/);
   assert.match(rules, /accept ipprotocol tcp and dport 8081;/);
   assert.match(rules.trim(), /drop;$/);
+});
+
+test('Windows firewall: reading the rules and the fix command', async () => {
+  const fw = require('../src/main/firewall');
+  // blocked after « Annuler » on the Windows prompt
+  let r = fw.evaluate('{"allow":["Private"],"block":1,"networks":["Public"]}');
+  assert.deepStrictEqual([r.ok, r.blocked, r.missingFor], [false, true, ['Public']]);
+  // only allowed on private networks while this network is public
+  r = fw.evaluate('{"allow":"Private","block":0,"networks":"Public"}');
+  assert.deepStrictEqual([r.ok, r.blocked, r.missingFor], [false, false, ['Public']]);
+  assert.strictEqual(fw.evaluate('{"allow":["Any"],"block":0,"networks":["Public","Private"]}').ok, true);
+  assert.strictEqual(fw.evaluate('{"allow":["Domain, Private, Public"],"block":0,"networks":["DomainAuthenticated"]}').ok, true);
+  assert.strictEqual(fw.covers('Private, Public', 'Public'), true);
+  // the path is quoted for PowerShell, block rules are removed before allowing
+  const exe = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\assettocorsa\\server\\acServer.exe";
+  const fix = fw.fixScript(exe);
+  assert.match(fix, /Remove-NetFirewallRule/);
+  assert.match(fix, /-Action Allow -Profile Any/);
+  assert.ok(fix.includes(`'${exe}'`));
+  assert.ok(fw.fixScript("C:\\it's\\acServer.exe").includes("'C:\\it''s\\acServer.exe'"), 'quote escaped');
+  // the status command runs PowerShell without elevation, and never on other systems
+  const calls = [];
+  const { EventEmitter } = require('events');
+  const runner = (cmd, args) => {
+    calls.push([cmd, args]);
+    const p = new EventEmitter();
+    p.stdout = new EventEmitter();
+    p.stderr = new EventEmitter();
+    setImmediate(() => { p.stdout.emit('data', '{"allow":["Any"],"block":0,"networks":["Private"]}\r\n'); p.emit('exit', 0); });
+    return p;
+  };
+  assert.deepStrictEqual(await fw.firewallStatus(exe, { platform: 'linux', runner }), { checked: false });
+  const st = await fw.firewallStatus(exe, { platform: 'win32', runner });
+  assert.strictEqual(st.ok, true);
+  assert.deepStrictEqual(calls[0][1].slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
+  assert.ok(!Buffer.from(calls[0][1][3], 'base64').toString('utf16le').includes('RunAs'), 'reading needs no admin rights');
 });

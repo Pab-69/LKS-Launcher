@@ -1,5 +1,16 @@
 # Journal des versions
 
+## 1.9.7
+
+- **Contenu du groupe uniquement** : Solo, Héberger et Rejoindre un serveur n'acceptent plus que les voitures et circuits publiés sur le launcher. Les admins peuvent lever cette limite dans Publication → Contenu autorisé, par exemple pour tester une voiture avant de la publier.
+- **Hébergement, ouverture des ports (UPnP)** :
+  - la box est cherchée sur toutes les cartes réseau (ZeroTier, Radmin VPN ou Hyper-V la cachaient souvent), et aussi directement à ses adresses habituelles ;
+  - si une TV ou un NAS répond avant la box, il est ignoré ;
+  - un port resté ouvert d'une session précédente est refermé puis rouvert ;
+  - les refus de la box sont expliqués simplement.
+- Si la box refuse, le launcher affiche les ports à ouvrir à la main (protocole, port, adresse de ton PC), avec un bouton « Réessayer ».
+- **Pare-feu Windows** : le launcher vérifie qu'il laisse passer le serveur. Sinon, le bouton « Autoriser le serveur » corrige tout, avec une seule demande Windows. C'est souvent bloqué après un clic sur « Annuler » au premier lancement, ou quand ton réseau est en « Public ».
+
 ## 1.9.6
 
 - Pendant le jeu, le launcher n'est plus bloqué par l'écran « Assetto Corsa en cours ».

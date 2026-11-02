@@ -1,7 +1,7 @@
 {
   "name": "lks-launcher",
   "productName": "LKS Launcher",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "Launcher Assetto Corsa du Lowkey Syndicate : synchro des voitures/circuits, solo, serveurs.",
   "main": "src/main/main.js",
   "author": "Lowkey Syndicate",

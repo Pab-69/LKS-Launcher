@@ -1,5 +1,5 @@
 import { api, h, clear, icon, guard, img, localImg, seg, toggle, range, select, field, modal, toast } from '../ui.js';
-import { store, subscribe, loadContent } from '../store.js';
+import { store, subscribe, loadContent, playable } from '../store.js';
 
 const ASSIST_PRESETS = {
   pro: { idealLine: false, autoBlip: false, stabilityControl: 0, autoBrake: false, autoShifter: false, abs: 1, tractionControl: 1, autoClutch: false, visualDamage: true, damage: 100, fuelRate: 1, tyreWear: 1, tyreBlankets: true, slipstream: 1 },
@@ -13,7 +13,7 @@ export default function solo(root, params) {
   const saved = store.settings.solo || {};
   const o = { ...saved, ...(params.preset || {}) };
   const assists = { ...store.settings.assists };
-  let content = store.content;
+  let content = playable(store.content);
 
   const left = h('div');
   const right = h('div.grid');
@@ -52,7 +52,9 @@ export default function solo(root, params) {
       return;
     }
     if (!content.cars.length) {
-      left.append(h('div.empty', h('strong', 'Aucune voiture trouvée'), "Vérifiez le dossier d'Assetto Corsa dans les Paramètres."));
+      left.append(content.restricted
+        ? h('div.empty', h('strong', 'Aucune voiture du groupe installée'), 'Va dans Contenu pour télécharger les voitures et circuits LKS.')
+        : h('div.empty', h('strong', 'Aucune voiture trouvée'), "Vérifiez le dossier d'Assetto Corsa dans les Paramètres."));
       return;
     }
     const c = car();
@@ -189,7 +191,7 @@ export default function solo(root, params) {
       body: h('div',
         h('div.toolbar',
           h('div.search', { style: { flex: 1 } }, icon('search'), h('input.input', { placeholder: 'Rechercher…', autofocus: true, on: { input: (e) => { q = e.target.value; draw(); } } })),
-          h('label.row', h('input', { type: 'checkbox', checked: lksOnly, on: { change: (e) => { lksOnly = e.target.checked; o.lksOnly = lksOnly; draw(); } } }), 'LKS uniquement'),
+          content.restricted ? h('span.hint', 'Contenu du groupe uniquement') : h('label.row', h('input', { type: 'checkbox', checked: lksOnly, on: { change: (e) => { lksOnly = e.target.checked; o.lksOnly = lksOnly; draw(); } } }), 'LKS uniquement'),
         ),
         grid),
     });
@@ -245,10 +247,10 @@ export default function solo(root, params) {
   }
 
   renderAll();
-  if (!content) loadContent().then((c) => { content = c; renderAll(); }).catch((e) => toast(e.message, 'error'));
+  if (!content) loadContent().then((c) => { content = playable(c); renderAll(); }).catch((e) => toast(e.message, 'error'));
   return subscribe((patch) => {
     if ('content' in patch && patch.content) {
-      content = patch.content;
+      content = playable(patch.content);
       renderAll();
     }
   });

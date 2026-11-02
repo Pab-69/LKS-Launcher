@@ -25,6 +25,7 @@ const { SetupSync, localSetupCars } = require('./setups');
 const { DiscordPresence } = require('./discord');
 const { appConfig } = require('./config');
 const { buildServerConfig, ServerHost, serverExe } = require('./hosting');
+const { firewallStatus, fixFirewall } = require('./firewall');
 const { findGateway, isPrivateIp } = require('./upnp');
 const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
 const { encodeInvite, decodeInvite } = require('../shared/invite');
@@ -175,6 +176,26 @@ function lksIds() {
   };
 }
 
+/**
+ * Solo, hosting and joining are limited to the group's content (published on
+ * the launcher), unless the admins allow everything (Publication).
+ * No restriction while the group has published nothing yet.
+ */
+function contentRestricted() {
+  const m = sync && sync.manifest;
+  if (!m || m.allowAllContent) return false;
+  return (m.cars || []).length + (m.tracks || []).length > 0;
+}
+
+function assertGroupContent({ cars = [], track } = {}) {
+  if (!contentRestricted()) return;
+  const ids = lksIds();
+  const nameOf = (list, id) => ((list || []).find((x) => x.id === id) || {}).name || id;
+  const badCar = cars.find((id) => id && !ids.car.has(id));
+  if (badCar) throw new Error(`« ${nameOf(contentCache && contentCache.cars, badCar)} » n’est pas sur le launcher LKS : seules les voitures du groupe sont autorisées.`);
+  if (track && !ids.track.has(track)) throw new Error(`« ${nameOf(contentCache && contentCache.tracks, track)} » n’est pas sur le launcher LKS : seuls les circuits du groupe sont autorisés.`);
+}
+
 function applyBrandIcon() {
   const icon = branding.file('icon.png');
   if (icon && win && !win.isDestroyed()) win.setIcon(nativeImage.createFromPath(icon));
@@ -287,8 +308,25 @@ async function openPorts() {
     }
   } catch (err) {
     hostState.upnp = { state: 'failed', error: err.message };
+    applog.log('upnp failed', err.message, err.code || '');
   }
+  if (!hostState) return;
+  // for opening the ports by hand: the address of this PC on the home network
+  const lan = (gateway && gateway.localAddress) || ((networkAddresses().find((n) => n.kind === 'lan') || {}).address) || '';
+  hostState.lanAddress = lan;
   hostState.invites = computeInvites();
+  send('host:changed');
+}
+
+/** Does the Windows firewall let the players reach the server? */
+async function checkFirewall() {
+  if (!hostState) return;
+  hostState.firewall = { checking: true };
+  send('host:changed');
+  const st = await firewallStatus(serverExe(acRoot()));
+  if (!hostState) return;
+  hostState.firewall = st;
+  if (st.checked && !st.ok) applog.log('firewall blocks the server', st);
   send('host:changed');
 }
 
@@ -888,6 +926,7 @@ function setupIpc() {
       cars: c.cars.map((x) => ({ ...x, lks: ids.car.has(x.id) })),
       tracks: c.tracks.map((x) => ({ ...x, lks: ids.track.has(x.id) })),
       weathers: c.weathers,
+      restricted: contentRestricted(),
     };
   });
   handle('content:car', (id) => readCar(acRoot(), id));
@@ -924,6 +963,7 @@ function setupIpc() {
     const track = content.tracks.find((t) => t.id === opts.track);
     if (!car) throw new Error('Voiture introuvable : choisissez une voiture installée');
     if (!track) throw new Error('Circuit introuvable : choisissez un circuit installé');
+    assertGroupContent({ cars: [car.id], track: track.id });
     const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
     checkTrackFiles(track, layout.id);
     const maxCars = layout.pitboxes || 24;
@@ -951,6 +991,7 @@ function setupIpc() {
     if (!content.cars.some((c) => c.id === opts.car)) throw new Error(`Voiture ${opts.car} non installée`);
     const { track, layout } = resolveTrack(opts.track, content.tracks);
     if (!content.tracks.some((t) => t.id === track)) throw new Error(`Circuit ${track} non installé`);
+    assertGroupContent({ cars: [opts.car], track });
     checkTrackFiles(content.tracks.find((t) => t.id === track), layout || '');
     const raceIni = buildOnlineRaceIni({
       ...opts,
@@ -1083,7 +1124,7 @@ function setupIpc() {
         .map((e) => ({ kind, id: e.id, name: e.name, published: true, remoteOnly: true, remoteVersion: e.version, publishedAt: e.publishedAt, size: e.size }));
     return {
       manifestUrl: pub.manifestUrl(),
-      manifest: { drift: pub.manifest.drift || {}, leaderboard: pub.manifest.leaderboard || null, vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
+      manifest: { allowAllContent: Boolean(pub.manifest.allowAllContent), drift: pub.manifest.drift || {}, leaderboard: pub.manifest.leaderboard || null, vpn: pub.manifest.vpn || null, history: (pub.manifest.history || []).slice(0, 30), events: pub.manifest.events || [], soloPresets: pub.manifest.soloPresets || [], discord: pub.manifest.discord || null, setups: (pub.manifest.setups || []).map((s) => ({ car: s.car, name: s.name, files: s.files.length, publishedAt: s.publishedAt })), branding: pub.manifest.branding ? { version: pub.manifest.branding.version, files: pub.manifest.branding.files.map((f) => f.name), showcase: (pub.manifest.branding.showcase || []).length } : null, name: pub.manifest.name, motd: pub.manifest.motd || '', csp: pub.manifest.csp || null, donate: pub.manifest.donate || null, shop: pub.manifest.shop || null, servers: pub.manifest.servers, news: pub.manifest.news, updatedAt: pub.manifest.updatedAt },
       cars: [...map('car', content.cars), ...remoteOnly('car')],
       tracks: [...map('track', content.tracks), ...remoteOnly('track')],
     };
@@ -1138,6 +1179,7 @@ function setupIpc() {
     const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
     const cars = (opts.cars || []).map((id) => content.cars.find((c) => c.id === id)).filter(Boolean);
     if (!cars.length) throw new Error('Choisis au moins une voiture installée');
+    assertGroupContent({ cars: cars.map((c) => c.id), track: track.id });
     const maxSlots = Math.max(2, layout.pitboxes || 24);
     const slots = Math.min(Number(opts.slots) || 12, maxSlots);
     const config = buildServerConfig({
@@ -1153,7 +1195,18 @@ function setupIpc() {
     settings.update({ host: { ...opts } });
     if (!game.running) setPresence({ details: 'Héberge une partie', state: `${track.name} — ${slots} places`, startedAt: Date.now() });
     if (opts.upnp !== false) openPorts();
+    checkFirewall();
     send('host:changed');
+    return hostStatus();
+  });
+  handle('host:retryPorts', async () => {
+    if (!hostState) throw new Error('Aucun serveur lancé');
+    await openPorts();
+    return hostStatus();
+  });
+  handle('host:fixFirewall', async () => {
+    await fixFirewall(serverExe(acRoot()));
+    await checkFirewall();
     return hostStatus();
   });
   handle('host:stop', async () => {

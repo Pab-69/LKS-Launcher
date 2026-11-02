@@ -651,3 +651,4 @@ select.input.board-select { width: auto; min-width: 240px; }
 .crash-details summary { cursor: pointer; color: var(--text-2); margin-bottom: 6px; }
 .game-strip { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 25; display: flex; align-items: center; gap: 12px; padding: 6px 16px; background: rgba(14, 11, 13, 0.95); border: 1px solid var(--accent-deep); font: 600 13px var(--display); letter-spacing: 0.06em; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
 .game-strip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+.ports-table { display: grid; grid-template-columns: 110px 90px minmax(0, 1fr); gap: 6px 12px; align-items: center; }

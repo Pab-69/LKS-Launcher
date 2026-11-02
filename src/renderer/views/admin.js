@@ -1,4 +1,4 @@
-import { api, h, clear, icon, guard, field, seg, bytes, dateFr, toast, confirmBox, modal } from '../ui.js';
+import { api, h, clear, icon, guard, field, seg, toggle, bytes, dateFr, toast, confirmBox, modal } from '../ui.js';
 import { store } from '../store.js';
 
 let tab = 'car';
@@ -483,6 +483,9 @@ export default function admin(root) {
             guard(() => api.call('admin:updateMeta', { donate: { message: don.message, links: don.links, goal: goal.target > 0 ? goal : null } }), 'Page de dons publiée');
           } } }, 'Enregistrer les dons'),
         )),
+      h('div.panel', h('h3', 'Contenu autorisé'),
+        toggle('Solo, Héberger et serveurs : contenu du launcher uniquement', !data.manifest.allowAllContent, (v) => guard(() => api.call('admin:updateMeta', { allowAllContent: !v }), v ? 'Limité au contenu du launcher' : 'Tout le contenu installé est autorisé'),
+          'Les membres ne peuvent rouler qu’avec les voitures et circuits publiés ici. Désactive-le pour tester une voiture avant de la publier.')),
       h('div.panel', h('h3', 'Boutique'),
         h('p.hint', { style: { marginTop: 0 } }, 'Tant que la boutique est fermée, la page affiche « Bientôt disponible ».'),
         field('Message', h('input.input', { value: shopCfg.message, placeholder: 'Hoodies, t-shirts, stickers…', on: { input: (e) => { shopCfg.message = e.target.value; } } })),
