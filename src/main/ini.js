@@ -30,7 +30,8 @@ function parse(text) {
   const result = {};
   let current = null;
   for (const rawLine of String(text).replace(/^﻿/, '').split(/\r?\n/)) {
-    const line = rawLine.replace(/\s*[;#].*$/, '').trim();
+    // comments start a line or follow whitespace ("KEY=1 ; note"), values like "CARS=a;b" are kept
+    const line = rawLine.replace(/(^|\s)[;#].*$/, '').trim();
     if (!line) continue;
     const section = line.match(/^\[(.+)\]$/);
     if (section) {

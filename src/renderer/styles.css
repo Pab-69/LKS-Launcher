@@ -536,3 +536,15 @@ details summary::before { content: '✠ '; color: var(--accent); }
 .history { display: grid; gap: 2px; max-height: 260px; overflow: auto; }
 .history-row { display: grid; grid-template-columns: 150px 110px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .history-row strong { color: var(--accent-2); font-weight: 600; }
+
+/* ---------------------------------------------------------------- hosting */
+.host-live { border-color: rgba(63, 207, 134, 0.35); }
+.host-players { font: 600 40px var(--gothic); }
+.host-players small { font: 600 16px var(--display); color: var(--text-3); }
+.host-track { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.host-track img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border: 1px solid var(--line); }
+.host-cars { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 420px; overflow: auto; padding-right: 4px; }
+.invite { display: flex; gap: 14px; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg-2); border: 1px solid var(--line); }
+.invite > div { min-width: 0; }
+.invite-label { font: 700 15px var(--display); letter-spacing: 0.12em; text-transform: uppercase; }
+.invite-code { display: block; margin-top: 6px; font: 12px Consolas, monospace; color: var(--text-2); user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 680px; }

@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 1.3.0
+
+- **Héberger une partie** (nouvel onglet) : lance gratuitement ta propre partie depuis ton PC, avec le serveur inclus dans Assetto Corsa. Choix du circuit, des voitures, des places, du mode libre ou course, de la météo et du mot de passe.
+- Ouverture automatique des ports de ta box (UPnP), refermés à l'arrêt.
+- **Codes d'invitation** pour internet, Radmin VPN, ZeroTier, Tailscale, Hamachi ou le réseau local.
+- **Rejoindre avec un code** dans l'onglet Serveurs : la partie privée est mémorisée avec son mot de passe.
+- Discord affiche « Héberge une partie » pendant que ton serveur tourne.
+- Correction : après avoir ajouté un serveur, ses détails s'affichent tout de suite.
+
 ## 1.2.0
 
 - **Events** : le prochain event du Syndicate apparaît sur l'accueil avec un compte à rebours. Une notification arrive 15 min avant, puis au départ, et le bouton « Rejoindre » mène directement au serveur.

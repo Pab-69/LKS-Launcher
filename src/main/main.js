@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage, Notification, clipboard } = require('electron');
 
 const { Settings } = require('./config');
 const { detectAcRoot, detectSteamUser, isAcRoot, acDocumentsDir } = require('./paths');
@@ -21,6 +21,10 @@ const { BrandingManager } = require('./branding');
 const { SetupSync, localSetupCars } = require('./setups');
 const { DiscordPresence } = require('./discord');
 const { appConfig } = require('./config');
+const { buildServerConfig, ServerHost, serverExe } = require('./hosting');
+const { findGateway, isPrivateIp } = require('./upnp');
+const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
+const { encodeInvite, decodeInvite } = require('../shared/invite');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -46,6 +50,10 @@ let setupsSync = null;
 const presence = new DiscordPresence();
 const startedAt = Date.now();
 const notifiedEvents = new Set();
+const host = new ServerHost();
+let hostState = null; // { name, ports, password, track, layout, upnp: {state, error, externalIp}, invites: [] }
+let gateway = null;
+let mappedPorts = [];
 
 const acRoot = () => settings.data.acRoot;
 const docsDir = () => acDocumentsDir(settings.data, app.getPath('documents'));
@@ -202,6 +210,65 @@ function syncSetups() {
     .catch(() => {});
 }
 
+// ---------------------------------------------------------------- hosting a private game
+function computeInvites() {
+  if (!hostState) return [];
+  const invites = [];
+  const make = (kind, address) => ({
+    kind,
+    label: NET_LABELS[kind] || kind,
+    address,
+    code: encodeInvite({ name: hostState.name, address, tcpPort: hostState.ports.tcp, httpPort: hostState.ports.http, password: hostState.password }),
+  });
+  const ext = hostState.upnp && hostState.upnp.externalIp;
+  if (ext && hostState.upnp.state === 'open' && !isPrivateIp(ext)) invites.push(make('internet', ext));
+  for (const n of networkAddresses()) invites.push(make(n.kind, n.address));
+  return invites;
+}
+
+async function openPorts() {
+  const ports = hostState.ports;
+  hostState.upnp = { state: 'working' };
+  send('host:changed');
+  try {
+    gateway = await findGateway();
+    const wanted = [[ports.tcp, 'TCP'], [ports.udp, 'UDP'], [ports.http, 'TCP']];
+    for (const [port, proto] of wanted) {
+      if (mappedPorts.some((m) => m[0] === port && m[1] === proto)) continue;
+      await gateway.map(port, proto, `LKS Launcher ${proto} ${port}`);
+      mappedPorts.push([port, proto]);
+    }
+    const externalIp = await gateway.externalIp().catch(() => null);
+    if (externalIp && isPrivateIp(externalIp)) {
+      hostState.upnp = { state: 'cgnat', externalIp, error: "Ta box n'a pas d'adresse publique (IP partagée / 4G) : passe par Radmin VPN ou ZeroTier." };
+    } else {
+      hostState.upnp = { state: 'open', externalIp };
+    }
+  } catch (err) {
+    hostState.upnp = { state: 'failed', error: err.message };
+  }
+  hostState.invites = computeInvites();
+  send('host:changed');
+}
+
+function closePorts() {
+  const g = gateway;
+  const list = mappedPorts;
+  mappedPorts = [];
+  if (!g) return Promise.resolve();
+  return Promise.all(list.map(([port, proto]) => g.unmap(port, proto).catch(() => {})));
+}
+
+async function hostStatus() {
+  const s = { running: host.running, serverFound: Boolean(acRoot() && serverExe(acRoot())), log: host.log.slice(-120), networks: networkAddresses(), state: hostState };
+  if (host.running && hostState) {
+    const info = await getServerInfo({ ip: '127.0.0.1', httpPort: hostState.ports.http, name: hostState.name });
+    s.info = info.online ? { clients: info.clients, maxClients: info.maxClients, track: info.track } : null;
+    s.uptime = Date.now() - host.info.startedAt;
+  }
+  return s;
+}
+
 function syncBranding() {
   branding
     .sync(sync.manifest.branding)
@@ -256,6 +323,16 @@ function setupSync() {
     send('content:changed');
   });
   setInterval(() => refreshManifest({ autoSync: true }).catch(() => {}), MANIFEST_POLL_MS);
+}
+
+function setupHosting() {
+  host.on('stopped', () => {
+    closePorts();
+    hostState = null;
+    if (!game.running) setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
+    send('host:changed');
+  });
+  host.on('log', () => send('host:log'));
 }
 
 function setupSync_() {
@@ -777,6 +854,43 @@ function setupIpc() {
     }),
   );
   handle('branding:get', () => branding.status());
+  handle('clipboard:write', (text) => {
+    clipboard.writeText(String(text || ''));
+    return true;
+  });
+  handle('host:status', () => hostStatus());
+  handle('host:start', async (opts) => {
+    if (!acRoot() || !isAcRoot(acRoot())) throw new Error("Dossier d'Assetto Corsa introuvable : configure-le dans les Paramètres");
+    const content = scanContent(true);
+    const track = content.tracks.find((t) => t.id === opts.track);
+    if (!track) throw new Error('Circuit non installé');
+    const layout = track.layouts.find((l) => l.id === (opts.layout || '')) || track.layouts[0];
+    const cars = (opts.cars || []).map((id) => content.cars.find((c) => c.id === id)).filter(Boolean);
+    if (!cars.length) throw new Error('Choisis au moins une voiture installée');
+    const maxSlots = Math.max(2, layout.pitboxes || 24);
+    const slots = Math.min(Number(opts.slots) || 12, maxSlots);
+    const config = buildServerConfig({
+      ...opts,
+      layout: layout.id,
+      slots,
+      cars: cars.map((c) => ({ id: c.id, skins: c.skins.map((k) => k.id) })),
+      ports: opts.ports,
+    });
+    host.start({ acRoot: acRoot(), config, pack: { cars: cars.map((c) => c.id), track: track.id, layout: layout.id }, label: `${track.name}` });
+    hostState = { name: opts.name || 'Partie LKS', ports: config.ports, password: opts.password || '', track: track.name, layout: layout.name, slots, cars: cars.map((c) => c.id), upnp: { state: opts.upnp === false ? 'off' : 'working' }, invites: [] };
+    hostState.invites = computeInvites();
+    settings.update({ host: { ...opts } });
+    if (!game.running) setPresence({ details: 'Héberge une partie', state: `${track.name} — ${slots} places`, startedAt: Date.now() });
+    if (opts.upnp !== false) openPorts();
+    send('host:changed');
+    return hostStatus();
+  });
+  handle('host:stop', async () => {
+    host.stop();
+    await closePorts();
+    return true;
+  });
+  handle('host:decodeInvite', (code) => decodeInvite(code));
   handle('setups:status', () => setupsSync.status());
   handle('discord:status', () => ({ configured: Boolean(presence.clientId), enabled: settings.data.discordPresence !== false, connected: presence.connected }));
   handle('admin:localSetups', () => {
@@ -831,6 +945,7 @@ app.whenReady().then(async () => {
   setupSync();
   setupCsp();
   setupSync_();
+  setupHosting();
   setupGame();
   setupIpc();
   createWindow();
@@ -843,3 +958,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', () => {
+  // never leave a server running or ports open behind us
+  if (host.running) host.stop();
+  closePorts();
+});

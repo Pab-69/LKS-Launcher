@@ -9,6 +9,7 @@ Launcher Assetto Corsa du **Lowkey Syndicate** (dans l'esprit de Content Manager
 - **Graphismes en 1 clic** : installe le Custom Shaders Patch officiel et applique un préréglage adapté à ta carte graphique (Performance, Équilibré, Qualité, Ultra).
 - **Soutenir** : page de dons (PayPal, Ko-fi, Tipeee…) avec objectif du mois, entièrement gérée depuis l'onglet Publication.
 - **Boutique** : page « Bientôt disponible », qui s'ouvre sur ta boutique dès que tu l'actives dans Publication.
+- **Héberger une partie** gratuitement depuis son PC, avec le serveur inclus dans Assetto Corsa : ouverture automatique des ports de la box, codes d'invitation, compatible Radmin VPN, ZeroTier et Tailscale.
 - **Events** : calendrier des soirées, compte à rebours sur l'accueil, notification 15 min avant et bouton « Rejoindre ».
 - **Sessions du Syndicate** : sessions solo préparées par les admins, lancées en un clic depuis l'accueil.
 - **Setups partagés** : les réglages des voitures LKS arrivent chez chacun, à côté de ses propres setups (préfixe `LKS_`), sans jamais rien écraser.
@@ -92,6 +93,22 @@ En ligne de commande (pratique pour les gros packs) :
 ```bash
 GITHUB_TOKEN=github_pat_xxx npm run publish-content -- --ac "C:\...\assettocorsa" car:lks_bmw_e36 track:lks_touge
 ```
+
+### Héberger une partie entre potes (gratuit)
+
+Onglet **Héberger** : choisis le circuit, les voitures autorisées, le nombre de places, le mode (libre ou course), la météo et le mot de passe, puis **Lancer et rejoindre**. Le launcher :
+
+1. prépare le serveur officiel inclus avec le jeu (`assettocorsa/server/acServer.exe`) : configuration et fichiers de contenu nécessaires ;
+2. ouvre automatiquement les ports de la box (UPnP : TCP/UDP 9600 et TCP 8081), puis les referme à l'arrêt ;
+3. affiche un **code d'invitation** par réseau : internet via la box, Radmin VPN, ZeroTier, Tailscale, Hamachi ou réseau local. Les potes le collent dans *Serveurs → Rejoindre avec un code*. Le code contient l'adresse et le mot de passe.
+
+Si personne n'arrive à se connecter :
+
+- **Pare-feu Windows** : au premier lancement, autorise « acServer » sur les réseaux privés et publics.
+- **Box** : active l'UPnP. Avec une IP partagée, la 4G ou la 5G, l'ouverture des ports ne suffit pas.
+- **Réseau virtuel gratuit** : installez tous Radmin VPN ou ZeroTier et rejoignez le même réseau. Le launcher affiche alors un code pour ce réseau.
+
+Le PC de l'hôte doit rester allumé pendant la partie. L'hôte peut jouer en même temps : le serveur consomme très peu.
 
 ### Events, sessions, setups, Discord
 

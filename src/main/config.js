@@ -27,6 +27,7 @@ const DEFAULTS = {
   graphics: { preset: '', appliedAt: null },
   lastRunVersion: '',
   discordPresence: true,
+  host: {},
   eventNotifications: true,
   updateNotes: null,
   admin: {

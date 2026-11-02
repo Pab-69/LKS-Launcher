@@ -26,6 +26,8 @@ const EVENTS = [
   'csp:changed',
   'branding:changed',
   'navigate',
+  'host:changed',
+  'host:log',
 ];
 
 contextBridge.exposeInMainWorld('lks', {

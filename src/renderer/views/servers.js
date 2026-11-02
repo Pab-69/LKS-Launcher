@@ -17,6 +17,7 @@ export default function servers(root, params, { go }) {
       h('div', h('h1', 'Serveurs'), h('p', 'Les serveurs du Syndicate, plus ceux que vous ajoutez vous-même.')),
       h('div.grow'),
       h('div.actions',
+        h('button.btn.btn-primary', { on: { click: joinWithCode } }, icon('play'), 'Rejoindre avec un code'),
         h('button.btn', { on: { click: addServer } }, icon('plus'), 'Ajouter un serveur'),
         h('button.btn', { on: { click: () => refresh(true) } }, icon('refresh'), 'Actualiser'),
       ),
@@ -175,6 +176,36 @@ export default function servers(root, params, { go }) {
     }));
   }
 
+  function joinWithCode() {
+    let code = '';
+    const m = modal({
+      title: 'Rejoindre avec un code',
+      small: true,
+      body: h('div.grid',
+        h('p.muted', { style: { margin: 0 } }, 'Colle le code « LKS-… » que ton pote t’a envoyé (onglet Héberger de son launcher).'),
+        h('input.input.mono', { placeholder: 'LKS-…', autofocus: true, on: { input: (e) => { code = e.target.value; } } })),
+      foot: [h('button.btn.btn-primary', { on: { click: async () => {
+        let inv;
+        try {
+          inv = await api.call('host:decodeInvite', code);
+        } catch (err) {
+          return toast(err.message, 'warn');
+        }
+        // keep the private game in the list (with its password) so it is easy to come back
+        const customServers = (store.settings.customServers || []).filter((x) => !(x.ip === inv.address && Number(x.httpPort) === inv.httpPort));
+        customServers.push({ name: inv.name, ip: inv.address, httpPort: inv.httpPort, password: inv.password, private: true });
+        await saveSettings({ customServers });
+        m.close();
+        selected = `${inv.address}:${inv.httpPort}`;
+        password = inv.password;
+        carChoice = null;
+        clear(detail); // show the private game, not the previously selected server
+        load();
+      } } }, 'Rejoindre')],
+    });
+    setTimeout(() => { const i = m.box.querySelector('input'); if (i) i.focus(); }, 30);
+  }
+
   function addServer() {
     const data = { name: '', ip: '', httpPort: 8081 };
     const m = modal({
@@ -191,6 +222,7 @@ export default function servers(root, params, { go }) {
         await saveSettings({ customServers });
         m.close();
         selected = `${data.ip}:${data.httpPort || 8081}`;
+        clear(detail);
         load();
       } } }, 'Ajouter')],
     });

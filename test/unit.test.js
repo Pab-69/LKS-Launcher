@@ -145,3 +145,10 @@ test('settings saved by older launchers follow the moved content URL', () => {
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ manifestUrl: 'https://example.com/m.json' }));
   assert.strictEqual(new Settings(dir).data.manifestUrl, 'https://example.com/m.json', 'custom URL kept');
 });
+
+test('ini parser keeps ";" inside values but strips comments', () => {
+  const r = ini.parse('[SERVER]\nCARS=a;b;c\nENABLED=1 ; Active\n; full line comment\nCOLOR=#ff0000\n');
+  assert.strictEqual(r.SERVER.CARS, 'a;b;c');
+  assert.strictEqual(r.SERVER.ENABLED, '1');
+  assert.strictEqual(r.SERVER.COLOR, '#ff0000');
+});
