@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.9.6
+
+- Pendant le jeu, le launcher n'est plus bloqué par l'écran « Assetto Corsa en cours ».
+  - Au lancement, choisis « Télémétrie en direct » ou « Utiliser le launcher ».
+  - Ton choix est retenu pour les prochaines sessions. Tu peux le changer dans Paramètres.
+- Une petite barre en haut rappelle que le jeu tourne, avec un raccourci vers la télémétrie en direct.
+
 ## 1.9.5
 
 - **Correction importante** : le launcher pouvait se fermer d'un coup dès que le jeu démarrait vraiment (surtout avec le Custom Shaders Patch). La lecture de la télémétrie utilisait un accès mémoire interdit par Electron, qui arrête alors tout le programme. Les données du jeu sont maintenant copiées de façon sûre.

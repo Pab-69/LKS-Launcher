@@ -100,14 +100,68 @@ function renderSyncbar() {
 
 document.getElementById('syncbar-cancel').addEventListener('click', () => api.call('sync:cancel'));
 
+// What to show while the game runs ('' = ask, 'telemetry', 'launcher'); per PC.
+function duringGame() {
+  try {
+    return localStorage.getItem('lks.duringGame') || '';
+  } catch {
+    return '';
+  }
+}
+function setDuringGame(v) {
+  try {
+    localStorage.setItem('lks.duringGame', v);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Thin strip while the game runs: the launcher stays usable underneath. */
+function renderGameStrip() {
+  const strip = document.getElementById('game-strip');
+  if (!strip) return;
+  clear(strip);
+  strip.hidden = !(store.game && store.game.running);
+  if (strip.hidden) return;
+  strip.append(
+    h('span.dot'),
+    h('span', 'Assetto Corsa en cours'),
+    h('a.link', { on: { click: () => go('telemetry', { tab: 'live' }) } }, 'Télémétrie en direct'),
+  );
+}
+
 function renderGameOverlay(info) {
   const el = document.getElementById('game-overlay');
   clear(el);
   const car = randomShowcase();
   if (car) el.append(h('img.bg', { src: car.image, alt: '' }));
+  renderGameStrip();
   if (store.game.running) {
+    // while playing: live telemetry or the launcher, as chosen last time
+    const choice = duringGame();
+    if (choice === 'telemetry') {
+      el.hidden = true;
+      if (current !== 'telemetry') go('telemetry', { tab: 'live' });
+      return;
+    }
+    if (choice === 'launcher') {
+      el.hidden = true;
+      return;
+    }
+    const pick = (v) => {
+      setDuringGame(v);
+      el.hidden = true;
+      if (v === 'telemetry') go('telemetry', { tab: 'live' });
+    };
     el.hidden = false;
-    el.append(h('div.inner', brandUrl('logo.png') ? h('img', { src: brandUrl('logo.png'), alt: '' }) : h('div.brand-text', 'Lowkey Syndicate'), h('h2', 'Assetto Corsa en cours'), h('p.muted', 'Bonne session. Le launcher reprend la main à la fermeture du jeu.')));
+    el.append(h('div.inner',
+      brandUrl('logo.png') ? h('img', { src: brandUrl('logo.png'), alt: '' }) : h('div.brand-text', 'Lowkey Syndicate'),
+      h('h2', 'Assetto Corsa en cours'),
+      h('p.muted', 'Bonne session. Tu peux suivre ta télémétrie en direct pendant que tu roules.'),
+      h('div.row', { style: { justifyContent: 'center' } },
+        h('button.btn.btn-primary', { on: { click: () => pick('telemetry') } }, 'Télémétrie en direct'),
+        h('button.btn', { on: { click: () => pick('launcher') } }, 'Utiliser le launcher')),
+      h('p.hint', 'Le launcher retient ton choix pour les prochaines sessions.')));
     return;
   }
   if (info && (info.results || info.error)) {

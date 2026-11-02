@@ -42,6 +42,7 @@ export default function settings(root, params) {
       h('div.mt'),
       toggle('Synchronisation automatique', s.autoSync, (v) => saveSettings({ autoSync: v }), 'Installe les nouveautés LKS dès qu’elles sont publiées (vérifié toutes les 5 min).'),
       toggle('Réduire le launcher pendant le jeu', s.closeOnLaunch, (v) => saveSettings({ closeOnLaunch: v })),
+      field('Pendant le jeu, afficher', select([['', 'Demander à chaque fois'], ['telemetry', 'La télémétrie en direct'], ['launcher', 'Le launcher']], (() => { try { return localStorage.getItem('lks.duringGame') || ''; } catch { return ''; } })(), (v) => { try { localStorage.setItem('lks.duringGame', v); } catch { /* ignore */ } })),
       toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Affiche ta voiture et ta piste sur ton profil Discord.'),
       toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification 15 min avant chaque event.'),
       h('div.row.mt',
