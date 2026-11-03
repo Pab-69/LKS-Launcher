@@ -93,6 +93,15 @@ function merge(base, over) {
   return out;
 }
 
+/** Short fingerprint of a reference line (official courses: the line can change with the same number of points). */
+function lineSignature(line = []) {
+  let a = 0;
+  line.forEach((p, i) => {
+    a += p[0] * ((i % 7) + 1) + p[1] * ((i % 5) + 1);
+  });
+  return Math.round(a);
+}
+
 /** Distance from (x, z) to a clip: to its centre, or to its path for a long zone. */
 function clipDist(c, x, z) {
   const p = c.path;
@@ -120,7 +129,7 @@ function rulesFor(course, mode = 'normal') {
 function courseVersion(course, mode = 'normal') {
   const m = MODES[mode] ? mode : 'normal';
   const c = course || {};
-  const body = JSON.stringify([c.section || [0, 1], (c.clips || []).map((k) => [k.kind, r1(k.x), r1(k.z), r1(k.r), ...(Array.isArray(k.path) ? [k.path.length, ...k.path[0], ...k.path[k.path.length - 1]] : [])]), (c.refLine || []).length, Math.round(c.refSpeed || 0), rulesFor(course, m)]);
+  const body = JSON.stringify([c.section || [0, 1], (c.clips || []).map((k) => [k.kind, r1(k.x), r1(k.z), r1(k.r), ...(Array.isArray(k.path) ? [k.path.length, ...k.path[0], ...k.path[k.path.length - 1]] : [])]), (c.refLine || []).length, Math.round(c.refSpeed || 0), rulesFor(course, m), ...(c.official ? [lineSignature(c.refLine)] : [])]);
   return `${crypto.createHash('sha256').update(body).digest('hex').slice(0, 8)}-${m}`;
 }
 

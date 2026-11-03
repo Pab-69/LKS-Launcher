@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.12.3
+
+- **Nouvelle ligne de référence sur Calmont et Biķernieki** : une ligne de drift fluide, sans cassure, qui passe au centre de chaque clip et suit les longues zones sur toute leur longueur (dont toute la boucle de Biķernieki le long du mur extérieur). Elle est calculée pour avoir le moins de courbure possible tout en restant sur la route.
+- Les runs déjà faites sur ces deux circuits sont notées à nouveau avec cette ligne.
+
 ## 1.12.2
 
 - **Ligne de start et ligne de départ séparées** :
