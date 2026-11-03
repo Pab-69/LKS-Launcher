@@ -98,3 +98,40 @@ test('discord webhooks: only real webhook URLs, spaced posts, report file attach
   const failing = new Webhooks({ fetchImpl: fakeFetch(() => ({ status: 401 })), getConfig: () => cfg });
   await assert.rejects(failing.post('news', 'x'), /refusé/);
 });
+
+test('votes and gallery photos', async () => {
+  const f = fakeFetch((url) => (url.includes('lks_photos_list')
+    ? { body: [{ id: 'ph1', file: 'v1/ph1.jpg', author: 'Kaze', caption: 'Calmont', car: 'lks_s14', track: 'cfd_calmont_2023', created_at: 'x' }] }
+    : { body: 'ok' }));
+  const c = new Community({ url: 'https://x.supabase.co', anonKey: 'k', fetchImpl: f });
+  await c.vote('a1', 'voter0001', 's'.repeat(20), 1);
+  assert.deepStrictEqual(f.calls[0].body, { p_proposal: 'a1', p_voter: 'voter0001', p_secret: 's'.repeat(20), p_value: 1 });
+  assert.throws(() => c.vote('a1', 'v', 's', 2), /invalide/);
+  const id = await c.addPhoto({ image: Buffer.from('jpg'), ext: 'jpg', author: 'Pab', caption: 'Coucher de soleil' });
+  assert.match(f.calls[1].url, new RegExp(`/storage/v1/object/lks-gallery/v1/${id}\\.jpg$`));
+  assert.strictEqual(f.calls[1].init.headers['Content-Type'], 'image/jpeg');
+  assert.strictEqual(f.calls[2].body.p_file, `v1/${id}.jpg`);
+  await assert.rejects(c.addPhoto({ image: Buffer.from('x'), ext: 'gif', author: 'a' }), /JPEG/);
+  const photos = await c.photos();
+  assert.strictEqual(photos[0].url, 'https://x.supabase.co/storage/v1/object/public/lks-gallery/v1/ph1.jpg');
+});
+
+test('judge decisions overrule the launcher’s result of a battle', () => {
+  const { decisionFor, judged, cleanJudging, pairOf } = require('../src/main/telemetry/judging');
+  const result = { drivers: [{ name: 'Pab', total: 70 }, { name: 'Kaze', total: 69.5 }], omt: true, winner: null };
+  const battle = { pair: pairOf(['Pab', 'Kaze']), track: 't', layout: '', date: '2026-11-03T21:10:00Z', result };
+  const decisions = cleanJudging([
+    { pair: 'kaze|pab', track: 't', layout: '', date: '2026-11-03T21:12:00Z', winner: 'kaze', note: 'Pab a raté le clip 3', by: 'Juge' },
+    { pair: 'kaze|pab', track: 't', layout: '', date: '2026-11-03T23:00:00Z', omt: true },
+    { pair: 'nope', date: 'x', winner: 'a' },
+  ]);
+  assert.strictEqual(decisions.length, 2, 'invalid decisions dropped');
+  const d = decisionFor(decisions, battle);
+  assert.strictEqual(d.winner, 'kaze', 'matched within 5 minutes');
+  const r = judged(result, d);
+  assert.deepStrictEqual([r.omt, r.winner, r.judge.note, r.auto.omt], [false, 'Kaze', 'Pab a raté le clip 3', true]);
+  assert.strictEqual(decisionFor(decisions, { ...battle, track: 'other' }), null);
+  assert.strictEqual(judged(result, null), result);
+  const late = judged({ ...result, omt: false, winner: 'Pab' }, decisionFor(decisions, { ...battle, date: '2026-11-03T23:01:00Z' }));
+  assert.deepStrictEqual([late.omt, late.winner], [true, null]);
+});

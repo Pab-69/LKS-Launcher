@@ -1,4 +1,4 @@
-import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox } from '../ui.js';
+import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox, modal } from '../ui.js';
 import { store } from '../store.js';
 
 // state kept while switching tabs
@@ -424,6 +424,10 @@ export default function telemetryView(root, params = {}) {
         stat('Runs solo', p.runs), stat('Tandems', p.tandems), stat('Minutes en glisse', p.driftMinutes),
         stat('Battles', `${p.battles.won} V · ${p.battles.lost} D${p.battles.omt ? ` · ${p.battles.omt} OMT` : ''}`)),
     );
+    // badges
+    const earned = p.badges.filter((b) => b.earned).length;
+    body.append(h('div.panel.mt', h('h3', `Badges (${earned} / ${p.badges.length})`),
+      h('div.badges', p.badges.map((b) => h(`div.badge${b.earned ? '.on' : ''}`, { title: b.how }, h('strong', b.name), h('span.s', b.how))))));
     // progression: best solo note per week
     const max = Math.max(100, ...p.weeks.map((w) => w.best));
     body.append(h('div.panel.mt', h('h3', 'Progression (meilleure note de la semaine, mode Normal)'),
@@ -911,14 +915,49 @@ export default function telemetryView(root, params = {}) {
       list.append(h('div.panel.battle-card',
         h('div.row',
           h('div', h('div.battle-title', `${a.name} vs ${c.name}`), h('div.s', `${dateFr(b.date)} · ${MODE_LABEL[judgeMode]}`)),
-          h('div.right', r.omt ? h('span.tag.warn', 'One more time') : h('span.tag.ok', `${r.winner} gagne`))),
+          h('div.right', r.omt ? h('span.tag.warn', 'One more time') : h('span.tag.ok', `${r.winner} gagne`), r.judge ? h('span.tag.plain', { style: { marginLeft: '6px' }, title: r.judge.note || '' }, `Décision du juge${r.judge.by ? ` (${r.judge.by})` : ''}`) : '')),
+        r.judge && r.judge.note ? h('p.hint', `Juge : ${r.judge.note}`) : '',
+        r.judge ? h('p.hint', `Résultat du launcher : ${r.auto.omt ? 'one more time' : `${r.auto.winner} gagne`}.`) : '',
         h('div.battle-table',
           h('span.label', 'Pilote'), h('span.label', 'Lead'), h('span.label', 'Chase'), h('span.label', 'Total'),
           ...[a, c].flatMap((d) => [h(`span${d.name === r.winner ? '.battle-win' : ''}`, d.name, me(d.name) ? ' (toi)' : ''), h('span', d.lead.toFixed(1)), h('span', d.chase.toFixed(1)), h('strong', d.total.toFixed(1))])),
         b.remote ? h('p.hint', 'Battle partagée par un autre pilote.') : h('div.row.mt',
-          ...b.runs.map((run, i) => h('button.btn.btn-sm', { on: { click: () => openTandem(run.lapId) } }, `Run ${i + 1} : ${run.lead} devant`)))));
+          ...b.runs.map((run, i) => h('button.btn.btn-sm', { on: { click: () => openTandem(run.lapId) } }, `Run ${i + 1} : ${run.lead} devant`))),
+        isAdmin() ? judgeBar(b) : ''));
     }
     body.append(list);
+  }
+
+  /** Admins: overrule a battle (winner, one more time, or back to the launcher's result). */
+  function judgeBar(b) {
+    const [a, c] = b.result.drivers;
+    const decide = async (payload) => {
+      let note = '';
+      if (!payload.remove) {
+        note = await askNote();
+        if (note === null) return;
+      }
+      if (await guard(() => api.call('admin:judgeBattle', { battle: { pair: b.pair, track: b.track || battleQuery.track, layout: b.layout || battleQuery.layout || '', date: b.date, result: b.result }, note, ...payload }), payload.remove ? 'Décision retirée' : 'Décision publiée')) render();
+    };
+    return h('div.row.mt.judge-bar', h('span.label', 'Juge'),
+      h('button.btn.btn-sm', { on: { click: () => decide({ winner: a.name }) } }, `${a.name} gagne`),
+      h('button.btn.btn-sm', { on: { click: () => decide({ winner: c.name }) } }, `${c.name} gagne`),
+      h('button.btn.btn-sm', { on: { click: () => decide({ omt: true }) } }, 'One more time'),
+      b.result.judge ? h('button.btn.btn-sm.btn-ghost', { on: { click: () => decide({ remove: true }) } }, 'Retirer la décision') : '');
+  }
+
+  function askNote() {
+    return new Promise((resolve) => {
+      let value = '';
+      let done = false;
+      const m = modal({
+        title: 'Décision du juge',
+        small: true,
+        body: field('Raison (visible par tous, facultative)', h('input.input', { maxlength: 200, on: { input: (e) => { value = e.target.value; } } })),
+        foot: [h('button.btn.btn-ghost', { on: { click: () => m.close() } }, 'Annuler'), h('button.btn.btn-primary', { on: { click: () => { done = true; m.close(); resolve(value.trim()); } } }, 'Publier')],
+        onClose: () => { if (!done) resolve(null); },
+      });
+    });
   }
 
   // ------------------------------------------------------------ championship
@@ -1062,9 +1101,14 @@ export default function telemetryView(root, params = {}) {
           ghost
             ? h('div.row.wrap', h('span', `${ghost.driver} · ${trackName(ghost.track, ghost.layout)} · ${lapTime(ghost.lapMs)}`), h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { await api.call('ghost:clear'); render(); } } }, 'Retirer'))
             : h('p.muted', { style: { margin: 0 } }, 'Aucun. Choisis un tour avec « Fantôme » dans Tours ou Classement, ou directement en jeu (bouton « Fantôme » de l’appli) : une voiture translucide le rejoue pour que tu la suives.')),
-        h('div.panel', h('h3', 'Tableau de bord sur téléphone'),
+        h('div.panel', h('h3', 'Tableau de bord sur téléphone et stream'),
           toggle('Activer', Boolean(st.dashEnabled), (v) => setT({ dashEnabled: v }), 'Ouvre l’adresse sur ton téléphone, connecté au même Wi-Fi.'),
-          st.dash.running ? h('div.grid.mt', st.dash.urls.map((u) => h('div.row', h('code.invite-code', u), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', u); toast('Adresse copiée', 'success'); } } }, 'Copier')))) : null),
+          st.dash.running ? h('div.grid.mt', st.dash.urls.map((u) => h('div.row', h('code.invite-code', u), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', u); toast('Adresse copiée', 'success'); } } }, 'Copier')))) : null,
+          h('h3.mt', 'Stream (OBS)'),
+          st.dash.running
+            ? h('div.grid', h('p.hint', { style: { margin: 0 } }, 'Dans OBS : Sources → + → Navigateur, colle cette adresse, taille 1920 × 1080. Fond transparent : la battle en cours, ton angle et ta vitesse, ta dernière note avec les clips, et le tableau de la soirée.'),
+              h('div.row', h('code.invite-code', `http://127.0.0.1:${st.dashPort || 8095}/obs`), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', `http://127.0.0.1:${st.dashPort || 8095}/obs`); toast('Adresse copiée', 'success'); } } }, 'Copier')))
+            : h('p.hint', { style: { margin: 0 } }, 'Active le tableau de bord ci-dessus pour avoir la page du stream.')),
         ...tools.map((t) => h('div.panel', h('h3', t.name), h('p.muted', { style: { marginTop: 0 } }, t.description),
           h('div.row.wrap',
             t.installed ? h('button.btn.btn-sm.btn-primary', { on: { click: () => guard(() => api.call('tools:launch', t.id), `${t.name} lancé`) } }, icon('play'), 'Lancer') : h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', t.url) } }, icon('download'), 'Télécharger'),

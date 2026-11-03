@@ -37,9 +37,38 @@ const d=$('delta');if(s.delta==null){d.textContent='—';d.className='mid'}else{
 $('tyres').innerHTML=(s.tyreTemps||[]).map(t=>'<div>'+Math.round(t)+'</div>').join('')};
 </script></body></html>`;
 
+// Overlay for streaming the group's evenings (OBS: Source navigateur, 1920×1080, fond transparent).
+const OBS = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>LKS — Stream</title>
+<style>
+:root{--p:rgba(10,8,9,.86);--l:rgba(255,255,255,.12);--t:#f3ede4;--t2:#b9aea5;--a:#e01b3a;--ok:#3fcf86;--warn:#f0a020}
+*{box-sizing:border-box}html,body{margin:0;background:transparent;color:var(--t);font:700 22px 'Barlow Condensed',system-ui,Segoe UI,sans-serif;overflow:hidden}
+.box{position:fixed;background:var(--p);border:1px solid var(--l);border-left:4px solid var(--a);padding:14px 18px;min-width:280px}
+.k{font-size:14px;letter-spacing:.22em;text-transform:uppercase;color:var(--t2)}.big{font-size:64px;line-height:1;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:22px;align-items:flex-end}.ok{color:var(--ok)}.bad{color:var(--a)}.warn{color:var(--warn)}
+#live{left:32px;bottom:32px}#battle{left:50%;top:28px;transform:translateX(-50%);text-align:center}#score{right:32px;bottom:32px;max-width:520px}
+#draw{right:32px;top:28px;max-width:440px;font-size:19px}.m{display:flex;justify-content:space-between;gap:14px;padding:3px 0;border-bottom:1px solid var(--l)}
+.m:last-child{border:0}.w{color:var(--ok)}[hidden]{display:none!important}
+</style></head><body>
+<div class="box" id="battle" hidden><div class="k">Battle</div><div id="bt" style="font-size:34px"></div><div class="k" id="bs"></div></div>
+<div class="box" id="live" hidden><div class="k" id="who">En piste</div><div class="row"><div><div class="big" id="ang">0°</div><div class="k">angle</div></div><div><div class="big" id="spd">0</div><div class="k">km/h</div></div><div><div class="big" id="gap">—</div><div class="k" id="gapk">écart</div></div></div><div class="k" id="clips"></div></div>
+<div class="box" id="score" hidden><div class="k">Dernière note</div><div class="row"><div class="big" id="sc"></div><div id="sd" class="k"></div></div><div id="sclips" style="font-size:18px;margin-top:6px"></div></div>
+<div class="box" id="draw" hidden><div class="k" id="dn"></div><div id="dm"></div></div>
+<script>
+const $=(i)=>document.getElementById(i);const esc=(s)=>String(s==null?'':s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function tick(){let d;try{d=await (await fetch('obs.json',{cache:'no-store'})).json()}catch{return}
+const l=d.live;$('live').hidden=!l;if(l){$('who').textContent=d.driver||'En piste';$('ang').textContent=Math.round(l.angle)+'°';$('spd').textContent=Math.round(l.speed);
+const o=(d.others||[])[0];$('gap').textContent=o&&o.gap!=null?o.gap+' m':'—';$('gapk').textContent=o?'écart '+o.name:'écart';$('clips').textContent=l.clips&&l.clips.total?'Clips '+l.clips.hit+' / '+l.clips.total:''}
+const b=d.battle;$('battle').hidden=!b;if(b){$('bt').innerHTML=esc(d.driver)+' <span class="k">vs</span> '+esc(b.name);$('bs').textContent='Run '+b.run+' / 2 · '+(b.role==='lead'?esc(d.driver)+' devant':esc(b.name)+' devant')+(b.phase==='done'?' · terminée':'')}
+const s=d.score;$('score').hidden=!s;if(s){$('sc').textContent=(s.score||0)+'/100';$('sd').innerHTML=esc(s.kind==='tandem'?'chase de '+s.driver:s.driver)+(s.record?' · <span class="ok">record</span>':'');
+$('sclips').innerHTML=(s.clips||[]).map(c=>'<span class="'+(c.hit?'ok':'bad')+'">'+(c.hit?'✓':'✗')+' '+esc(c.name)+(c.cover!=null?' '+c.cover+'%':'')+'</span>').join(' &nbsp; ')}
+const r=d.round;$('draw').hidden=!r;if(r){$('dn').textContent=r.name;$('dm').innerHTML=r.lines.map(m=>'<div class="m"><span class="'+(m.win===0?'w':'')+'">'+esc(m.a)+'</span><span class="k">'+esc(m.label)+'</span><span class="'+(m.win===1?'w':'')+'">'+esc(m.b)+'</span></div>').join('')}}
+setInterval(tick,500);tick();
+</script></body></html>`;
+
 class DashServer {
-  constructor({ getLive }) {
+  constructor({ getLive, getObs }) {
     this.getLive = getLive;
+    this.getObs = getObs || (() => null);
     this.server = null;
     this.clients = new Set();
     this.timer = null;
@@ -60,6 +89,16 @@ class DashServer {
         if (req.url === '/' || req.url === '/index.html') {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
           res.end(PAGE);
+          return;
+        }
+        if (req.url === '/obs') {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(OBS);
+          return;
+        }
+        if (req.url === '/obs.json') {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(this.getObs() || {}));
           return;
         }
         if (req.url === '/live') {

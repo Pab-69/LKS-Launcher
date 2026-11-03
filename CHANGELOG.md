@@ -1,5 +1,16 @@
 # Journal des versions
 
+## 1.15.0
+
+- **Battle des soirées** : en créant une soirée, les admins choisissent « Battle : top 4, 8 ou 16 ». Les qualifs se font en solo pendant la soirée, puis le tableau des meilleurs se remplit tout seul (Télémétrie → Championnat « Soirées LKS »).
+- **Décision du juge** : dans l'onglet Battles, un admin peut trancher une battle (« X gagne » ou « one more time ») avec une raison. La décision compte partout, championnat compris, et elle est annoncée sur Discord.
+- **Page pour le stream (OBS)** : la battle en cours, ton angle et ta vitesse, ta dernière note avec les clips, et les qualifs ou le tableau de la soirée, sur fond transparent. L'adresse est dans Télémétrie → Outils (il faut activer le tableau de bord).
+- **Votes** : les membres votent 👍 ou 👎 sur les propositions de voitures, livrées et setups.
+- **Badges** dans le Profil : première run, 50 runs, notes de 60, 75 et 90, tous les clips, tandems, victoires en battle, circuits, fidélité…
+- **Galerie** (nouveau menu) : les photos du groupe (ajoute les tiennes, F8 en jeu pour une capture) et toutes les livrées des voitures LKS.
+- **Présentation du launcher** au premier lancement, en quelques écrans. Tu peux la revoir dans Paramètres.
+- **Admins : relancez le script du classement dans Supabase** (Publication → Classement → Copier le script) pour activer les votes et la galerie.
+
 ## 1.14.0
 
 - **Propose ta voiture, ta livrée ou tes setups** : Contenu → Propositions. Tu choisis ce que tu proposes et le launcher envoie le dossier (50 Mo maximum, sinon tu colles un lien Drive, Mega ou Discord). Tu vois la réponse des admins dans la même page.

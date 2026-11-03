@@ -196,9 +196,23 @@ create table if not exists public.lks_proposals (
 
 alter table public.lks_proposals enable row level security;
 revoke all on public.lks_proposals from anon, authenticated;
-create or replace view public.lks_proposals_list with (security_invoker = false) as
-  select id, kind, car, skin, track, title, author, message, link, file, size, created_at
-    from public.lks_proposals where created_at > now() - interval '180 days';
+create table if not exists public.lks_votes (
+  proposal_id uuid not null,
+  voter text not null,
+  secret text not null,
+  value smallint not null check (value in (-1, 1)),
+  updated_at timestamptz not null default now(),
+  primary key (proposal_id, voter)
+);
+alter table public.lks_votes enable row level security;
+revoke all on public.lks_votes from anon, authenticated;
+
+drop view if exists public.lks_proposals_list;
+create view public.lks_proposals_list with (security_invoker = false) as
+  select p.id, p.kind, p.car, p.skin, p.track, p.title, p.author, p.message, p.link, p.file, p.size, p.created_at,
+         coalesce((select count(*) from public.lks_votes v where v.proposal_id = p.id and v.value = 1), 0) as up,
+         coalesce((select count(*) from public.lks_votes v where v.proposal_id = p.id and v.value = -1), 0) as down
+    from public.lks_proposals p where p.created_at > now() - interval '180 days';
 grant select on public.lks_proposals_list to anon, authenticated;
 
 create or replace function public.submit_proposal(
@@ -293,3 +307,69 @@ revoke all on function public.set_presence(text, text, text, text, jsonb, text, 
 grant execute on function public.set_presence(text, text, text, text, jsonb, text, text, text) to anon, authenticated;
 revoke all on function public.remove_presence(text, text) from public;
 grant execute on function public.remove_presence(text, text) to anon, authenticated;
+
+-- Votes des membres sur les propositions (un vote par launcher, modifiable ; 0 = retirer).
+create or replace function public.vote_proposal(p_proposal uuid, p_voter text, p_secret text, p_value integer) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(length(p_voter), 0) not between 8 and 64 or coalesce(length(p_secret), 0) not between 16 and 128 or p_value not in (-1, 0, 1)
+     or not exists (select 1 from public.lks_proposals where id = p_proposal) then
+    raise exception 'données invalides';
+  end if;
+  if p_value = 0 then
+    delete from public.lks_votes where proposal_id = p_proposal and voter = p_voter and secret = p_secret;
+    return 'ok';
+  end if;
+  insert into public.lks_votes (proposal_id, voter, secret, value) values (p_proposal, p_voter, p_secret, p_value)
+  on conflict (proposal_id, voter) do update set value = excluded.value, updated_at = now()
+    where public.lks_votes.secret = excluded.secret;
+  return 'ok';
+end $$;
+revoke all on function public.vote_proposal(uuid, text, text, integer) from public;
+grant execute on function public.vote_proposal(uuid, text, text, integer) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Galerie : photos envoyées par les membres (stockage « lks-gallery », 10 Mo,
+-- JPEG/PNG/WebP). Les admins peuvent en masquer depuis le launcher (manifeste).
+-- 10 photos par pilote et par jour au plus.
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('lks-gallery', 'lks-gallery', true, 10485760)
+on conflict (id) do update set public = true, file_size_limit = 10485760;
+
+drop policy if exists "lks gallery upload" on storage.objects;
+create policy "lks gallery upload" on storage.objects for insert to anon, authenticated
+  with check (bucket_id = 'lks-gallery' and name ~ '^v1/[0-9a-f-]{36}\.(jpg|png|webp)$');
+
+create table if not exists public.lks_photos (
+  id uuid primary key,
+  file text not null,
+  author text not null,
+  caption text not null default '',
+  car text not null default '',
+  track text not null default '',
+  created_at timestamptz not null default now()
+);
+alter table public.lks_photos enable row level security;
+revoke all on public.lks_photos from anon, authenticated;
+create or replace view public.lks_photos_list with (security_invoker = false) as
+  select id, file, author, caption, car, track, created_at from public.lks_photos order by created_at desc;
+grant select on public.lks_photos_list to anon, authenticated;
+
+create or replace function public.add_photo(p_id uuid, p_file text, p_author text, p_caption text, p_car text, p_track text) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(p_file, '') !~ '^v1/[0-9a-f-]{36}\.(jpg|png|webp)$'
+     or coalesce(length(p_author), 0) not between 1 and 40
+     or length(coalesce(p_caption, '')) > 200
+     or length(coalesce(p_car, '')) > 80 or length(coalesce(p_track, '')) > 80 then
+    raise exception 'données invalides';
+  end if;
+  if (select count(*) from public.lks_photos where author = p_author and created_at > now() - interval '1 day') >= 10 then
+    raise exception 'trop de photos aujourd''hui, réessaie demain';
+  end if;
+  insert into public.lks_photos (id, file, author, caption, car, track) values (p_id, p_file, p_author, coalesce(p_caption, ''), coalesce(p_car, ''), coalesce(p_track, ''));
+  return 'ok';
+end $$;
+revoke all on function public.add_photo(uuid, text, text, text, text, text) from public;
+grant execute on function public.add_photo(uuid, text, text, text, text, text) to anon, authenticated;

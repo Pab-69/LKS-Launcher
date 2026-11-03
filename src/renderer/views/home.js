@@ -217,6 +217,7 @@ export default function home(root, _params, { go }) {
     return h('div.event-content',
       track ? h('div', h('span.picker-k', 'Circuit '), `${track.name}${layout && layout.name && layout.name !== track.name ? ` — ${layout.name}` : ''}`) : null,
       cars.length ? h('div', h('span.picker-k', cars.length > 1 ? 'Voitures ' : 'Voiture '), cars.map((c) => c.name).join(', ')) : null,
+      ev.battle && ev.battle.size ? h('div', h('span.picker-k', 'Battle '), `qualifs en solo pendant la soirée, puis tableau du top ${ev.battle.size} (Télémétrie → Championnat)`) : null,
       h('button.btn.btn-sm.mt', { title: 'Installe le circuit et les voitures de la soirée s’il en manque', on: { click: () => guard(() => api.call('sync:start', items), 'Préparation lancée : suis l’avancement dans Contenu') } }, icon('download'), 'Préparer'));
   }
 

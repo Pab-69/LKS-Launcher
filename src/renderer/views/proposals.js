@@ -105,9 +105,19 @@ export function renderProposals(box) {
           p.message ? h('div.s', `« ${p.message} »`) : '',
           p.decision.note ? h('div.s', `Réponse des admins : ${p.decision.note}`) : '',
         ),
-        h('div.row', h(`span.tag.${cls}`, label), admin || '')));
+        h('div.row', voteBox(p), h(`span.tag.${cls}`, label), admin || '')));
     }
     list.append(wrap);
+  }
+
+  /** Members' votes: one per launcher, click again to take it back. */
+  function voteBox(p) {
+    const vote = async (value) => {
+      if (await guard(() => api.call('proposals:vote', { id: p.id, value: p.myVote === value ? 0 : value }))) drawList();
+    };
+    return h('div.vote-box',
+      h(`button.btn.btn-sm${p.myVote === 1 ? '.btn-primary' : ''}`, { title: 'Pour', on: { click: () => vote(1) } }, `👍 ${p.up || 0}`),
+      h(`button.btn.btn-sm${p.myVote === -1 ? '.btn-primary' : ''}`, { title: 'Contre', on: { click: () => vote(-1) } }, `👎 ${p.down || 0}`));
   }
 
   function adminActions(p) {

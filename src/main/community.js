@@ -11,6 +11,8 @@
 const crypto = require('crypto');
 
 const BUCKET = 'lks-proposals';
+const GALLERY = 'lks-gallery';
+const MAX_PHOTO = 10 * 1024 * 1024;
 const MAX_UPLOAD = 50 * 1024 * 1024; // Supabase free plan: 50 MB per file
 const KINDS = ['car', 'skin', 'setup'];
 
@@ -94,7 +96,33 @@ class Community {
       download: r.file ? `${this.url}/storage/v1/object/public/${BUCKET}/${r.file}` : r.link,
       direct: Boolean(r.file),
       date: r.created_at,
+      up: Number(r.up) || 0,
+      down: Number(r.down) || 0,
     }));
+  }
+
+  /** Vote on a proposal: 1, -1, or 0 to take the vote back (one per launcher). */
+  vote(proposalId, voter, secret, value) {
+    if (![-1, 0, 1].includes(value)) throw new Error('Vote invalide');
+    return this.request('/rest/v1/rpc/vote_proposal', { method: 'POST', body: JSON.stringify({ p_proposal: proposalId, p_voter: voter, p_secret: secret, p_value: value }) });
+  }
+
+  // ------------------------------------------------------------ gallery
+  /** p = { image: Buffer, ext: jpg|png|webp, author, caption, car, track } */
+  async addPhoto(p) {
+    if (!['jpg', 'png', 'webp'].includes(p.ext)) throw new Error('Image JPEG, PNG ou WebP seulement');
+    if (!p.image || p.image.length > MAX_PHOTO) throw new Error('Image trop grosse (10 Mo max)');
+    const id = crypto.randomUUID();
+    const file = `v1/${id}.${p.ext}`;
+    const type = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[p.ext];
+    await this.request(`/storage/v1/object/${GALLERY}/${file}`, { method: 'POST', body: p.image, headers: { 'Content-Type': type, 'x-upsert': 'false' } });
+    await this.request('/rest/v1/rpc/add_photo', { method: 'POST', body: JSON.stringify({ p_id: id, p_file: file, p_author: String(p.author || 'Pilote').slice(0, 40), p_caption: String(p.caption || '').slice(0, 200), p_car: p.car || '', p_track: p.track || '' }) });
+    return id;
+  }
+
+  async photos() {
+    const rows = await this.request('/rest/v1/lks_photos_list?select=*&limit=120');
+    return (rows || []).map((r) => ({ id: r.id, url: `${this.url}/storage/v1/object/public/${GALLERY}/${r.file}`, author: r.author, caption: r.caption, car: r.car, track: r.track, date: r.created_at }));
   }
 
   // ------------------------------------------------------------ presence
@@ -125,4 +153,4 @@ function decisionOf(manifest, id) {
   return d && ['accepted', 'refused'].includes(d.status) ? d : { status: 'pending' };
 }
 
-module.exports = { Community, decisionOf, MAX_UPLOAD, KINDS };
+module.exports = { Community, decisionOf, MAX_UPLOAD, MAX_PHOTO, KINDS };

@@ -18,7 +18,7 @@ const fs = require('fs');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse, getRounds }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getSettings, getCourse, getRounds, getObs }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
@@ -29,7 +29,7 @@ class TelemetryManager extends EventEmitter {
     this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c) });
     this.getBoardConfig = getBoardConfig || (() => null);
     this.getSettings = getSettings || (() => ({}));
-    this.dash = new DashServer({ getLive: () => this.live() });
+    this.dash = new DashServer({ getLive: () => this.live(), getObs: () => (getObs ? getObs() : null) });
     this.timer = null;
     this.lastPacket = null;
     this.stale = 0;

@@ -1,5 +1,5 @@
 import { api, h, clear, bytes, toast, lapTime, guard, modal, icon } from './ui.js';
-import { store, set, subscribe, loadContent } from './store.js';
+import { store, set, subscribe, loadContent, saveSettings } from './store.js';
 import { randomShowcase, brandUrl, onBrand, initBrand } from './showcase.js';
 import home from './views/home.js';
 import content from './views/content.js';
@@ -12,8 +12,10 @@ import donate from './views/donate.js';
 import shop from './views/shop.js';
 import host from './views/host.js';
 import telemetry from './views/telemetry.js';
+import gallery from './views/gallery.js';
+import { showTour } from './tour.js';
 
-const routes = { home, content, solo, servers, host, telemetry, graphics, donate, shop, settings, admin };
+const routes = { home, content, solo, servers, host, telemetry, gallery, graphics, donate, shop, settings, admin };
 const viewEl = document.getElementById('view');
 let current = null;
 let cleanup = null;
@@ -295,7 +297,10 @@ onBrand(renderBrand);
   document.getElementById('app-version').textContent = `LKS Launcher v${info.version}`;
   set({ info, settings: s, summary });
   api.call('updater:state').then((updater) => set({ updater })).catch(() => {});
-  api.call('app:whatsNew').then((w) => { if (w) showNotes(`Bienvenue dans la v${w.version}`, w.notes); }).catch(() => {});
+  // first start (or first time with this version of the launcher): a short presentation, then what's new
+  const whatsNew = () => api.call('app:whatsNew').then((w) => { if (w) showNotes(`Bienvenue dans la v${w.version}`, w.notes); }).catch(() => {});
+  if (!s.tourSeen) showTour(() => { saveSettings({ tourSeen: true }).catch(() => {}); whatsNew(); });
+  else whatsNew();
   const first = !s.acRoot || !s.driverName;
   go(first ? 'settings' : 'home', first ? { welcome: true } : {});
   refreshGraphicsBadge();

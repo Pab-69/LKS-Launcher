@@ -12,7 +12,7 @@ const { ContentSync } = require('./sync');
 const { buildSoloRaceIni, buildOnlineRaceIni, buildAssistsIni, GameLauncher } = require('./launch');
 const { getServerInfo, getServerCars, resolveTrack } = require('./servers');
 const { HostList, newHostId, bestAddress } = require('./hostList');
-const { Community, decisionOf, MAX_UPLOAD } = require('./community');
+const { Community, decisionOf, MAX_UPLOAD, MAX_PHOTO } = require('./community');
 const { zipFolder, extractZip } = require('./zip');
 const { Webhooks } = require('./webhook');
 const { GitHub } = require('./github');
@@ -45,6 +45,7 @@ const { autoCourse } = require('./telemetry/ailine');
 const { bundledCourse, bundledCourses } = require('./telemetry/courses');
 const { hasGates } = require('./telemetry/geo');
 const { lineFromRuns } = require('./telemetry/reference');
+const judging = require('./telemetry/judging');
 const { collectRuns } = require('./telemetry/tandem');
 const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
@@ -918,11 +919,89 @@ function writeScoreForGame(lap, pbDrift = [], pbTandem = []) {
     zones: ((d && d.zones) || []).map((z) => ({ name: z.name, score: z.score })),
     modes: lap.drift && lap.drift.modes ? Object.fromEntries(Object.entries(lap.drift.modes).map(([m, r]) => [m, r.score])) : undefined,
   };
+  lastGameScore = { at: Date.now(), data };
   try {
     fs.writeFileSync(path.join(dir, 'score.json'), JSON.stringify(data));
   } catch (err) {
     console.warn('[score]', err.message);
   }
+}
+
+/** Championships with every round's results (qualifying, bracket, points). */
+async function championshipsNow() {
+  const list = (sync.manifest && sync.manifest.championships) || [];
+  const board = telemetry.board();
+  const out = [];
+  for (const c of list) {
+    const rounds = [];
+    for (const round of c.rounds || []) {
+      const version = courseVersion(driftCourse(round), round.mode);
+      const rules = `${version}@${round.id}`;
+      const kind = round.kind === 'battle' ? 'drift' : round.kind;
+      const inWindow = (date) => Date.parse(date) >= Date.parse(round.start) && Date.parse(date) <= Date.parse(round.end);
+      let entries = null;
+      let battles = null;
+      let error = null;
+      if (board && champ.roundStatus(round) !== 'upcoming') {
+        try {
+          entries = (await board.list({ track: round.track, layout: round.layout || '', kind, rules, limit: 100 })).map((r) => ({ name: r.driver, steamId: r.steam_id, score: Number(r.score) }));
+          if (round.kind === 'battle') battles = (await board.battles({ track: round.track, layout: round.layout || '', rules })).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+        } catch (err) {
+          error = err.message;
+        }
+      }
+      if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
+      if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+      const decisions = (sync.manifest && sync.manifest.judging) || [];
+      const withPairs = dedupeBattles(battles.map((b) => ({ ...b, pair: b.drivers.map((d) => d.name.toLowerCase()).sort().join('|'), track: round.track, layout: round.layout || '' })));
+      const ruled = withPairs.map((b) => ({ ...b, ...judging.judged(b, judging.decisionFor(decisions, { ...b, result: b })) }));
+      rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: ruled, points: c.points }), error });
+    }
+    out.push({ ...c, rounds, standings: champ.standings(c, rounds) });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- stream overlay (OBS)
+let lastGameScore = null;
+let obsRound = null;
+let obsRoundAt = 0;
+let liveOthersCache = null;
+const STAGE = { 1: 'Finale', 2: 'Demi', 4: 'Quart', 8: '8e', 16: '16e' };
+/** The battle round going on now, as lines for the overlay (bracket, or qualifying until the battles start). */
+function roundLines(round) {
+  const draw = round.draw;
+  const lines = [];
+  const stage = draw && draw.rounds.find((ms) => ms.some((m) => !m.winner && !m.bye)) || (draw && draw.rounds[draw.rounds.length - 1]);
+  if (stage && stage.some((m) => m.battle || m.winner)) {
+    for (const m of stage.filter((x) => !x.bye)) lines.push({ a: m.a || '—', b: m.b || '—', label: m.omt ? 'OMT' : STAGE[stage.length] || '', win: m.winner ? (m.winner === m.a ? 0 : 1) : null });
+  } else {
+    (round.qualifying || []).slice(0, round.bracket || 8).forEach((q, i) => lines.push({ a: `${i + 1}. ${q.name}`, b: (q.score || 0).toFixed(1), label: 'qualif', win: null }));
+  }
+  return { name: `${round.name} — ${lines.length && lines[0].label === 'qualif' ? 'qualifications' : 'battle'}`, lines };
+}
+function refreshObsRound() {
+  if (Date.now() - obsRoundAt < 30000) return;
+  obsRoundAt = Date.now();
+  championshipsNow()
+    .then((list) => {
+      const live = list.flatMap((c) => c.rounds).find((r) => r.kind === 'battle' && r.status === 'live');
+      obsRound = live ? roundLines(live) : null;
+    })
+    .catch(() => {});
+}
+function obsData() {
+  refreshObsRound();
+  const live = telemetry && telemetry.live();
+  const on = live && live.status === 2;
+  return {
+    driver: settings.data.driverName || 'Pilote',
+    live: on ? { angle: live.angle, speed: live.speed, clips: live.clips } : null,
+    others: on && liveOthersCache ? liveOthersCache.others.slice(0, 3) : [],
+    battle: on && liveOthersCache ? liveOthersCache.battle : null,
+    score: lastGameScore && Date.now() - lastGameScore.at < 10 * 60000 ? lastGameScore.data : null,
+    round: obsRound,
+  };
 }
 
 /** Other cars seen by the in-game app (apps/lua/LKS/live.json, written 4 times a second). */
@@ -956,6 +1035,7 @@ function setupTelemetry() {
     getSettings: () => settings.data.telemetry,
     getCourse: driftCourse,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
+    getObs: obsData,
   });
   telemetry.on('battle', (b) => {
     const res = b.modes.normal;
@@ -1009,6 +1089,7 @@ function setupTelemetry() {
     if (Date.now() - othersAt > 250) {
       othersAt = Date.now();
       othersCache = liveOthers(live);
+      liveOthersCache = othersCache;
     }
     send('telemetry:live', othersCache ? { ...live, others: othersCache.others, battle: othersCache.battle } : live);
   }, 100);
@@ -1908,8 +1989,33 @@ function setupIpc() {
         return { date: b.date, track: trackLabel(b.track, b.layout), against: other.name || '?', result: r.omt ? 'omt' : won ? 'won' : 'lost', score: r.drivers.map((d) => d.total).join(' – ') };
       })
       .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    const won = battles.filter((x) => x.result === 'won').length;
+    const best = Math.max(0, ...[...tracks.values()].map((t) => t.best));
+    const bestTandem = Math.max(0, ...[...tracks.values()].map((t) => t.bestTandem));
+    const allClips = own.some((l) => {
+      const d = !l.tandem && driftOf(l, 'normal', 'drift');
+      return d && Array.isArray(d.clips) && d.clips.length >= 3 && d.clips.every((c) => c.hit);
+    });
+    const soloRuns = own.filter((l) => !l.tandem).length;
+    const badges = [
+      ['first', 'Première run', 'Une run enregistrée', soloRuns >= 1],
+      ['runs50', '50 runs', '50 runs en solo', soloRuns >= 50],
+      ['runs200', '200 runs', '200 runs en solo', soloRuns >= 200],
+      ['score60', 'Ça glisse', 'Une note de 60/100 ou plus', best >= 60],
+      ['score75', 'Pilote confirmé', 'Une note de 75/100 ou plus', best >= 75],
+      ['score90', 'Note de juge', 'Une note de 90/100 ou plus', best >= 90],
+      ['clips', 'Tous les clips', 'Une run avec tous les clips (3 ou plus)', allClips],
+      ['tandem', 'Premier tandem', 'Un tandem enregistré', own.some((l) => l.tandem)],
+      ['tandem60', 'Collé au pare-choc', 'Un chase noté 60/100 ou plus', bestTandem >= 60],
+      ['battle1', 'Première victoire', 'Une battle gagnée', won >= 1],
+      ['battle5', 'Cinq victoires', '5 battles gagnées', won >= 5],
+      ['tracks3', 'Globe-trotter', 'Des runs sur 3 circuits', tracks.size >= 3],
+      ['weeks4', 'Fidèle', 'Des runs 4 semaines différentes', weeks.filter((w) => w.runs).length >= 4],
+      ['hour', 'Une heure en glisse', '60 minutes de glisse au total', driftSeconds >= 3600],
+    ].map(([id, name, how, earned]) => ({ id, name, how, earned }));
     return {
       name: settings.data.driverName || 'Pilote',
+      badges,
       runs: own.filter((l) => !l.tandem).length,
       tandems: own.filter((l) => l.tandem).length,
       driftMinutes: Math.round(driftSeconds / 60),
@@ -1932,38 +2038,30 @@ function setupIpc() {
         error = err.message;
       }
     }
-    return { battles: dedupeBattles([...local, ...remote]).filter((b) => b.result), error };
+    const decisions = (sync.manifest && sync.manifest.judging) || [];
+    const all = dedupeBattles([...local, ...remote]).filter((b) => b.result).map((b) => ({ ...b, result: judging.judged(b.result, judging.decisionFor(decisions, b)) }));
+    return { battles: all, error };
   });
-  handle('champ:list', async () => {
-    const list = (sync.manifest && sync.manifest.championships) || [];
-    const board = telemetry.board();
-    const out = [];
-    for (const c of list) {
-      const rounds = [];
-      for (const round of c.rounds || []) {
-        const version = courseVersion(driftCourse(round), round.mode);
-        const rules = `${version}@${round.id}`;
-        const kind = round.kind === 'battle' ? 'drift' : round.kind;
-        const inWindow = (date) => Date.parse(date) >= Date.parse(round.start) && Date.parse(date) <= Date.parse(round.end);
-        let entries = null;
-        let battles = null;
-        let error = null;
-        if (board && champ.roundStatus(round) !== 'upcoming') {
-          try {
-            entries = (await board.list({ track: round.track, layout: round.layout || '', kind, rules, limit: 100 })).map((r) => ({ name: r.driver, steamId: r.steam_id, score: Number(r.score) }));
-            if (round.kind === 'battle') battles = (await board.battles({ track: round.track, layout: round.layout || '', rules })).map((b) => ({ ...b.modes[round.mode], date: b.date }));
-          } catch (err) {
-            error = err.message;
-          }
-        }
-        if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
-        if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
-        rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: dedupeBattles(battles.map((b) => ({ ...b, pair: b.drivers.map((d) => d.name.toLowerCase()).sort().join('|'), track: round.track }))), points: c.points }), error });
+  // a judge overrules a battle (admins): winner, one more time, or back to the launcher's result
+  handle('admin:judgeBattle', ({ battle, winner, omt, note, remove }) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      if (!pub.manifest) await pub.open();
+      const key = { pair: battle.pair || judging.pairOf(battle.result.drivers.map((d) => d.name)), track: battle.track, layout: battle.layout || '', date: battle.date };
+      let list = (pub.manifest.judging || []).filter((d) => !(judging.decisionFor([d], { ...key, result: battle.result })));
+      if (!remove) list.push({ ...key, winner: omt ? null : winner, omt: Boolean(omt), note, by: settings.data.driverName || 'admin', at: new Date().toISOString() });
+      list = judging.cleanJudging(list);
+      await pub.updateMeta({ judging: list });
+      await refreshManifest({ autoSync: false });
+      if (!remove && settings.data.discordShare !== false) {
+        const names = battle.result.drivers.map((d) => d.name).join(' – ');
+        discordPost('news', `⚖️ Décision du juge, battle ${names} sur ${trackLabel(battle.track, battle.layout)} : ${omt ? '**one more time**' : `**${winner}** gagne`}${note ? ` (${note})` : ''}`);
       }
-      out.push({ ...c, rounds, standings: champ.standings(c, rounds) });
-    }
-    return out;
-  });
+      return true;
+    }),
+  );
+  handle('champ:list', () => championshipsNow());
+  
   handle('telemetry:board', async (q) => {
     if (q.kind !== 'time') q.rules = courseVersion(driftCourse(q), q.mode || 'normal');
     const local = telemetry.store.leaderboard(q);
@@ -2089,7 +2187,8 @@ function setupIpc() {
     const c = community();
     if (!c) return { configured: false, items: [] };
     const mine = new Set(settings.data.myProposals || []);
-    const items = (await c.proposals()).map((p) => ({ ...p, decision: decisionOf(sync.manifest, p.id), mine: mine.has(p.id) }));
+    const votes = settings.data.myVotes || {};
+    const items = (await c.proposals()).map((p) => ({ ...p, decision: decisionOf(sync.manifest, p.id), mine: mine.has(p.id), myVote: votes[p.id] || 0 }));
     return { configured: true, items };
   });
   handle('proposals:submit', async (p) => {
@@ -2106,6 +2205,59 @@ function setupIpc() {
     discordPost('news', `📦 **${settings.data.driverName || 'Un membre'}** propose ${p.kind === 'car' ? 'une voiture' : p.kind === 'skin' ? 'une livrée' : 'des setups'} : **${String(p.title || p.car).slice(0, 80)}**`);
     return id;
   });
+  handle('proposals:vote', async ({ id, value }) => {
+    const c = community();
+    if (!c) throw new Error('Votes indisponibles');
+    const me = presenceIdentity();
+    await c.vote(id, me.id, me.secret, value);
+    const votes = { ...(settings.data.myVotes || {}) };
+    if (value) votes[id] = value;
+    else delete votes[id];
+    settings.update({ myVotes: votes });
+    return true;
+  });
+
+  // ------------------------------------------------------------ gallery: the group's liveries + members' photos
+  handle('gallery:list', async () => {
+    const ids = lksIds();
+    const liveries = scanContent(false).cars.filter((c) => ids.car.has(c.id)).flatMap((c) => (c.skins || []).filter((k) => k.preview).map((k) => ({ car: c.id, carName: c.name, skin: k.id, name: k.name, preview: k.preview })));
+    const c = community();
+    let photos = [];
+    let error = null;
+    if (c) {
+      try {
+        const hidden = new Set((sync.manifest && sync.manifest.galleryHidden) || []);
+        photos = (await c.photos()).filter((p) => !hidden.has(p.id)).map((p) => ({ ...p, carName: p.car ? carLabel(p.car) : '', trackName: p.track ? trackLabel(p.track) : '' }));
+      } catch (err) {
+        error = err.message;
+      }
+    }
+    return { liveries, photos, configured: Boolean(c), error };
+  });
+  handle('gallery:add', async ({ caption, car, track }) => {
+    const c = community();
+    if (!c) throw new Error('La galerie n’est pas encore activée par les admins');
+    const screens = path.join(docsDir(), 'screens');
+    const r = await dialog.showOpenDialog(win, { title: 'Choisir une photo', defaultPath: fs.existsSync(screens) ? screens : app.getPath('pictures'), properties: ['openFile'], filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const file = r.filePaths[0];
+    const ext = path.extname(file).slice(1).toLowerCase().replace('jpeg', 'jpg');
+    const size = fs.statSync(file).size;
+    if (size > MAX_PHOTO) throw new Error(`Image trop grosse (${Math.round(size / 1048576)} Mo, 10 Mo max)`);
+    const id = await c.addPhoto({ image: fs.readFileSync(file), ext, author: settings.data.driverName || 'Pilote', caption, car, track });
+    discordPost('news', `📸 **${settings.data.driverName || 'Un membre'}** a ajouté une photo à la galerie${caption ? ` : ${String(caption).slice(0, 120)}` : ''}`);
+    return id;
+  });
+  handle('admin:galleryHide', (id) =>
+    withAdmin(async () => {
+      const pub = getPublisher();
+      if (!pub.manifest) await pub.open();
+      const list = [...new Set([...(pub.manifest.galleryHidden || []), String(id)])].slice(-500);
+      await pub.updateMeta({ galleryHidden: list });
+      await refreshManifest({ autoSync: false });
+      return true;
+    }),
+  );
   handle('admin:proposalInstall', (id) =>
     withAdmin(async () => {
       const c = community();
@@ -2189,6 +2341,35 @@ function setupIpc() {
   handle('admin:updateMeta', (patch) =>
     withAdmin(async () => {
       const pub = getPublisher();
+      // events with a battle: one round each in the « Soirées LKS » championship
+      // (qualifying runs during the evening, then the bracket of the best ones)
+      if (patch && Array.isArray(patch.events)) {
+        if (!pub.manifest) await pub.open();
+        const champs = [...(pub.manifest.championships || [])];
+        let soirees = champs.find((c) => c.id === 'soiree');
+        const roundId = (ev) => String(ev.id || '').replace(/[^\w-]/g, '').slice(-6);
+        const wanted = patch.events.filter((ev) => ev.battle && ev.battle.size && ev.track && roundId(ev));
+        if (wanted.length || soirees) {
+          if (!soirees) {
+            soirees = { id: 'soiree', name: 'Soirées LKS', points: champ.DEFAULT_POINTS, rounds: [] };
+            champs.push(soirees);
+          }
+          const now = Date.now();
+          const keepIds = new Set(wanted.map(roundId));
+          // past rounds stay (results), future rounds follow the calendar
+          const rounds = (soirees.rounds || []).filter((r) => keepIds.has(r.id) || Date.parse(r.start) < now);
+          for (const ev of wanted) {
+            const start = new Date(ev.date).toISOString();
+            const end = new Date(Date.parse(ev.date) + (Number(ev.durationMinutes) || 120) * 60000).toISOString();
+            const round = { id: roundId(ev), name: ev.title || 'Soirée LKS', track: ev.track, layout: ev.layout || '', kind: 'battle', mode: ['debutant', 'normal', 'pro'].includes(ev.battle.mode) ? ev.battle.mode : 'normal', start, end, bracket: Number(ev.battle.size) };
+            const i = rounds.findIndex((r) => r.id === round.id);
+            if (i >= 0) rounds[i] = round;
+            else rounds.push(round);
+          }
+          soirees.rounds = rounds.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+          patch = { ...patch, championships: champ.cleanChampionships(champs) };
+        }
+      }
       // new events: announced on the group's channel
       if (patch && Array.isArray(patch.events)) {
         if (!pub.manifest) await pub.open();
