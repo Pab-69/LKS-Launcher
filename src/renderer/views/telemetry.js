@@ -680,9 +680,17 @@ export default function telemetryView(root, params = {}) {
     const clipsB = db.clips || [];
     if (!clipsA.length && !clipsB.length) clipsPanel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de clips sur ce circuit.'));
     else {
-      const cell = (c) => (c ? h(`span.clip-chip${c.hit ? '.hit' : ''}`, c.hit ? `✓ ${c.dist} m` : c.dist == null ? '✗' : `✗ ${c.dist} m`) : h('span.s', '—'));
+      // long zones: share covered; small clips: distance. Then the note of the zone around the clip.
+      const zoneOf = (d, name) => (d.zones || []).find((z) => z.name === name);
+      const cell = (c, d) => {
+        if (!c) return h('span.s', '—');
+        const what = c.cover !== undefined ? `${c.cover} %` : c.dist == null ? '' : `${c.dist} m`;
+        const z = zoneOf(d, c.name);
+        return h('span', h(`span.clip-chip${c.hit ? '.hit' : ''}`, `${c.hit ? '✓' : '✗'} ${what}`), z ? h('span.s', ` zone ${z.score}`) : '');
+      };
       clipsPanel.append(h('div.clip-table', h('span.label', 'Clip'), h('span.label', 'A'), h('span.label', 'B'),
-        ...(clipsA.length >= clipsB.length ? clipsA : clipsB).flatMap((c, i) => [h('span', `${i + 1}. ${c.name}`), cell(clipsA[i]), cell(clipsB[i])])));
+        ...(clipsA.length >= clipsB.length ? clipsA : clipsB).flatMap((c, i) => [h('span', `${i + 1}. ${c.name}`), cell(clipsA[i], da), cell(clipsB[i], db)])));
+      clipsPanel.append(h('div.hint.mt', 'Corde : jugée avec l’avant de la voiture. Zone extérieure : avec l’arrière. Zone longue : part de la zone parcourue en glisse. « zone » = note sur 100 de la portion autour du clip.'));
     }
     const pens = [['A', da], ['B', db]].flatMap(([slot, d]) => (d.penalties || []).map((p) => `${slot} : ${p.label} ${p.zero ? '(run à 0)' : `(−${p.points})`} à ${Math.round((p.d || 0) * 100)} %`));
     if (pens.length) clipsPanel.append(h('div.hint.mt', pens.join(' · ')));
@@ -788,6 +796,13 @@ export default function telemetryView(root, params = {}) {
         toast(`${auto.clips.length} clips placés depuis la ligne IA`, 'success');
         render();
       } } }, 'Générer depuis la ligne IA'),
+      h('button.btn.btn-sm', { title: 'Moyenne des meilleures runs notées sur ce parcours (une par pilote)', on: { click: async () => {
+        const res = await guard(() => api.call('admin:lineFromRuns', { track, layout }));
+        if (!res) return;
+        Object.assign(editor, { autoRefLine: res.line, refDriver: `meilleures runs (${res.runs.map((r) => r.driver).join(', ')})`, lapId: '', lap: null });
+        toast(`Ligne tirée de ${res.runs.length} run(s) : ${res.runs.map((r) => `${r.driver} ${r.score}`).join(', ')}. Publie le parcours pour l’utiliser.`, 'success', 8000);
+        render();
+      } } }, 'Ligne des meilleures runs'),
       h('span.hint', sourceLabel)));
     if (!editor.lap && !(currentLine && currentLine.length)) {
       body.append(h('div.empty', h('strong', 'Pas de ligne pour ce circuit'), 'Fais une run propre ici, ou clique « Générer depuis la ligne IA » si le circuit en a une.'));
@@ -835,7 +850,7 @@ export default function telemetryView(root, params = {}) {
           if (await guard(() => api.call('admin:saveDriftCourse', { track, layout, remove: true }), 'Parcours supprimé')) { editor = { key: editor.key }; render(); }
         } } }, 'Supprimer') : null,
         h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
-          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lapId ? undefined : editor.autoRefLine || undefined }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
+          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lapId ? undefined : editor.autoRefLine || undefined, refDriver: editor.lapId ? undefined : editor.refDriver }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
           if (ok) { editor = { key: editor.key }; render(); }
         } } }, icon('upload'), 'Publier')));
     body.append(h('div.course-layout', h('div.course-main', mapWrap, rulesPanel(() => {})), side));

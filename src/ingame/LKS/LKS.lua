@@ -184,9 +184,22 @@ end
 local clipState, lastClip = {}, nil
 local show3d = true
 
+local function pathLength(path)
+  local len = 0
+  for i = 2, #path do len = len + math.sqrt((path[i][1] - path[i - 1][1]) ^ 2 + (path[i][2] - path[i - 1][2]) ^ 2) end
+  return len
+end
+
 local function resetClips()
   clipState = {}
-  for i = 1, #clips do clipState[i] = { hit = false, best = nil } end
+  for i = 1, #clips do
+    local c = clips[i]
+    local st = { hit = false, best = nil, gap = nil }
+    if c.path and #c.path > 1 then
+      st.slices, st.n, st.covered = {}, math.max(1, math.ceil(pathLength(c.path))), 0
+    end
+    clipState[i] = st
+  end
   lastClip = nil
 end
 resetClips()
@@ -208,16 +221,64 @@ local function clipDist(c, x, z)
   return best
 end
 
-local function updateClips(car, angle)
-  local p = car.position
+-- position le long d'une zone (m depuis son début) et distance à elle
+local function alongPath(path, x, z)
+  local bestD, bestAt, acc = math.huge, 0, 0
+  for i = 1, #path - 1 do
+    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
+    local vx, vz = bx - ax, bz - az
+    local len = math.sqrt(vx * vx + vz * vz)
+    if len <= 0 then len = 1e-6 end
+    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / (len * len)))
+    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
+    if d < bestD then bestD, bestAt = d, acc + k * len end
+    acc = acc + len
+  end
+  return bestD, bestAt
+end
+
+-- point jugé : l'avant de la voiture pour une corde, l'arrière pour une zone extérieure
+local HALF_LENGTH = 2.0
+local function judgedPoint(c, car)
+  local p, l = car.position, car.look
+  local k = (c.kind == 'outer') and -HALF_LENGTH or HALF_LENGTH
+  local ll = math.sqrt(l.x * l.x + l.z * l.z)
+  if ll <= 0 then return p.x, p.z end
+  return p.x + l.x / ll * k, p.z + l.z / ll * k
+end
+
+local ZONE_HIT = 0.2 -- part d'une zone longue à couvrir pour qu'elle compte
+
+local function updateClips(car, angle, gap)
+  local drifting = angle >= 12 and car.speedKmh >= 25
   for i, c in ipairs(clips) do
-    local dist = clipDist(c, p.x, p.z)
+    local x, z = judgedPoint(c, car)
     local st = clipState[i]
-    if dist < c.r * 4 then
-      if st.best == nil or dist < st.best then st.best = dist end
-      if not st.hit and dist <= c.r and angle >= 12 and car.speedKmh >= 25 then
-        st.hit = true
-        lastClip = string.format('%s ✓ %.1f m', c.name, dist)
+    if st.slices then
+      local dist, at = alongPath(c.path, x, z)
+      if dist < c.r * 4 then
+        if st.best == nil or dist < st.best then st.best = dist end
+        if dist <= c.r and drifting then
+          local k = math.min(st.n, math.floor(at) + 1)
+          if not st.slices[k] then
+            st.slices[k] = true
+            st.covered = st.covered + 1
+          end
+          if st.gap == nil and gap then st.gap = gap end
+          local cover = st.covered / st.n
+          if not st.hit and cover >= ZONE_HIT then st.hit = true end
+          if st.hit then lastClip = string.format('%s ✓ %d %%', c.name, math.floor(cover * 100 + 0.5)) end
+        end
+      end
+    else
+      local dist = math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2)
+      if dist < c.r * 4 then
+        if st.best == nil or dist < st.best then st.best = dist end
+        if not st.hit and dist <= c.r and drifting then
+          st.hit = true
+          st.gap = gap
+          lastClip = string.format('%s ✓ %.1f m', c.name, dist)
+        end
       end
     end
   end
@@ -269,6 +330,7 @@ end
 local function resetTandem()
   tandem.other, tandem.role, tandem.rows, tandem.frames, tandem.withFrames, tandem.lastT, tandem.lastD, tandem.lost = nil, nil, {}, 0, 0, -1, -1, 0
   tandem.hintC, tandem.hintL, tandem.closing, tandem.otherPrev, tandem.otherDone = {}, {}, nil, nil, false
+  tandem.gapSum, tandem.gapN = 0, 0
 end
 
 local function saveRun(lapMs)
@@ -321,6 +383,7 @@ local function updateTandem(me, t)
   end
   tandem.lost = 0
   tandem.withFrames = tandem.withFrames + 1
+  tandem.gapSum, tandem.gapN = (tandem.gapSum or 0) + gap, (tandem.gapN or 0) + 1
   local c, l = me, o -- chaser, leader
   if tandem.role == 'lead' then c, l = o, me end
   local d
@@ -334,7 +397,8 @@ local function updateTandem(me, t)
     if #rows < 20000 then
       rows[#rows + 1] = { tostring(math.floor(t)), string.format('%.5f', d), num(c.position.x), num(c.position.z), num(c.speedKmh), num(slipAngle(c)),
         num(safe(function() return c.gas end, 0)), num(safe(function() return c.brake end, 0)), tostring(safe(function() return c.gear end, 0) + 1), tostring(safe(function() return c.wheelsOutside end, 0)),
-        num(l.position.x), num(l.position.z), num(slipAngle(l)), num(l.speedKmh), tostring(contact) }
+        num(l.position.x), num(l.position.z), num(slipAngle(l)), num(l.speedKmh), tostring(contact),
+        string.format('%.4f', c.look.x), string.format('%.4f', c.look.z) }
     end
   end
   return gap
@@ -696,7 +760,38 @@ local function onRunStart(car)
   if not ghost.running then startGhost(ghost.lead) end
 end
 
+-- ------------------------------------------------------------- après la run : tandem et note
+-- Résumé tandem calculé ici tout de suite ; la note complète vient du launcher (score.json).
+local summary = nil
+local scoreView = { data = nil, at = 0, seen = nil, checked = -1e9, started = false, open = false }
+
+local function tandemSummary()
+  if tandem.other == nil or (tandem.gapN or 0) < 20 then return nil end
+  local name = safe(function() return ac.getDriverName(tandem.other) end, '?')
+  local avg = tandem.gapSum / tandem.gapN
+  local parts = {}
+  for i, c in ipairs(clips) do
+    local st = clipState[i]
+    if st and st.gap then parts[#parts + 1] = string.format('%s %.1f m', c.name, st.gap) end
+  end
+  local head = tandem.role == 'lead' and string.format('Devant %s : chaser à %.1f m en moyenne', name, avg) or string.format('Derrière %s : %.1f m en moyenne', name, avg)
+  return { at = clock, head = head, clips = #parts > 0 and ('Écart aux clips : ' .. table.concat(parts, ' · ')) or nil }
+end
+
+local function checkScore()
+  if clock - scoreView.checked < 1000 then return end
+  scoreView.checked = clock
+  local s = parseJson(readFile('score.json'))
+  if s and s.id and s.id ~= scoreView.seen then
+    scoreView.seen = s.id
+    -- celle déjà là au lancement est d'une session précédente
+    if scoreView.started and s.track == trackId then scoreView.data, scoreView.at = s, clock end
+  end
+  scoreView.started = true
+end
+
 local function onRunEnd(car, ms)
+  summary = tandemSummary() or summary
   if ms and ms > 0 then
     if run.bestMs == nil or ms < run.bestMs then run.best, run.bestMs = run.current, ms end
     run.lastMs = ms
@@ -757,7 +852,7 @@ function script.update(dt)
   prevPos = { x = x, z = z, inPit = inPit }
 
   local angle = driftAngle(car)
-  if run.active then updateClips(car, angle) end
+  if run.active then updateClips(car, angle, state.gap) end
   state.angle = angle
 
   -- tandem : pendant la run (et quelques secondes après en battle)
@@ -786,6 +881,7 @@ function script.update(dt)
   updateLights(car)
   updateBattle(car)
   checkResult()
+  checkScore()
   writeLive(car)
   if clock - library.checkedAt > 10000 then loadLibrary() end
   for i = #invites, 1, -1 do if clock - invites[i].at > 30000 then table.remove(invites, i) end end
@@ -953,6 +1049,34 @@ function script.windowMain(dt)
   if note.text and clock < note.untilT then ui.textColored(note.text, AMBER) end
   if result and clock - result.at < 20000 then ui.textColored(result.text, GREEN) end
 
+  -- note de la dernière run (écrite par le launcher)
+  local sc = scoreView.data
+  if sc and (scoreView.open or clock - scoreView.at < 30000) then
+    if sc.kind == 'tandem' then
+      ui.textColored(string.format('Chase de %s : %s/100', tostring(sc.driver or '?'), tostring(sc.score or 0)), GREEN)
+      if sc.tandem then ui.textColored(string.format('Proximité %s · angle %s · ligne %s · écart moyen %s m', tostring(sc.tandem.proximity or '-'), tostring(sc.tandem.angleMatch or '-'), tostring(sc.tandem.line or '-'), tostring(sc.tandem.avgGap or '-')), GREY) end
+    else
+      ui.textColored(string.format('Note %s/100%s', tostring(sc.score or 0), sc.record and '  · record !' or ''), GREEN)
+      ui.textColored(string.format('Angle %s · Vitesse %s · Ligne %s%s', tostring(sc.angle or '-'), tostring(sc.speed or '-'), tostring(sc.line or '-'), (sc.penalty or 0) > 0 and string.format(' · pénalités -%s', tostring(sc.penalty)) or ''), GREY)
+      if sc.zeroed then ui.textColored('Run à 0 : ' .. tostring(sc.zeroed), RED) end
+    end
+    if type(sc.clips) == 'table' then
+      for _, c in ipairs(sc.clips) do
+        local txt = (c.hit and '✓ ' or '✗ ') .. tostring(c.name) .. (c.cover and string.format(' (%s %%)', tostring(c.cover)) or '')
+        if type(sc.zones) == 'table' then
+          for _, z in ipairs(sc.zones) do if z.name == c.name then txt = txt .. string.format(' · zone %s/100', tostring(z.score)) end end
+        end
+        ui.textColored(txt, c.hit and GREEN or RED)
+      end
+    end
+  elseif sc then
+    ui.textColored(string.format('Dernière note : %s/100', tostring(sc.score or 0)), GREY)
+  end
+  if summary and clock - summary.at < 30000 then
+    ui.textColored(summary.head, GREY)
+    if summary.clips then ui.textColored(summary.clips, GREY) end
+  end
+
   -- run
   if gated then
     if run.active then ui.textColored('Run ' .. fmtMs(clock - run.t0), GREEN)
@@ -1019,6 +1143,10 @@ function script.windowMain(dt)
   if ui.button(panel == 'battle' and 'Battle ▴' or 'Battle ▾') then panel = panel == 'battle' and nil or 'battle' end
   ui.sameLine()
   if ui.button(panel == 'options' and '⋯' or '⋯ ') then panel = panel == 'options' and nil or 'options' end
+  if scoreView.data then
+    ui.sameLine()
+    if ui.button(scoreView.open and 'Note ▴' or 'Note ▾') then scoreView.open = not scoreView.open end
+  end
 
   if panel == 'ghost' then ghostPanel()
   elseif panel == 'battle' then battlePanel()

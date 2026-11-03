@@ -11,15 +11,17 @@
  */
 
 const { EventEmitter } = require('events');
-const { slipAngle } = require('./layout');
+const { slipAngle, YawFit } = require('./layout');
 const { scoreAllModes, LiveClips } = require('./drift');
 const { hasGates, LineTracker, crossesForward } = require('./geo');
 
 const STATUS_LIVE = 2;
 const SESSION_NAMES = { 0: 'practice', 1: 'qualify', 2: 'race', 3: 'hotlap', 4: 'timeattack', 5: 'drift', 6: 'drag' };
 
-// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z, wheels out, signed slip]
-const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z', 'out', 'slip'];
+// sample row: [d, tMs, speed, gas, brake, gear, rpm, steer, angle, x, z, wheels out, signed slip, contact, heading]
+// heading (yaw): forward = (sin yaw, cos yaw) in the x/z plane, to place the front and the rear of the car
+// (left out while the heading is not known yet)
+const COLUMNS = ['d', 't', 'speed', 'gas', 'brake', 'gear', 'rpm', 'steer', 'angle', 'x', 'z', 'out', 'slip', 'contact', 'yaw'];
 
 const round = (v, n) => Math.round(v * 10 ** n) / 10 ** n;
 const TELEPORT_M = 30; // a jump this long in one frame: back to pits, reset or restart
@@ -63,6 +65,7 @@ class TelemetryRecorder extends EventEmitter {
     this.waitLap = null; // after a reset: wait for the next lap to start
     this.course = null; // { course, tracker, at } for the current combo
     this.resetAt = 0;
+    this.yawFit = new YawFit();
   }
 
   /** Course of the current combo (refreshed every 2 s: the admins may publish a new one). */
@@ -111,6 +114,8 @@ class TelemetryRecorder extends EventEmitter {
     this.lastFrameAt = now;
     const slip = slipAngle(p);
     const angle = Math.abs(slip);
+    this.yawFit.feed(p);
+    const yaw = this.yawFit.yaw(p);
     const x = g.carCoordinates[0];
     const z = g.carCoordinates[2];
     const inPit = Boolean(g.isInPit);
@@ -140,14 +145,14 @@ class TelemetryRecorder extends EventEmitter {
         const t = lap.gate ? now - lap.startedAt : g.iCurrentTime;
         // sample by distance (or time when stopped), never backwards
         if (!last || (d > last[0] && (d - last[0] >= 0.0005 || now - lap.lastSampleAt >= 100))) {
-          lap.samples.push([round(d, 5), t, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(x, 1), round(z, 1), p.numberOfTyresOut, round(slip, 1)]);
+          lap.samples.push([round(d, 5), t, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(x, 1), round(z, 1), p.numberOfTyresOut, round(slip, 1), 0, ...(yaw === null ? [] : [round(yaw, 3)])]);
           lap.lastSampleAt = now;
         }
         if (p.numberOfTyresOut > 2) lap.cutFrames++;
         if (g.isInPitLane || g.isInPit) lap.pit = true;
         lap.topSpeed = Math.max(lap.topSpeed, p.speedKmh);
         if (p.speedKmh > 20) lap.maxAngle = Math.max(lap.maxAngle, Math.min(angle, 90));
-        lap.clips.feed(x, z, angle, p.speedKmh);
+        lap.clips.feed(x, z, angle, p.speedKmh, yaw);
       }
     }
 

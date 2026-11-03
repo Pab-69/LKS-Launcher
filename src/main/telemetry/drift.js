@@ -20,8 +20,10 @@
 
 const crypto = require('crypto');
 
-// sample columns (see recorder COLUMNS); 12 = signed slip angle, 13 = contact (tandem)
-const C = { d: 0, t: 1, speed: 2, angle: 8, x: 9, z: 10, out: 11, slip: 12, contact: 13 };
+// sample columns (see recorder COLUMNS); 12 = signed slip angle, 13 = contact (tandem), 14 = heading
+const C = { d: 0, t: 1, speed: 2, angle: 8, x: 9, z: 10, out: 11, slip: 12, contact: 13, yaw: 14 };
+// the front and the rear of the car, from its centre (a drift car is about 4.4 m long)
+const HALF_LENGTH = 2.0;
 // lead sample columns (tandem)
 const LC = { x: 0, z: 1, angle: 2, speed: 3, slip: 4 };
 
@@ -117,6 +119,68 @@ function clipDist(c, x, z) {
     best = Math.min(best, Math.hypot(x - ax - vx * k, z - az - vz * k));
   }
   return best;
+}
+
+/**
+ * Point of the car judged for a clip: the front for a corde (inner), the rear
+ * for an outer zone, as the judges do. Without the heading (older laps): the centre.
+ */
+function judgedPoint(c, x, z, yaw) {
+  if (!Number.isFinite(yaw) || yaw === null) return [x, z];
+  const k = c.kind === 'outer' ? -HALF_LENGTH : HALF_LENGTH;
+  return [x + Math.sin(yaw) * k, z + Math.cos(yaw) * k];
+}
+
+/** Position along a zone's path (m from its start) and distance to it. */
+function alongPath(path, x, z) {
+  let best = null;
+  let acc = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const [ax, az] = path[i];
+    const [bx, bz] = path[i + 1];
+    const vx = bx - ax;
+    const vz = bz - az;
+    const len = Math.hypot(vx, vz) || 1e-9;
+    const k = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / (len * len)));
+    const dist = Math.hypot(x - ax - vx * k, z - az - vz * k);
+    if (!best || dist < best.dist) best = { dist, at: acc + k * len };
+    acc += len;
+  }
+  return { ...best, length: acc };
+}
+
+const isZone = (c) => Array.isArray(c.path) && c.path.length > 1;
+const ZONE_HIT = 0.2; // share of a long zone to cover for it to count
+
+/**
+ * Judge one clip over rows of samples: { hit, dist, q, cover, d }.
+ * Small clip: closest approach of the judged point. Long zone: share of its
+ * length covered while sideways (1 m slices).
+ */
+function judgeClip(c, rows, r) {
+  if (isZone(c)) {
+    let length = 0;
+    for (let i = 1; i < c.path.length; i++) length += Math.hypot(c.path[i][0] - c.path[i - 1][0], c.path[i][1] - c.path[i - 1][1]);
+    const slices = new Uint8Array(Math.max(1, Math.ceil(length)));
+    let best = null;
+    for (const s of rows) {
+      const [px, pz] = judgedPoint(c, s[C.x], s[C.z], s[C.yaw]);
+      const a = alongPath(c.path, px, pz);
+      if (!best || a.dist < best.dist) best = { dist: a.dist, s };
+      if (a.dist <= r && sideways(s)) slices[Math.min(slices.length - 1, Math.floor(a.at))] = 1;
+    }
+    const cover = slices.reduce((a, v) => a + v, 0) / slices.length;
+    const hit = cover >= ZONE_HIT;
+    return { hit, dist: best ? r1(best.dist) : null, q: hit ? r1(cover * 100) / 100 : 0, cover: Math.round(cover * 100), d: best ? best.s[C.d] : null };
+  }
+  let best = null;
+  for (const s of rows) {
+    const [px, pz] = judgedPoint(c, s[C.x], s[C.z], s[C.yaw]);
+    const dist = Math.hypot(px - c.x, pz - c.z);
+    if (!best || dist < best.dist) best = { dist, s };
+  }
+  const hit = Boolean(best && best.dist <= r && sideways(best.s));
+  return { hit, dist: best ? r1(best.dist) : null, q: hit ? r1((1 - 0.5 * (best.dist / r)) * 100) / 100 : 0, d: best ? best.s[C.d] : null };
 }
 
 /** Rules of a mode for a course: preset + the admins' changes for this track. */
@@ -305,16 +369,10 @@ function scoreDrift(samples, course, mode = 'normal') {
   // line: clips + reference line
   const found = [];
   const clips = ((course && course.clips) || []).map((c, i) => {
-    let best = null;
-    for (const s of judged) {
-      const dist = clipDist(c, s[C.x], s[C.z]);
-      if (!best || dist < best.dist) best = { dist, s };
-    }
-    const r = (c.r || 3) * rules.clipScale;
-    const hit = Boolean(best && best.dist <= r && sideways(best.s));
+    const res = judgeClip(c, judged, (c.r || 3) * rules.clipScale);
     const name = c.name || `Clip ${i + 1}`;
-    if (!hit) found.push({ rule: rules.missedClip, kind: 'clip', label: `${name} raté`, d: best ? best.s[C.d] : null });
-    return { name, kind: c.kind || 'inner', hit, dist: best ? r1(best.dist) : null, q: hit ? r1((1 - 0.5 * (best.dist / r)) * 100) / 100 : 0, d: best ? best.s[C.d] : null };
+    if (!res.hit) found.push({ rule: rules.missedClip, kind: 'clip', label: `${name} raté`, d: res.d });
+    return { name, kind: c.kind || 'inner', ...res };
   });
   const clipsQ = clips.length ? clips.reduce((a, c) => a + c.q, 0) / clips.length : null;
   let lineQ = null;
@@ -335,6 +393,7 @@ function scoreDrift(samples, course, mode = 'normal') {
   const line = lineQuality === null ? null : W.line * lineQuality;
 
   const { penalty, zeroed, penalties } = applyRules([...infractions(judged, rules, course), ...found]);
+  const zones = zoneScores(judged, clips, penalties, { rules, W, ref, refSpeed, s0, s1 });
   // without clips or reference line, angle + speed are scaled to 100
   const raw = line === null ? ((angle + speed) / (W.angle + W.speed || 1)) * 100 : ((angle + speed + line) / (W.angle + W.speed + W.line || 1)) * 100;
   return {
@@ -348,12 +407,53 @@ function scoreDrift(samples, course, mode = 'normal') {
     zeroed,
     penalties,
     clips,
+    zones,
     avgAngle: r1(avg.avgAngle),
     maxAngle: r1(avg.maxAngle),
     avgSpeed: r1(avg.avgSpeed),
     driftTime: r1(avg.driftTime / 1000),
     rules: courseVersion(course, mode),
   };
+}
+
+/**
+ * Note per zone, as the judges give it: the run is cut around each clip
+ * (half way to the previous and the next one). For each part: angle, speed,
+ * line and the clip itself, minus the penalties given there, on 100.
+ */
+function zoneScores(judged, clips, penalties, { rules, W, ref, refSpeed, s0, s1 }) {
+  const placed = clips.map((c, i) => ({ c, i, d: c.d })).filter((x) => Number.isFinite(x.d)).sort((a, b) => a.d - b.d);
+  if (!placed.length) return [];
+  const first = judged[0][C.d];
+  const last = judged[judged.length - 1][C.d];
+  return placed.map((p, k) => {
+    const from = k === 0 ? first : (placed[k - 1].d + p.d) / 2;
+    const to = k === placed.length - 1 ? last : (p.d + placed[k + 1].d) / 2;
+    const rows = judged.filter((s) => s[C.d] >= from && s[C.d] <= to);
+    const avg = rows.length > 2 ? averages(rows) : null;
+    if (!avg) return { name: p.c.name, clip: p.c.hit, score: 0, avgAngle: 0, avgSpeed: 0 };
+    const angle = W.angle * angleQ(avg.avgAngle, rules);
+    const speed = W.speed * clamp(((refSpeed ? avg.avgSpeed / refSpeed : avg.avgSpeed) - s0) / (s1 - s0 || 1), 0, 1);
+    let lineQ = null;
+    if (ref) {
+      let sum = 0;
+      for (const s of rows) sum += distToLine(s[C.x], s[C.z], ref);
+      lineQ = clamp(1 - (sum / rows.length - rules.lineTol[0]) / (rules.lineTol[1] - rules.lineTol[0] || 1), 0, 1);
+    }
+    const lineQuality = lineQ === null ? p.c.q : 0.6 * p.c.q + 0.4 * lineQ;
+    const pen = penalties.filter((x) => Number.isFinite(x.d) && x.d >= from && x.d <= to);
+    const zero = pen.some((x) => x.zero);
+    const raw = ((angle + speed + W.line * lineQuality) / (W.angle + W.speed + W.line || 1)) * 100;
+    return {
+      name: p.c.name,
+      clip: p.c.hit,
+      ...(p.c.cover !== undefined ? { cover: p.c.cover } : {}),
+      score: zero ? 0 : r1(clamp(raw - pen.reduce((a, x) => a + x.points, 0), 0, 100)),
+      avgAngle: r1(avg.avgAngle),
+      avgSpeed: r1(avg.avgSpeed),
+      penalties: pen.map((x) => x.label),
+    };
+  });
 }
 
 /** Judge a solo run in every mode: the normal result + { modes: { debutant, normal, pro } }. */
@@ -510,20 +610,41 @@ class LiveClips {
   }
 
   reset() {
-    this.state = ((this.course && this.course.clips) || []).map((c, i) => ({ name: c.name || `Clip ${i + 1}`, r: c.r || 3, x: c.x, z: c.z, path: c.path, best: null, hit: false }));
+    this.state = ((this.course && this.course.clips) || []).map((c, i) => {
+      let slices = null;
+      if (isZone(c)) {
+        let len = 0;
+        for (let k = 1; k < c.path.length; k++) len += Math.hypot(c.path[k][0] - c.path[k - 1][0], c.path[k][1] - c.path[k - 1][1]);
+        slices = new Uint8Array(Math.max(1, Math.ceil(len)));
+      }
+      return { clip: c, name: c.name || `Clip ${i + 1}`, r: c.r || 3, best: null, hit: false, slices };
+    });
   }
 
-  feed(x, z, angle, speed) {
-    for (const c of this.state) {
-      const dist = clipDist(c, x, z);
-      if (dist > c.r * 4) continue;
-      if (c.best === null || dist < c.best) c.best = dist;
-      if (dist <= c.r && angle >= DRIFT_ANGLE && speed >= DRIFT_SPEED) c.hit = true;
+  feed(x, z, angle, speed, yaw) {
+    const drifting = angle >= DRIFT_ANGLE && speed >= DRIFT_SPEED;
+    for (const st of this.state) {
+      const [px, pz] = judgedPoint(st.clip, x, z, yaw);
+      if (st.slices) {
+        const a = alongPath(st.clip.path, px, pz);
+        if (a.dist > st.r * 4) continue;
+        if (st.best === null || a.dist < st.best) st.best = a.dist;
+        if (a.dist <= st.r && drifting) {
+          st.slices[Math.min(st.slices.length - 1, Math.floor(a.at))] = 1;
+          st.hit = st.slices.reduce((s, v) => s + v, 0) / st.slices.length >= ZONE_HIT;
+        }
+        continue;
+      }
+      const dist = Math.hypot(px - st.clip.x, pz - st.clip.z);
+      if (dist > st.r * 4) continue;
+      if (st.best === null || dist < st.best) st.best = dist;
+      if (dist <= st.r && drifting) st.hit = true;
     }
   }
 
   summary() {
-    return { total: this.state.length, hit: this.state.filter((c) => c.hit).length, clips: this.state.map((c) => ({ name: c.name, hit: c.hit, dist: c.best === null ? null : r1(c.best) })) };
+    const cover = (st) => (st.slices ? Math.round((st.slices.reduce((s, v) => s + v, 0) / st.slices.length) * 100) : undefined);
+    return { total: this.state.length, hit: this.state.filter((c) => c.hit).length, clips: this.state.map((c) => ({ name: c.name, hit: c.hit, dist: c.best === null ? null : r1(c.best), ...(c.slices ? { cover: cover(c) } : {}) })) };
   }
 }
 
@@ -537,6 +658,9 @@ function driftOf(lap, mode = 'normal', kind = 'drift') {
 
 module.exports = {
   clipDist,
+  judgedPoint,
+  judgeClip,
+  HALF_LENGTH,
   scoreDrift,
   scoreAllModes,
   scoreTandem,

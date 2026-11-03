@@ -140,7 +140,8 @@ test('drift modes and custom rules per track', () => {
   r.on('lap', (l) => laps.push(l));
   run(r, sim, 2600);
   const base = laps[0].samples;
-  assert.strictEqual(base[0].length, 13, 'signed slip recorded');
+  assert.ok(base[0].length >= 13, 'signed slip recorded');
+  assert.strictEqual(base[base.length - 1].length, 15, 'heading recorded once learnt');
   const all = scoreAllModes(base, null);
   assert.ok(all.modes.debutant.score > all.modes.normal.score, 'beginner mode is more forgiving');
   assert.ok(all.modes.normal.score >= all.modes.pro.score);

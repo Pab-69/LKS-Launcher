@@ -7,7 +7,8 @@
  * (lap.tandem.leadSamples) and is judged as a chase.
  *
  * Row from the app: [t, d, x, z, speed, slip, gas, brake, gear, wheelsOut,
- *                    leadX, leadZ, leadSlip, leadSpeed, contact]
+ *                    leadX, leadZ, leadSlip, leadSpeed, contact, lookX?, lookZ?]
+ * (lookX/lookZ: the chaser's heading, app 2.3+)
  */
 
 const fs = require('fs');
@@ -22,7 +23,7 @@ function runToLap(run, driver = {}) {
   const rows = run.rows.filter((r) => Array.isArray(r) && r.length >= 15 && r.every((v) => Number.isFinite(Number(v)))).map((r) => r.map(Number));
   if (rows.length < 20) throw new Error('Run tandem trop courte');
   const t0 = rows[0][0];
-  const samples = rows.map((r) => [r[1], r[0] - t0, r[4], r[6], r[7], r[8], 0, 0, fold(r[5]), r[2], r[3], r[9], r[5], r[14]]);
+  const samples = rows.map((r) => [r[1], r[0] - t0, r[4], r[6], r[7], r[8], 0, 0, fold(r[5]), r[2], r[3], r[9], r[5], r[14], ...(r.length >= 17 && (r[15] || r[16]) ? [Math.round(Math.atan2(r[15], r[16]) * 1000) / 1000] : [])]);
   const leadSamples = rows.map((r) => [r[10], r[11], fold(r[12]), r[13], r[12]]);
   const lapMs = Number(run.lapMs) > 0 ? Number(run.lapMs) : samples[samples.length - 1][1];
   return {
@@ -46,7 +47,7 @@ function runToLap(run, driver = {}) {
       leadSamples,
     },
     date: new Date(Number(run.time) > 1e9 ? Number(run.time) * 1000 : Date.now()).toISOString(),
-    columns: [...COLUMNS, 'contact'],
+    columns: COLUMNS,
     samples,
   };
 }

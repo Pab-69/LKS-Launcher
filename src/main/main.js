@@ -41,6 +41,7 @@ const { courseVersion, referenceFrom, driftOf, MODE_LABELS, MODE_IDS, MODES } = 
 const { autoCourse } = require('./telemetry/ailine');
 const { bundledCourse, bundledCourses } = require('./telemetry/courses');
 const { hasGates } = require('./telemetry/geo');
+const { lineFromRuns } = require('./telemetry/reference');
 const { collectRuns } = require('./telemetry/tandem');
 const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
@@ -713,6 +714,40 @@ async function refreshGhostLibrary(combo, force = false) {
   ghosts.writeLibrary(appDir, picks);
 }
 
+/**
+ * Note of the run just finished, for the in-game app (apps/lua/LKS/score.json):
+ * the app shows it right after the run, with each clip and each zone.
+ */
+function writeScoreForGame(lap, pbDrift = [], pbTandem = []) {
+  if (!acRoot() || !lap) return;
+  const dir = ingame.appDir(acRoot());
+  if (!fs.existsSync(dir)) return;
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  if (!tandem && !(d && d.score !== undefined)) return;
+  const base = tandem || d;
+  const data = {
+    id: lap.id,
+    track: lap.track,
+    layout: lap.layout || '',
+    kind: tandem ? 'tandem' : 'drift',
+    driver: lap.driver && lap.driver.name,
+    score: base.score,
+    record: (tandem ? pbTandem : pbDrift).includes('normal'),
+    ...(tandem
+      ? { tandem: { proximity: tandem.proximity, angleMatch: tandem.angleMatch, line: tandem.line, avgGap: tandem.avgGap, lead: lap.tandem.lead && lap.tandem.lead.name } }
+      : { angle: d.angle, speed: d.speed, line: d.line, penalty: d.penalty, zeroed: d.zeroed || null }),
+    clips: ((d && d.clips) || []).map((c) => ({ name: c.name, hit: c.hit, ...(c.cover !== undefined ? { cover: c.cover } : {}) })),
+    zones: ((d && d.zones) || []).map((z) => ({ name: z.name, score: z.score })),
+    modes: lap.drift && lap.drift.modes ? Object.fromEntries(Object.entries(lap.drift.modes).map(([m, r]) => [m, r.score])) : undefined,
+  };
+  try {
+    fs.writeFileSync(path.join(dir, 'score.json'), JSON.stringify(data));
+  } catch (err) {
+    console.warn('[score]', err.message);
+  }
+}
+
 /** Other cars seen by the in-game app (apps/lua/LKS/live.json, written 4 times a second). */
 function liveOthers(live) {
   if (!acRoot()) return null;
@@ -767,6 +802,7 @@ function setupTelemetry() {
   applyDriftCourses();
   telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
     send('telemetry:lap', lap);
+    writeScoreForGame(lap, pbDrift, pbTandem);
     const label = (modes) => (modes.includes('normal') ? '' : ` (${MODE_LABELS[modes[0]]})`);
     if (pbTandem && pbTandem.length) send('toast', { kind: 'success', text: `Record de tandem : ${(lap.tandem.modes[pbTandem.includes('normal') ? 'normal' : pbTandem[0]] || {}).score}/100${label(pbTandem)}` });
     else if (pbDrift && pbDrift.length) send('toast', { kind: 'success', text: `Record de drift : ${(lap.drift.modes[pbDrift.includes('normal') ? 'normal' : pbDrift[0]] || {}).score}/100${label(pbDrift)}` });
@@ -1747,7 +1783,7 @@ function setupIpc() {
       return r;
     }),
   );
-  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, remove }) =>
+  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, refDriver, remove }) =>
     withAdmin(async () => {
       const pub = getPublisher();
       if (!pub.manifest) await pub.open();
@@ -1765,7 +1801,7 @@ function setupIpc() {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
           Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
-        } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: gated ? 'ligne officielle' : 'ligne IA' });
+        } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : gated ? 'ligne officielle' : 'ligne IA' });
         else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
         if (rules) course.rules = cleanRules(rules);
         all[key] = course;
@@ -1773,6 +1809,43 @@ function setupIpc() {
       await pub.updateMeta({ drift: all });
       await refreshManifest({ autoSync: false });
       return true;
+    }),
+  );
+  // reference line from the group's best runs (local + shared leaderboard), one run per driver
+  handle('admin:lineFromRuns', ({ track, layout = '' }) =>
+    withAdmin(async () => {
+      const course = driftCourse({ track, layout });
+      const version = courseVersion(course, 'normal');
+      const seen = new Set();
+      const laps = [];
+      const take = (lap) => {
+        const who = String((lap.driver && lap.driver.name) || '').toLowerCase();
+        if (seen.has(who) || laps.length >= 8) return;
+        seen.add(who);
+        laps.push(lap);
+      };
+      const local = telemetry.store
+        .list({ track, layout })
+        .filter((l) => !l.tandem && (driftOf(l, 'normal', 'drift') || {}).rules === version && (driftOf(l, 'normal', 'drift') || {}).score > 0)
+        .sort((x, y) => driftOf(y, 'normal', 'drift').score - driftOf(x, 'normal', 'drift').score);
+      for (const l of local.slice(0, 20)) {
+        try {
+          take(telemetry.store.load(l.id));
+        } catch {
+          /* gone */
+        }
+      }
+      const board = telemetry.board();
+      if (board) {
+        try {
+          for (const r of (await board.list({ track, layout, kind: 'drift', rules: version, limit: 10 })) || []) take(await board.lap(r.id));
+        } catch (err) {
+          console.warn('[ligne]', err.message);
+        }
+      }
+      const res = lineFromRuns(laps, course);
+      if (!res) throw new Error('Pas assez de runs notées sur ce parcours pour en tirer une ligne.');
+      return res;
     }),
   );
   handle('admin:saveChampionships', (list) =>

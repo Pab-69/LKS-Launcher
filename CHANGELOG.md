@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.13.0
+
+- **Clips jugés comme en compétition** : une corde se prend avec l'**avant** de la voiture, une zone extérieure avec l'**arrière**. Le launcher apprend tout seul l'orientation de la voiture dans le jeu. Les anciens tours restent jugés avec le centre de la voiture.
+- **Zones longues notées sur la longueur** : la note dépend de la part de la zone parcourue en glisse (par exemple 80 % de la boucle de Biķernieki). Il faut au moins 20 % de la zone pour qu'elle compte.
+- **Note par zone** : chaque portion autour d'un clip a sa note sur 100 (angle, vitesse, ligne, clip, pénalités). Visible dans « Comparer » et dans le jeu.
+- **La note dans le jeu juste après la run** : note, angle, vitesse, ligne, pénalités, chaque clip (✓ ou ✗, % des zones longues) et la note de chaque zone. Bouton « Note » de l'appli pour la revoir.
+- **Résumé tandem dans le jeu** : écart moyen avec l'autre voiture et écart à chaque clip, dès la fin de la run ; puis la note du chase quand le launcher l'a calculée.
+- **Admins : « Ligne des meilleures runs »** dans Parcours drift. Le launcher fait la moyenne des meilleures runs notées sur le parcours (une par pilote, les meilleures comptent plus) et la propose comme ligne de référence. Publie le parcours pour l'utiliser.
+- Appli en jeu 2.3.
+
 ## 1.12.3
 
 - **Nouvelle ligne de référence sur Calmont et Biķernieki** : une ligne de drift fluide, sans cassure, qui passe au centre de chaque clip et suit les longues zones sur toute leur longueur (dont toute la boucle de Biķernieki le long du mur extérieur). Elle est calculée pour avoir le moins de courbure possible tout en restant sur la route.

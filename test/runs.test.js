@@ -197,3 +197,69 @@ test('in-game app files: courses with gates, battle runs, ghost library', () => 
   const [g] = readGhostFiles(path.join(dir, 'ghosts'));
   assert.strictEqual(g.ghost.green, -1900);
 });
+
+test('heading learnt from the game, clips judged with the front or the rear of the car', () => {
+  const { YawFit, slipAngle } = require('../src/main/telemetry/layout');
+  const { judgeClip, judgedPoint, LiveClips } = require('../src/main/telemetry/drift');
+  // a game whose heading reads mirrored: forward = (-sin h, cos h)
+  const fit = new YawFit();
+  for (let i = 0; i < 200; i++) {
+    const h = (i / 200) * 6;
+    const fwd = [-Math.sin(h), Math.cos(h)];
+    const slip = (20 * Math.PI) / 180;
+    const v = 20;
+    const vel = [fwd[0] * Math.cos(slip) - fwd[1] * Math.sin(slip), fwd[0] * Math.sin(slip) + fwd[1] * Math.cos(slip)];
+    const p = { speedKmh: v * 3.6, heading: h, velocity: [vel[0] * v, 0, vel[1] * v], localVelocity: [Math.sin(slip) * v, 0, Math.cos(slip) * v] };
+    assert.ok(Math.abs(Math.abs(slipAngle(p)) - 20) < 0.5);
+    fit.feed(p);
+  }
+  assert.ok(fit.ready);
+  const yaw = fit.yaw({ heading: 1 });
+  assert.ok(Math.abs(Math.sin(yaw) - -Math.sin(1)) < 1e-6 && Math.abs(Math.cos(yaw) - Math.cos(1)) < 1e-6);
+
+  // car at the origin heading +z: front at z = +2, rear at z = -2
+  const inner = { name: 'Corde', kind: 'inner', x: 0, z: 2, r: 1 };
+  const outer = { name: 'Mur', kind: 'outer', x: 0, z: -2, r: 1 };
+  assert.deepStrictEqual(judgedPoint(inner, 0, 0, 0), [0, 2]);
+  assert.deepStrictEqual(judgedPoint(outer, 0, 0, 0).map((v) => Math.round(v * 10) / 10), [0, -2]);
+  const row = (x, z, yaw) => [0.5, 0, 60, 0, 0, 3, 0, 0, 30, x, z, 0, 30, 0, ...(yaw === undefined ? [] : [yaw])];
+  assert.ok(judgeClip(inner, [row(0, 0, 0)], 1).hit, 'the nose touches the corde');
+  assert.ok(judgeClip(outer, [row(0, 0, 0)], 1).hit, 'the rear is in the outer zone');
+  assert.ok(!judgeClip(inner, [row(0, 0, Math.PI)], 1).hit, 'backwards: the nose is elsewhere');
+  assert.ok(!judgeClip(inner, [row(0, 0)], 1).hit, 'older laps (no heading): the centre is judged');
+
+  // long zone: share covered while sideways
+  const zone = { name: 'Zone', kind: 'outer', x: 0, z: 50, r: 1.5, path: [[0, 0], [0, 100]] };
+  const along = (from, to) => Array.from({ length: (to - from) * 2 }, (_, i) => row(0, from + i / 2 + 2, 0));
+  const full = judgeClip(zone, along(0, 100), 1.5);
+  assert.ok(full.hit && full.cover >= 95, JSON.stringify(full));
+  const half = judgeClip(zone, along(0, 50), 1.5);
+  assert.ok(half.hit && half.cover > 45 && half.cover < 56, JSON.stringify(half));
+  assert.ok(!judgeClip(zone, along(0, 10), 1.5).hit, 'just touching a long zone is not enough');
+  const live = new LiveClips({ clips: [zone] });
+  for (let z = 2; z < 60; z += 0.5) live.feed(0, z, 30, 60, 0);
+  const sum = live.summary();
+  assert.ok(sum.hit === 1 && sum.clips[0].cover > 50 && sum.clips[0].cover < 62, JSON.stringify(sum));
+});
+
+test('note per zone and reference line from the best runs', () => {
+  const course = bundledCourse('cfd_calmont_2023', 'Calmont');
+  const r = new TelemetryRecorder({ getCourse: () => course });
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  let t = 0;
+  for (const f of calmontFrames(course)) r.feed(f, (t += 60));
+  const res = scoreDrift(laps[0].samples, course);
+  assert.strictEqual(res.zones.length, course.clips.length);
+  assert.ok(res.zones.every((z) => z.score > 0 && z.score <= 100 && z.clip === true));
+  assert.ok(res.clips.filter((c) => c.cover !== undefined).every((c) => c.cover > 50), 'long zones mostly covered on the line');
+
+  const { lineFromRuns } = require('../src/main/telemetry/reference');
+  const shift = (lap, dx, score) => ({ ...lap, driver: { name: `P${dx}` }, drift: { score, modes: { normal: { score } } }, samples: lap.samples.map((s) => { const c = [...s]; c[9] += dx; return c; }) });
+  const out = lineFromRuns([shift(laps[0], 1, 80), shift(laps[0], -1, 80), shift(laps[0], 5, 0)], course);
+  assert.strictEqual(out.runs.length, 2, 'runs without a note are left out');
+  const t2 = new LineTracker(course.refLine);
+  const offs = out.line.slice(10, -10).map(([x, z]) => t2.locate(x, z).dist);
+  assert.ok(Math.max(...offs) < 1.2, 'average of the two runs: back on their middle');
+  assert.strictEqual(lineFromRuns([], course), null);
+});

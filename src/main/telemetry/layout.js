@@ -135,4 +135,56 @@ function slipAngle(p) {
   return a;
 }
 
-module.exports = { PHYSICS, GRAPHICS, STATIC, PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE, parsePhysics, parseGraphics, parseStatic, encode, driftAngle, slipAngle };
+/**
+ * The car's heading in the x/z plane. The shared memory gives an angle whose
+ * axes differ between game versions: the eight possible readings are tried
+ * against the direction the car moves (velocity, turned by the slip angle),
+ * and the one that fits best over many frames is kept (see YawFit).
+ */
+const YAW_READINGS = [
+  (h) => [Math.sin(h), Math.cos(h)],
+  (h) => [-Math.sin(h), Math.cos(h)],
+  (h) => [Math.sin(h), -Math.cos(h)],
+  (h) => [-Math.sin(h), -Math.cos(h)],
+  (h) => [Math.cos(h), Math.sin(h)],
+  (h) => [Math.cos(h), -Math.sin(h)],
+  (h) => [-Math.cos(h), Math.sin(h)],
+  (h) => [-Math.cos(h), -Math.sin(h)],
+];
+
+class YawFit {
+  constructor() {
+    this.err = new Array(YAW_READINGS.length).fill(0);
+    this.frames = 0;
+    this.best = 0;
+  }
+
+  /** Learn from a frame (moving cars only). */
+  feed(p) {
+    if (this.frames >= 2000 || !(p.speedKmh > 20) || !Number.isFinite(p.heading)) return;
+    const [vx, , vz] = p.velocity || [0, 0, 0];
+    const v = Math.hypot(vx, vz);
+    if (v < 3) return;
+    const slip = Math.abs(slipAngle(p)) * (Math.PI / 180);
+    YAW_READINGS.forEach((f, i) => {
+      const [fx, fz] = f(p.heading);
+      const ang = Math.acos(Math.max(-1, Math.min(1, (fx * vx + fz * vz) / v)));
+      this.err[i] += Math.abs(ang - slip);
+    });
+    this.frames++;
+    if (this.frames % 20 === 0) this.best = this.err.indexOf(Math.min(...this.err));
+  }
+
+  get ready() {
+    return this.frames >= 40;
+  }
+
+  /** Heading as an angle: forward = (sin yaw, cos yaw). null until learnt. */
+  yaw(p) {
+    if (!this.ready || !Number.isFinite(p.heading)) return null;
+    const [fx, fz] = YAW_READINGS[this.best](p.heading);
+    return Math.atan2(fx, fz);
+  }
+}
+
+module.exports = { PHYSICS, GRAPHICS, STATIC, PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE, parsePhysics, parseGraphics, parseStatic, encode, driftAngle, slipAngle, YawFit };
