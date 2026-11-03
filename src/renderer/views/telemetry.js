@@ -312,7 +312,7 @@ export default function telemetryView(root, params = {}) {
 
   function renderTabs() {
     clear(tabsEl);
-    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat']];
+    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat'], ['profile', 'Profil']];
     if (isAdmin()) tabs.push(['course', 'Parcours drift']);
     tabs.push(['tools', 'Outils']);
     if (!tabs.some(([k]) => k === tab)) tab = 'live';
@@ -327,7 +327,7 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
@@ -412,6 +412,32 @@ export default function telemetryView(root, params = {}) {
       offLive();
       offReset();
     };
+  }
+
+  // ------------------------------------------------------------ profile
+  async function renderProfile() {
+    const p = await guard(() => api.call('telemetry:profile'));
+    if (!p) return;
+    const stat = (label, value) => h('div.live-tile', h('div.label', label), h('div.live-v', String(value)));
+    body.append(
+      h('div.live-grid',
+        stat('Runs solo', p.runs), stat('Tandems', p.tandems), stat('Minutes en glisse', p.driftMinutes),
+        stat('Battles', `${p.battles.won} V · ${p.battles.lost} D${p.battles.omt ? ` · ${p.battles.omt} OMT` : ''}`)),
+    );
+    // progression: best solo note per week
+    const max = Math.max(100, ...p.weeks.map((w) => w.best));
+    body.append(h('div.panel.mt', h('h3', 'Progression (meilleure note de la semaine, mode Normal)'),
+      h('div.profile-weeks', p.weeks.map((w) => h('div.profile-week', { title: `${dateFr(w.from)} : ${w.best ? `${w.best}/100` : 'pas de run notée'} · ${w.runs} run(s)` },
+        h('div.bar', { style: { height: `${Math.round((w.best / max) * 100)}%` } }), h('span.s', w.best ? String(Math.round(w.best)) : '·')))),
+      h('div.hint', '12 dernières semaines, de la plus ancienne à la plus récente.')));
+    // records per track
+    const tracks = h('div.list');
+    if (!p.tracks.length) tracks.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de run enregistrée.'));
+    for (const t of p.tracks) tracks.append(h('div.list-row.profile-row', h('div', h('div.t', t.name), h('div.s', `${t.runs} run(s)${t.bestCar ? ` · meilleure en ${t.bestCar}` : ''}${t.bestDate ? ` le ${dateFr(t.bestDate)}` : ''}`)), h('strong', t.best ? `${t.best.toFixed(1)}/100` : '—'), h('span.s', t.bestTandem ? `tandem ${t.bestTandem.toFixed(1)}` : '')));
+    const battles = h('div.list');
+    if (!p.battles.last.length) battles.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de battle.'));
+    for (const b of p.battles.last) battles.append(h('div.list-row.profile-row', h('div', h('div.t', `contre ${b.against}`), h('div.s', `${b.track} · ${dateFr(b.date)}`)), h(`span.tag.${b.result === 'won' ? 'ok' : b.result === 'lost' ? 'bad' : 'plain'}`, b.result === 'won' ? 'Gagnée' : b.result === 'lost' ? 'Perdue' : 'One more time'), h('span.s', b.score)));
+    body.append(h('div.grid.grid-2.mt', h('div.panel', h('h3', 'Mes records par circuit'), tracks), h('div.panel', h('h3', 'Mes dernières battles'), battles)));
   }
 
   // ------------------------------------------------------------ laps

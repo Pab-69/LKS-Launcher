@@ -11,7 +11,7 @@ const { readBrandingFolder } = require('./branding');
 const crypto = require('crypto');
 
 const MANIFEST_NAME = 'manifest.json';
-const META_KEYS = ['servers', 'news', 'name', 'motd', 'csp', 'showcase', 'donate', 'shop', 'events', 'soloPresets', 'discord', 'vpn', 'leaderboard', 'drift', 'championships', 'allowAllContent'];
+const META_KEYS = ['servers', 'news', 'name', 'motd', 'csp', 'showcase', 'donate', 'shop', 'events', 'soloPresets', 'discord', 'vpn', 'leaderboard', 'drift', 'championships', 'allowAllContent', 'proposals'];
 const META_LABELS = {
   servers: 'Serveurs mis à jour',
   news: 'Actus mises à jour',
@@ -23,7 +23,7 @@ const META_LABELS = {
   soloPresets: 'Sessions solo modifiées',
   discord: 'Réglages Discord modifiés',
   vpn: 'VPN modifié',
-  leaderboard: 'Classement configuré', drift: 'Parcours de drift modifié', championships: 'Championnat modifié', allowAllContent: 'Contenu autorisé modifié',
+  leaderboard: 'Classement configuré', drift: 'Parcours de drift modifié', championships: 'Championnat modifié', allowAllContent: 'Contenu autorisé modifié', proposals: 'Proposition de membre traitée',
 };
 const SETUP_EXT = /\.(ini|sp)$/i;
 const plural = (kind) => (kind === 'car' ? 'cars' : 'tracks');

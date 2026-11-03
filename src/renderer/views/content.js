@@ -1,5 +1,6 @@
 import { api, h, clear, icon, bytes, guard, dateFr, img, localImg, seg, STATUS_LABEL, confirmBox } from '../ui.js';
 import { store, subscribe, loadContent } from '../store.js';
+import { renderProposals } from './proposals.js';
 
 let tab = 'car';
 let filter = 'all';
@@ -23,10 +24,11 @@ export default function content(root) {
     ),
     head,
     h('div.toolbar',
-      seg([['car', 'Voitures'], ['track', 'Circuits']], tab, (v) => { tab = v; render(); }),
-      seg([['all', 'Tout'], ['pending', 'À mettre à jour'], ['ok', 'À jour']], filter, (v) => { filter = v; render(); }),
-      h('div.search', icon('search'), searchInput),
-      h('button.btn.btn-ghost.btn-sm.right', { on: { click: () => api.call('shell:open', tab === 'car' ? 'cars' : 'tracks') } }, icon('folder'), 'Ouvrir le dossier'),
+      seg([['car', 'Voitures'], ['track', 'Circuits'], ['proposals', 'Propositions']], tab, (v) => { tab = v; render(); }),
+      h('div.content-filters', { style: { display: 'contents' } },
+        seg([['all', 'Tout'], ['pending', 'À mettre à jour'], ['ok', 'À jour']], filter, (v) => { filter = v; render(); }),
+        h('div.search', icon('search'), searchInput),
+        h('button.btn.btn-ghost.btn-sm.right', { on: { click: () => api.call('shell:open', tab === 'car' ? 'cars' : 'tracks') } }, icon('folder'), 'Ouvrir le dossier')),
     ),
     grid,
   );
@@ -54,7 +56,16 @@ export default function content(root) {
     if (s && s.manifestError) head.append(h('div.notice', s.manifestError));
     if (s && !store.settings.acRoot) head.append(h('div.notice.bad', "Configurez le dossier d'Assetto Corsa dans les Paramètres pour installer le contenu."));
 
+    for (const el of root.querySelectorAll('.content-filters > *')) el.hidden = tab === 'proposals';
+    // the proposals form keeps what is being typed: not redrawn on content updates
+    if (tab === 'proposals' && grid.dataset.view === 'proposals') return;
     clear(grid);
+    grid.className = tab === 'proposals' ? '' : 'cards';
+    grid.dataset.view = tab === 'proposals' ? 'proposals' : '';
+    if (tab === 'proposals') {
+      renderProposals(grid);
+      return;
+    }
     const q = query.trim().toLowerCase();
     const list = items
       .filter((i) => i.kind === tab)

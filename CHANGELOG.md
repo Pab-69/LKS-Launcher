@@ -1,5 +1,17 @@
 # Journal des versions
 
+## 1.14.0
+
+- **Propose ta voiture, ta livrée ou tes setups** : Contenu → Propositions. Tu choisis ce que tu proposes et le launcher envoie le dossier (50 Mo maximum, sinon tu colles un lien Drive, Mega ou Discord). Tu vois la réponse des admins dans la même page.
+- **Admins : accepter ou refuser** dans la même page. « Tester » installe la proposition sur ton PC pour l'essayer en jeu. « Accepter » la publie pour tout le groupe. « Refuser » demande une raison que le membre verra.
+- **En ligne maintenant** sur l'Accueil : qui a le launcher ouvert, qui roule et sur quel serveur, qui héberge. Le bouton « Rejoindre » t'emmène directement sur son serveur. Tu peux te cacher dans Paramètres.
+- **Soirées** : les admins choisissent le circuit et les voitures. L'Accueil les affiche avec un bouton « Préparer », et tout s'installe tout seul 1 h avant.
+- **Discord** : les admins collent deux webhooks (Publication → Discord).
+  - Salon des annonces : les nouvelles soirées, les records, les battles et les propositions y sont postés automatiquement. Chacun peut couper l'annonce de ses records et battles dans Paramètres.
+  - Salon des admins : quand le jeu plante, le bouton « Envoyer aux admins » y envoie le rapport.
+- **Profil** dans Télémétrie : tes runs, tes minutes en glisse, ta progression semaine par semaine, tes records par circuit et tes dernières battles.
+- **Admins : relancez le script du classement dans Supabase** (Publication → Classement → Copier le script) pour activer les propositions et « En ligne maintenant ».
+
 ## 1.13.0
 
 - **Clips jugés comme en compétition** : une corde se prend avec l'**avant** de la voiture, une zone extérieure avec l'**arrière**. Le launcher apprend tout seul l'orientation de la voiture dans le jeu. Les anciens tours restent jugés avec le centre de la voiture.

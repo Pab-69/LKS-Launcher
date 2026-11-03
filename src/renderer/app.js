@@ -267,6 +267,7 @@ function showCrash(c) {
     ],
     foot: [
       ...actions,
+      c.canSend ? h('button.btn', { on: { click: async (e) => { e.target.disabled = true; if (!(await guard(() => api.call('game:sendReport'), 'Rapport envoyé aux admins sur Discord'))) e.target.disabled = false; } } }, 'Envoyer aux admins') : null,
       h('button.btn', { on: { click: async () => { await api.call('clipboard:write', c.report); toast('Rapport copié : colle-le sur le Discord', 'success'); } } }, 'Copier le rapport'),
       h('button.btn.btn-ghost', { on: { click: () => api.call('shell:open', 'logs') } }, 'Ouvrir les journaux'),
     ],

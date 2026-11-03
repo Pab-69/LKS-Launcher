@@ -12,6 +12,9 @@ const { ContentSync } = require('./sync');
 const { buildSoloRaceIni, buildOnlineRaceIni, buildAssistsIni, GameLauncher } = require('./launch');
 const { getServerInfo, getServerCars, resolveTrack } = require('./servers');
 const { HostList, newHostId, bestAddress } = require('./hostList');
+const { Community, decisionOf, MAX_UPLOAD } = require('./community');
+const { zipFolder, extractZip } = require('./zip');
+const { Webhooks } = require('./webhook');
 const { GitHub } = require('./github');
 const { Publisher, isOfficial } = require('./publisher');
 const { listFiles, hashFolder } = require('./hash');
@@ -264,12 +267,25 @@ function configurePresence() {
 
 // ---------------------------------------------------------------- events: reminders before a session
 function checkEvents() {
-  if (settings.data.eventNotifications === false || !Notification.isSupported()) return;
+  const notify = settings.data.eventNotifications !== false && Notification.isSupported();
   const now = Date.now();
   for (const ev of sync.manifest.events || []) {
     const start = Date.parse(ev.date);
     if (!start || !ev.id) continue;
     const minutes = Math.round((start - now) / 60000);
+    // one hour before: install the event's track and cars if some are missing
+    const key60 = `${ev.id}:60`;
+    if (minutes <= 60 && minutes > 0 && !notifiedEvents.has(key60) && acRoot() && !game.running && settings.data.autoSync !== false) {
+      notifiedEvents.add(key60);
+      const targets = [...(ev.track ? [{ kind: 'track', id: ev.track }] : []), ...(ev.cars || []).map((id) => ({ kind: 'car', id }))].filter((t) => sync.findItem(t.kind, t.id));
+      if (targets.length) {
+        try {
+          sync.enqueue(targets);
+        } catch (err) {
+          applog.log('event prepare', err.message);
+        }
+      }
+    }
     const key15 = `${ev.id}:15`;
     const key0 = `${ev.id}:0`;
     let body = null;
@@ -281,7 +297,7 @@ function checkEvents() {
       notifiedEvents.add(key15);
       body = "C'est parti ! Clique pour rejoindre.";
     }
-    if (!body) continue;
+    if (!body || !notify) continue;
     const n = new Notification({ title: `${ev.title || 'Event LKS'}`, body, icon: branding.file('icon.png') || path.join(__dirname, '..', '..', 'assets', 'icon.png') });
     n.on('click', () => {
       if (win) {
@@ -315,6 +331,167 @@ function hostList() {
   } catch {
     return null;
   }
+}
+
+/** Readable names (installed content first, then the group's manifest). */
+function carLabel(id) {
+  const c = (contentCache && contentCache.cars.find((x) => x.id === id)) || ((sync && sync.manifest && sync.manifest.cars) || []).find((x) => x.id === id);
+  return (c && c.name) || id;
+}
+function trackLabel(id, layout) {
+  const t = (contentCache && contentCache.tracks.find((x) => x.id === id)) || ((sync && sync.manifest && sync.manifest.tracks) || []).find((x) => x.id === id);
+  const l = t && (t.layouts || []).find((x) => x.id === (layout || ''));
+  const name = (t && t.name) || id;
+  if (!l || !l.name || l.name === name) return name;
+  return l.name.startsWith(name) ? l.name : `${name} — ${l.name}`;
+}
+
+// ---------------------------------------------------------------- Discord channels (webhooks set by the admins)
+const webhooks = new Webhooks({ fetchImpl: (...a) => net.fetch(...a), getConfig: () => (sync && sync.manifest && sync.manifest.discord) || null });
+function discordPost(channel, text, file) {
+  return webhooks.post(channel, text, file).catch((err) => {
+    console.warn('[discord]', err.message);
+    return false;
+  });
+}
+
+// ---------------------------------------------------------------- community (proposals, presence)
+function community() {
+  const cfg = sync.manifest && sync.manifest.leaderboard;
+  if (!cfg || !cfg.url || !cfg.anonKey) return null;
+  try {
+    return new Community(cfg);
+  } catch {
+    return null;
+  }
+}
+
+const validId = (v) => typeof v === 'string' && /^[\w.-]{1,80}$/.test(v);
+const validSkin = (v) => typeof v === 'string' && /^[\w. -]{1,80}$/.test(v) && !v.includes('..');
+
+/** Folder (and zip name) of what a member proposes. */
+function proposalSource({ kind, car, skin, track }) {
+  if (!validId(car)) throw new Error('Voiture invalide');
+  if (kind === 'car') return path.join(acRoot(), 'content', 'cars', car);
+  if (kind === 'skin') {
+    if (!validSkin(skin)) throw new Error('Livrée invalide');
+    return path.join(acRoot(), 'content', 'cars', car, 'skins', skin);
+  }
+  if (kind === 'setup') {
+    if (track && !validId(track)) throw new Error('Circuit invalide');
+    return path.join(docsDir(), 'setups', car, ...(track ? [track] : []));
+  }
+  throw new Error('Type de proposition inconnu');
+}
+
+/** Zip a proposal into a Buffer (setups: only the member's own files, not the group's LKS_ ones). */
+async function zipProposal(p) {
+  const src = proposalSource(p);
+  if (!fs.existsSync(src)) throw new Error('Dossier introuvable sur ce PC');
+  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'lks-prop-'));
+  try {
+    let folder = src;
+    if (p.kind === 'setup') {
+      folder = path.join(tmp, 'setups');
+      const walk = (dir, rel) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const r = rel ? `${rel}/${e.name}` : e.name;
+          if (e.isDirectory()) walk(path.join(dir, e.name), r);
+          else if (/\.(ini|sp)$/i.test(e.name) && !e.name.toUpperCase().startsWith('LKS_')) {
+            fs.mkdirSync(path.dirname(path.join(folder, ...r.split('/'))), { recursive: true });
+            fs.copyFileSync(path.join(dir, e.name), path.join(folder, ...r.split('/')));
+          }
+        }
+      };
+      walk(src, p.track || '');
+      if (!fs.existsSync(folder)) throw new Error('Aucun setup à toi pour cette voiture');
+    }
+    const out = path.join(tmp, 'proposal.zip');
+    await zipFolder(folder, out);
+    return fs.readFileSync(out);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Where an accepted proposal is installed on the admin's PC (to test it, then publish it). */
+function proposalTarget(p) {
+  if (p.kind === 'car') return path.join(acRoot(), 'content', 'cars', p.car);
+  if (p.kind === 'skin') return path.join(acRoot(), 'content', 'cars', p.car, 'skins', p.skin);
+  return path.join(docsDir(), 'setups', p.car);
+}
+
+async function installProposal(p) {
+  if (!p.direct) throw new Error('Proposition par lien : télécharge-la depuis le lien et installe-la à la main');
+  if (!validId(p.car) || (p.kind === 'skin' && !validSkin(p.skin)) || (p.track && !validId(p.track))) throw new Error('Proposition invalide');
+  const target = proposalTarget(p);
+  if (p.kind !== 'setup' && fs.existsSync(target)) throw new Error(`${p.kind === 'car' ? 'Une voiture' : 'Une livrée'} du même nom existe déjà sur ce PC (${path.basename(target)})`);
+  if (p.kind === 'skin' && !fs.existsSync(path.join(acRoot(), 'content', 'cars', p.car))) throw new Error('La voiture de cette livrée n’est pas installée');
+  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'lks-prop-'));
+  try {
+    const res = await net.fetch(p.download);
+    if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+    const zipFile = path.join(tmp, 'p.zip');
+    fs.writeFileSync(zipFile, Buffer.from(await res.arrayBuffer()));
+    if (p.kind === 'setup') {
+      // the member's setups, renamed with their name so nothing of the admin's is overwritten
+      const out = path.join(tmp, 'x');
+      await extractZip(zipFile, out);
+      const tag = String(p.author || 'membre').replace(/[^\w-]/g, '').slice(0, 20) || 'membre';
+      const walk = (dir, rel) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const r = [...rel, e.name];
+          if (e.isDirectory()) walk(path.join(dir, e.name), r);
+          else if (/\.(ini|sp)$/i.test(e.name)) {
+            const dest = path.join(target, ...rel, `${tag}_${e.name}`);
+            fs.mkdirSync(path.dirname(dest), { recursive: true });
+            fs.copyFileSync(path.join(dir, e.name), dest);
+          }
+        }
+      };
+      walk(out, []);
+    } else await extractZip(zipFile, target);
+    contentCache = null;
+    return target;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------- who is online (every minute)
+let currentServer = null; // server joined from the launcher: { name, ip, port, httpPort }
+let presenceTimer = null;
+function presenceIdentity() {
+  if (!settings.data.presenceId || !settings.data.presenceSecret) {
+    const crypto = require('crypto');
+    settings.update({ presenceId: `p${crypto.randomBytes(8).toString('hex')}`, presenceSecret: crypto.randomBytes(24).toString('hex') });
+  }
+  return { id: settings.data.presenceId, secret: settings.data.presenceSecret };
+}
+
+function presenceNow() {
+  const l = lastLaunch || {};
+  if (game.running && l.kind === 'online') return { state: 'online', server: currentServer, car: l.car, track: l.track, layout: l.layout };
+  if (game.running) return { state: 'solo', car: l.car, track: l.track, layout: l.layout };
+  if (hostState && host.running) return { state: 'hosting', server: hostAd ? { name: hostState.name, hostId: hostAd.id } : null, track: hostState.trackId, layout: hostState.layoutId };
+  return { state: 'launcher' };
+}
+
+async function updatePresence() {
+  const c = community();
+  if (!c) return;
+  const me = presenceIdentity();
+  if (settings.data.showOnline === false) {
+    await c.removePresence(me.id, me.secret).catch(() => {});
+    return;
+  }
+  await c.setPresence({ ...me, name: settings.data.driverName || 'Pilote', ...presenceNow() }).catch((err) => applog.log('presence', err.message));
+}
+
+function startPresence() {
+  clearInterval(presenceTimer);
+  updatePresence();
+  presenceTimer = setInterval(updatePresence, 60000);
 }
 
 function announceHost() {
@@ -788,6 +965,10 @@ function setupTelemetry() {
     if (me && res.drivers.some((d) => d.name.trim().toLowerCase() === me)) text = `Battle contre ${other.name} : ${res.omt ? 'one more time !' : res.winner.trim().toLowerCase() === me ? 'gagnée' : 'perdue'} (${res.drivers.map((d) => d.total).join(' – ')})`;
     send('toast', { kind: res.omt ? 'info' : 'success', text });
     send('telemetry:lap', null);
+    // posted once, by the launcher of the battle's first driver
+    if (settings.data.discordShare !== false && (settings.data.driverName || '').trim().toLowerCase() === String(res.drivers[0].name).trim().toLowerCase()) {
+      discordPost('news', `⚔️ Battle ${res.drivers[0].name} – ${res.drivers[1].name} sur ${trackLabel(b.track, b.layout)} : ${res.omt ? '**one more time**' : `**${res.winner}** gagne`} (${res.drivers.map((d) => d.total).join(' – ')})`);
+    }
     // battle launched in game: the app shows the result
     if (b.tag && acRoot()) {
       try {
@@ -803,6 +984,13 @@ function setupTelemetry() {
   telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
     send('telemetry:lap', lap);
     writeScoreForGame(lap, pbDrift, pbTandem);
+    // the driver's new record (normal mode), on the group's channel
+    const me = (settings.data.steamId || '') === ((lap.driver && lap.driver.steamId) || '');
+    if (me && settings.data.discordShare !== false) {
+      const where = `${carLabel(lap.car)} @ ${trackLabel(lap.track, lap.layout)}`;
+      if (pbDrift && pbDrift.includes('normal')) discordPost('news', `🏁 **${lap.driver.name}** : record de drift **${lap.drift.modes ? lap.drift.modes.normal.score : lap.drift.score}/100** — ${where}`);
+      else if (pbTandem && pbTandem.includes('normal')) discordPost('news', `🤝 **${lap.driver.name}** : record de tandem **${(lap.tandem.modes || {}).normal ? lap.tandem.modes.normal.score : lap.tandem.score}/100** derrière ${lap.tandem.lead && lap.tandem.lead.name} — ${where}`);
+    }
     const label = (modes) => (modes.includes('normal') ? '' : ` (${MODE_LABELS[modes[0]]})`);
     if (pbTandem && pbTandem.length) send('toast', { kind: 'success', text: `Record de tandem : ${(lap.tandem.modes[pbTandem.includes('normal') ? 'normal' : pbTandem[0]] || {}).score}/100${label(pbTandem)}` });
     else if (pbDrift && pbDrift.length) send('toast', { kind: 'success', text: `Record de drift : ${(lap.drift.modes[pbDrift.includes('normal') ? 'normal' : pbDrift[0]] || {}).score}/100${label(pbDrift)}` });
@@ -924,6 +1112,7 @@ function setupSync_() {
 
 function setupGame() {
   game.on('started', () => {
+    setTimeout(updatePresence, 2000);
     for (const id of Object.keys(settings.data.tools || {})) {
       if (settings.data.tools[id] && telemetryTools.findTool(id)) {
         try {
@@ -938,13 +1127,14 @@ function setupGame() {
     if (settings.data.closeOnLaunch && win) win.minimize();
   });
   game.on('exited', (info) => {
+    setTimeout(updatePresence, 1000);
     applog.log('game exited', { code: info.code, durationMs: info.durationMs, error: info.error, launch: lastLaunch });
     if (telemetry) telemetry.source.detach();
     send('game:state', { running: false, ...info });
     if (!info.error && crashlog.looksLikeCrash(info)) {
       try {
         lastCrash = { ...crashlog.diagnose({ ...info, launch: lastLaunch, version: app.getVersion(), docsDir: docsDir(), launcherLog: applog.tail(20), cspEnabled: Boolean(csp.status().enabled) }), launch: lastLaunch, at: new Date().toISOString(), canRestore: graphics.hasBackup(docsDir()) };
-        send('game:crash', lastCrash);
+        send('game:crash', { ...lastCrash, canSend: webhooks.configured('reports') });
       } catch (err) {
         console.warn('[crash]', err.message);
       }
@@ -1246,6 +1436,7 @@ function setupIpc() {
     if (beforeUrl !== settings.data.manifestUrl || before !== settings.data.acRoot) refreshManifest({ autoSync: true }).catch(() => {});
     else send('sync:changed', sync.summary());
     configurePresence();
+    if (patch && 'showOnline' in patch) updatePresence();
     return out;
   });
   handle('settings:detect', async () => {
@@ -1296,7 +1487,16 @@ function setupIpc() {
 
   // Game
   handle('game:status', () => ({ running: game.running }));
-  handle('game:lastCrash', () => lastCrash);
+  handle('game:lastCrash', () => (lastCrash ? { ...lastCrash, canSend: webhooks.configured('reports') } : null));
+  handle('game:sendReport', async () => {
+    if (!lastCrash) throw new Error('Pas de rapport');
+    if (!webhooks.configured('reports')) throw new Error('Les admins n’ont pas encore réglé le salon des rapports');
+    const who = settings.data.driverName || 'Un membre';
+    const l = lastCrash.launch || {};
+    const ok = await webhooks.post('reports', `💥 Plantage chez **${who}** (launcher ${app.getVersion()}) — ${l.car ? carLabel(l.car) : '?'} @ ${l.track ? trackLabel(l.track, l.layout) : '?'}\n${(lastCrash.hints || []).map((x) => `• ${x.text}`).join('\n').slice(0, 1200)}`, { name: 'rapport.txt', content: lastCrash.report });
+    if (!ok) throw new Error('Envoi impossible');
+    return true;
+  });
   handle('app:graphicsSafe', (on) => {
     if (typeof on === 'boolean') applog.setGraphicsSafe(app.getPath('userData'), on);
     return applog.graphicsSafe(app.getPath('userData'));
@@ -1352,7 +1552,9 @@ function setupIpc() {
     const carInfo = content.cars.find((c) => c.id === opts.car);
     const trackInfo = content.tracks.find((t) => t.id === track);
     game.presence = { details: `En ligne — ${opts.serverName || 'serveur LKS'}`, state: `${carInfo ? carInfo.name : opts.car} @ ${trackInfo ? trackInfo.name : track}` };
+    currentServer = { name: opts.serverName || '', ip: opts.ip, port: opts.tcpPort, httpPort: opts.httpPort };
     startGame({ kind: 'online', mode: opts.serverName || '', car: opts.car, track, layout });
+    setTimeout(updatePresence, 3000);
     return true;
   });
 
@@ -1664,6 +1866,58 @@ function setupIpc() {
     if (!status.installed || !status.upToDate) ingame.installIngame(acRoot(), allDriftCourses()); // the ghost needs the app 1.4
     return ghosts.writeGhost(ingame.appDir(acRoot()), lap);
   });
+  // the driver's profile: runs, records per track, battles, progression week by week
+  handle('telemetry:profile', () => {
+    const me = settings.data.steamId || '';
+    const myName = (settings.data.driverName || '').trim().toLowerCase();
+    const own = telemetry.store.list({}).filter((l) => !l.imported && ((l.driver.steamId || '') === me || (!me && (l.driver.name || '').trim().toLowerCase() === myName)));
+    const score = (l, kind) => {
+      const r = driftOf(l, 'normal', kind);
+      return r && r.score > 0 ? r.score : 0;
+    };
+    const tracks = new Map();
+    let driftSeconds = 0;
+    for (const l of own) {
+      const key = `${l.track}|${l.layout || ''}`;
+      const t = tracks.get(key) || { track: l.track, layout: l.layout || '', name: trackLabel(l.track, l.layout), runs: 0, best: 0, bestCar: '', bestDate: null, bestTandem: 0 };
+      t.runs++;
+      const sd = l.tandem ? 0 : score(l, 'drift');
+      if (sd > t.best) Object.assign(t, { best: sd, bestCar: carLabel(l.car), bestDate: l.date });
+      if (l.tandem) t.bestTandem = Math.max(t.bestTandem, score(l, 'tandem'));
+      tracks.set(key, t);
+      const d = driftOf(l, 'normal', 'drift');
+      if (d && d.driftTime) driftSeconds += d.driftTime;
+    }
+    // best solo score per week, last 12 weeks
+    const week = 7 * 86400000;
+    const now = Date.now();
+    const weeks = Array.from({ length: 12 }, (_, i) => ({ from: now - (12 - i) * week, best: 0, runs: 0 }));
+    for (const l of own) {
+      const t = Date.parse(l.date);
+      const w = weeks.find((x) => t >= x.from && t < x.from + week);
+      if (!w) continue;
+      w.runs++;
+      if (!l.tandem) w.best = Math.max(w.best, score(l, 'drift'));
+    }
+    const battles = telemetry.battles.items
+      .map((b) => ({ b, r: b.modes && b.modes.normal }))
+      .filter(({ r }) => r && r.drivers && r.drivers.some((d) => d.name.trim().toLowerCase() === myName))
+      .map(({ b, r }) => {
+        const other = r.drivers.find((d) => d.name.trim().toLowerCase() !== myName) || {};
+        const won = !r.omt && String(r.winner || '').trim().toLowerCase() === myName;
+        return { date: b.date, track: trackLabel(b.track, b.layout), against: other.name || '?', result: r.omt ? 'omt' : won ? 'won' : 'lost', score: r.drivers.map((d) => d.total).join(' – ') };
+      })
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    return {
+      name: settings.data.driverName || 'Pilote',
+      runs: own.filter((l) => !l.tandem).length,
+      tandems: own.filter((l) => l.tandem).length,
+      driftMinutes: Math.round(driftSeconds / 60),
+      tracks: [...tracks.values()].sort((a, b) => b.best - a.best),
+      weeks: weeks.map((w) => ({ from: new Date(w.from).toISOString(), best: w.best, runs: w.runs })),
+      battles: { won: battles.filter((x) => x.result === 'won').length, lost: battles.filter((x) => x.result === 'lost').length, omt: battles.filter((x) => x.result === 'omt').length, last: battles.slice(0, 8) },
+    };
+  });
   handle('battles:list', async ({ track, layout = '', mode = 'normal' }) => {
     const version = courseVersion(driftCourse({ track, layout }), mode);
     const view = (b) => ({ ...b, result: b.modes[mode] || null });
@@ -1811,6 +2065,82 @@ function setupIpc() {
       return true;
     }),
   );
+  handle('community:online', async () => {
+    const c = community();
+    if (!c) return { configured: false, people: [] };
+    const myId = settings.data.presenceId;
+    const people = (await c.presence()).filter((p) => p.id !== myId).map((p) => ({ ...p, carName: p.car ? carLabel(p.car) : '', trackName: p.track ? trackLabel(p.track, p.layout) : '' }));
+    return { configured: true, people };
+  });
+
+  // ------------------------------------------------------------ proposals (members → admins)
+  handle('proposals:sources', () => {
+    const content = scanContent(false);
+    const groupCars = new Set(((sync.manifest && sync.manifest.cars) || []).map((c) => c.id));
+    return {
+      cars: content.cars.filter((c) => !groupCars.has(c.id)).map((c) => ({ id: c.id, name: c.name })),
+      skins: content.cars.filter((c) => groupCars.has(c.id)).map((c) => ({ car: c.id, name: c.name, skins: (c.skins || []).map((k) => ({ id: k.id, name: k.name || k.id })) })),
+      setups: localSetupCars(docsDir()).map((c) => ({ ...c, name: (content.cars.find((x) => x.id === c.car) || {}).name || c.car })),
+      configured: Boolean(community()),
+      maxUpload: MAX_UPLOAD,
+    };
+  });
+  handle('proposals:list', async () => {
+    const c = community();
+    if (!c) return { configured: false, items: [] };
+    const mine = new Set(settings.data.myProposals || []);
+    const items = (await c.proposals()).map((p) => ({ ...p, decision: decisionOf(sync.manifest, p.id), mine: mine.has(p.id) }));
+    return { configured: true, items };
+  });
+  handle('proposals:submit', async (p) => {
+    const c = community();
+    if (!c) throw new Error('Les propositions ne sont pas encore activées par les admins (classement Supabase)');
+    if (!['car', 'skin', 'setup'].includes(p.kind)) throw new Error('Type de proposition inconnu');
+    let zip = null;
+    if (!p.link) {
+      zip = await zipProposal(p);
+      if (zip.length > MAX_UPLOAD) throw new Error(`Trop gros pour l’envoi direct (${Math.round(zip.length / 1048576)} Mo, 50 Mo max) : mets-le sur Google Drive, Mega ou Discord et colle le lien`);
+    }
+    const id = await c.propose({ ...p, zip, author: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' });
+    settings.update({ myProposals: [...(settings.data.myProposals || []), id].slice(-100) });
+    discordPost('news', `📦 **${settings.data.driverName || 'Un membre'}** propose ${p.kind === 'car' ? 'une voiture' : p.kind === 'skin' ? 'une livrée' : 'des setups'} : **${String(p.title || p.car).slice(0, 80)}**`);
+    return id;
+  });
+  handle('admin:proposalInstall', (id) =>
+    withAdmin(async () => {
+      const c = community();
+      const p = c && (await c.proposals()).find((x) => x.id === id);
+      if (!p) throw new Error('Proposition introuvable');
+      return installProposal(p);
+    }),
+  );
+  handle('admin:proposalDecide', ({ id, status, note, publish }) =>
+    withAdmin(async () => {
+      if (!['accepted', 'refused', 'pending'].includes(status)) throw new Error('Décision invalide');
+      const c = community();
+      const p = c && (await c.proposals()).find((x) => x.id === id);
+      if (!p) throw new Error('Proposition introuvable');
+      const pub = getPublisher();
+      if (!pub.manifest) await pub.open();
+      // accepted: publish what was installed from the proposal
+      let report = null;
+      if (status === 'accepted' && publish) {
+        if (p.kind === 'setup') report = await pub.publishSetups(docsDir(), [p.car], Object.fromEntries(scanContent(true).cars.map((x) => [x.id, x.name])));
+        else {
+          if (!fs.existsSync(path.join(acRoot(), 'content', 'cars', p.car))) throw new Error('Installe d’abord la proposition pour la tester');
+          await pub.open();
+          report = await pub.publishItems(acRoot(), [{ kind: 'car', id: p.car }], {});
+        }
+      }
+      const all = { ...(pub.manifest.proposals || {}) };
+      if (status === 'pending') delete all[id];
+      else all[id] = { status, note: String(note || '').slice(0, 300), by: settings.data.driverName || 'admin', at: new Date().toISOString() };
+      await pub.updateMeta({ proposals: all });
+      await refreshManifest({ autoSync: false });
+      if (status === 'accepted') discordPost('news', `✅ Proposition acceptée : **${p.title}** de ${p.author}${publish ? ' — dispo dans le launcher' : ''}`);
+      return { decision: all[id] || null, report };
+    }),
+  );
   // reference line from the group's best runs (local + shared leaderboard), one run per driver
   handle('admin:lineFromRuns', ({ track, layout = '' }) =>
     withAdmin(async () => {
@@ -1859,6 +2189,16 @@ function setupIpc() {
   handle('admin:updateMeta', (patch) =>
     withAdmin(async () => {
       const pub = getPublisher();
+      // new events: announced on the group's channel
+      if (patch && Array.isArray(patch.events)) {
+        if (!pub.manifest) await pub.open();
+        const known = new Set(((pub.manifest && pub.manifest.events) || []).map((e) => e.id));
+        for (const ev of patch.events.filter((e) => e.id && !known.has(e.id) && Date.parse(e.date) > Date.now())) {
+          const when = new Date(ev.date).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+          const what = [ev.track ? trackLabel(ev.track, ev.layout) : null, (ev.cars || []).length ? (ev.cars || []).map(carLabel).join(', ') : null].filter(Boolean).join(' · ');
+          setTimeout(() => discordPost('news', `📅 **${ev.title || 'Soirée LKS'}** — ${when}${what ? `\n${what}` : ''}${ev.description ? `\n${ev.description}` : ''}`), 2000);
+        }
+      }
       await pub.updateMeta(patch);
       await refreshManifest({ autoSync: false });
       return true;
@@ -1888,7 +2228,7 @@ app.whenReady().then(async () => {
   await firstRunDetection();
   computeWhatsNew();
   send('settings:changed', settings.public());
-  refreshManifest({ autoSync: true }).catch(() => {});
+  refreshManifest({ autoSync: true }).catch(() => {}).finally(startPresence);
   setupUpdater();
 });
 
@@ -1899,4 +2239,6 @@ app.on('before-quit', () => {
   if (host.running) host.stop();
   closePorts();
   stopAnnounce();
+  const c = community();
+  if (c && settings.data.presenceId) c.removePresence(settings.data.presenceId, settings.data.presenceSecret).catch(() => {});
 });

@@ -30,6 +30,8 @@ export default function servers(root, params, { go }) {
 
   async function load() {
     list = (await guard(() => api.call('servers:list'))) || [];
+    // server of a friend (from « En ligne maintenant ») that is not in the list
+    if (params.server && params.select && !list.some((s) => s.key === params.select)) list.push({ ...params.server, key: params.select, source: 'custom' });
     if (!selected && list.length) selected = list[0].key;
     renderList();
     await refresh(false, false);
@@ -39,7 +41,10 @@ export default function servers(root, params, { go }) {
     if (reload) {
       // games hosted from the launcher come and go
       const fresh = await api.call('servers:list').catch(() => null);
-      if (fresh) list = fresh;
+      if (fresh) {
+        const extra = list.filter((s) => params.server && s.key === params.select && !fresh.some((f) => f.key === s.key));
+        list = [...fresh, ...extra];
+      }
     }
     await Promise.all(list.map(async (s) => {
       infos.set(s.key, await api.call('servers:info', s));

@@ -261,6 +261,9 @@ export default function admin(root) {
       const pad = (n) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
+    let group = { cars: [], tracks: [] }; // the group's content, for the event's track and cars
+    api.call('sync:manifest').then((m) => { if (m) { group = m; drawEvents(); } }).catch(() => {});
+    const trackOptions = () => [['', '— libre —'], ...(group.tracks || []).flatMap((t) => (t.layouts && t.layouts.length > 1 ? t.layouts.map((l) => [`${t.id}|${l.id}`, `${t.name} — ${l.name || l.id || 'principal'}`]) : [[`${t.id}|${(t.layouts && t.layouts[0] && t.layouts[0].id) || ''}`, t.name]]))];
     const drawEvents = () => {
       clear(eventList);
       events.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
@@ -272,6 +275,8 @@ export default function admin(root) {
             field('Date et heure', h('input.input', { type: 'datetime-local', value: toLocalInput(ev.date), on: { change: (e) => { ev.date = new Date(e.target.value).toISOString(); } } })),
             field('Serveur', h('select.input', { on: { change: (e) => { ev.server = e.target.value; } } }, serverOptions.map(([v, l]) => h('option', { value: v, selected: (ev.server || '') === v }, l)))),
             field('Durée (min)', h('input.input', { type: 'number', value: ev.durationMinutes || 120, on: { input: (e) => { ev.durationMinutes = Number(e.target.value); } } })),
+            field('Circuit', h('select.input', { on: { change: (e) => { const [t, l] = e.target.value.split('|'); ev.track = t || ''; ev.layout = l || ''; } } }, trackOptions().map(([v, l]) => h('option', { value: v, selected: `${ev.track || ''}|${ev.layout || ''}` === v || (!ev.track && !v) }, l)))),
+            field('Voitures imposées', h('div.event-cars', (group.cars || []).map((c) => h('label.row', h('input', { type: 'checkbox', checked: (ev.cars || []).includes(c.id), on: { change: (e) => { ev.cars = e.target.checked ? [...new Set([...(ev.cars || []), c.id])] : (ev.cars || []).filter((x) => x !== c.id); } } }), c.name)))),
           ),
           h('div.row.mt',
             field('Description', h('input.input', { value: ev.description || '', placeholder: 'voitures imposées, règles…', on: { input: (e) => { ev.description = e.target.value; } } })),
@@ -328,7 +333,7 @@ export default function admin(root) {
     })();
 
     // ---------- Discord
-    const discord = { clientId: '', inviteUrl: '', ...(data.manifest.discord || {}) };
+    const discord = { clientId: '', inviteUrl: '', webhook: '', reportWebhook: '', ...(data.manifest.discord || {}) };
 
     // ---------- leaderboard
     const board = { url: '', anonKey: '', ...(data.manifest.leaderboard || {}) };
@@ -370,7 +375,7 @@ export default function admin(root) {
 
     metaBox.append(
       h('div.panel', h('h3', 'Calendrier des events'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Affiché sur l’accueil avec un compte à rebours. Notification 15 min avant.'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Affiché sur l’accueil avec un compte à rebours. Notification 15 min avant. Le circuit et les voitures choisis sont installés chez tout le monde 1 h avant. Annoncé sur Discord si le salon des annonces est réglé.'),
         eventList,
         h('div.row.mt',
           h('button.btn.btn-sm', { on: { click: () => { const d = new Date(Date.now() + 86400000); d.setHours(21, 0, 0, 0); events.push({ id: `e${Date.now().toString(36)}`, title: 'Soirée LKS', date: d.toISOString(), durationMinutes: 120, server: serverOptions[1] ? serverOptions[1][0] : '' }); drawEvents(); } } }, icon('plus'), 'Ajouter un event'),
@@ -388,10 +393,16 @@ export default function admin(root) {
         h('div.grid',
           field('Application ID', h('input.input.mono', { value: discord.clientId, placeholder: '123456789012345678', on: { input: (e) => { discord.clientId = e.target.value.trim(); } } })),
           field('Lien d’invitation du serveur Discord', h('input.input.mono', { value: discord.inviteUrl, placeholder: 'https://discord.gg/…', on: { input: (e) => { discord.inviteUrl = e.target.value.trim(); } } })),
+          field('Webhook du salon des annonces', h('input.input.mono', { value: discord.webhook, placeholder: 'https://discord.com/api/webhooks/…', on: { input: (e) => { discord.webhook = e.target.value.trim(); } } })),
+          field('Webhook du salon des admins (rapports de plantage)', h('input.input.mono', { value: discord.reportWebhook, placeholder: 'https://discord.com/api/webhooks/…', on: { input: (e) => { discord.reportWebhook = e.target.value.trim(); } } })),
         ),
+        h('p.hint', 'Webhook : dans Discord, Paramètres du salon → Intégrations → Webhooks → Nouveau webhook → Copier l’URL. Annonces : soirées, records, battles, propositions. Admins : rapports de plantage envoyés par les membres. Les membres ont ces liens dans le launcher : si un lien est utilisé pour du spam, régénère-le dans Discord et recolle-le ici.'),
         h('div.row.mt', h('button.btn.btn-sm.btn-primary.right', { on: { click: () => {
           if (discord.clientId && !/^\d{15,25}$/.test(discord.clientId)) return toast('L’Application ID est un nombre de 17 à 20 chiffres', 'warn');
           if (discord.inviteUrl && !/^https:\/\//.test(discord.inviteUrl)) return toast('Le lien doit commencer par https://', 'warn');
+          const hook = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,120}$/;
+          if (discord.webhook && !hook.test(discord.webhook)) return toast('Le webhook des annonces n’est pas une adresse de webhook Discord', 'warn');
+          if (discord.reportWebhook && !hook.test(discord.reportWebhook)) return toast('Le webhook des admins n’est pas une adresse de webhook Discord', 'warn');
           guard(() => api.call('admin:updateMeta', { discord }), 'Réglages Discord publiés');
         } } }, 'Enregistrer'))),
       h('div.panel', h('h3', 'VPN'),

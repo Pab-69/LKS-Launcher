@@ -1,0 +1,128 @@
+'use strict';
+
+/**
+ * Group features stored on the leaderboard's Supabase project (docs/leaderboard.sql):
+ *  - proposals: members propose a car, a livery or a setup (file in the
+ *    « lks-proposals » storage, or a download link for big files); the admins
+ *    accept or refuse them in Publication (decision in the manifest);
+ *  - presence: who has the launcher open, who is driving, on which server.
+ */
+
+const crypto = require('crypto');
+
+const BUCKET = 'lks-proposals';
+const MAX_UPLOAD = 50 * 1024 * 1024; // Supabase free plan: 50 MB per file
+const KINDS = ['car', 'skin', 'setup'];
+
+class Community {
+  constructor({ url, anonKey, fetchImpl }) {
+    if (!/^https:\/\/[\w.-]+(:\d+)?\/?$/.test(url || '') && !/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url || '')) throw new Error('Adresse Supabase invalide');
+    if (!anonKey) throw new Error('Clé Supabase manquante');
+    this.url = url.replace(/\/$/, '');
+    this.key = anonKey;
+    this.fetch = fetchImpl || fetch;
+  }
+
+  async request(path, init = {}) {
+    const res = await this.fetch(`${this.url}${path}`, {
+      ...init,
+      headers: { apikey: this.key, Authorization: `Bearer ${this.key}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let msg = text;
+      try {
+        msg = JSON.parse(text).message || text;
+      } catch {
+        /* raw */
+      }
+      if (res.status === 404) msg = 'pas encore installé (les admins doivent relancer le script SQL dans Supabase)';
+      throw new Error(`${String(msg).slice(0, 200)}`);
+    }
+    return text ? JSON.parse(text) : null;
+  }
+
+  // ------------------------------------------------------------ proposals
+  /** Upload a zip (Buffer) for a proposal. Returns its storage path. */
+  async upload(id, zip) {
+    if (zip.length > MAX_UPLOAD) throw new Error('Fichier trop gros pour l’envoi direct (50 Mo max) : donne un lien de téléchargement');
+    const file = `v1/${id}.zip`;
+    await this.request(`/storage/v1/object/${BUCKET}/${file}`, { method: 'POST', body: zip, headers: { 'Content-Type': 'application/zip', 'x-upsert': 'false' } });
+    return file;
+  }
+
+  /** p = { kind, car, skin, track, title, author, steamId, message, link, zip? } */
+  async propose(p) {
+    if (!KINDS.includes(p.kind)) throw new Error('Type de proposition inconnu');
+    const id = crypto.randomUUID();
+    let file = '';
+    if (p.zip) file = await this.upload(id, p.zip);
+    if (!file && !/^https:\/\/\S{4,}$/.test(p.link || '')) throw new Error('Il faut un fichier ou un lien https://');
+    await this.request('/rest/v1/rpc/submit_proposal', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_id: id,
+        p_kind: p.kind,
+        p_car: p.car,
+        p_skin: p.skin || '',
+        p_track: p.track || '',
+        p_title: String(p.title || p.car).slice(0, 80),
+        p_author: String(p.author || 'Pilote').slice(0, 40),
+        p_steam_id: String(p.steamId || '').slice(0, 32),
+        p_message: String(p.message || '').slice(0, 600),
+        p_link: file ? '' : p.link,
+        p_file: file,
+        p_size: p.zip ? p.zip.length : 0,
+      }),
+    });
+    return id;
+  }
+
+  async proposals() {
+    const rows = await this.request('/rest/v1/lks_proposals_list?select=*&order=created_at.desc&limit=200');
+    return (rows || []).map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      car: r.car,
+      skin: r.skin,
+      track: r.track,
+      title: r.title,
+      author: r.author,
+      message: r.message,
+      link: r.link,
+      size: Number(r.size) || 0,
+      download: r.file ? `${this.url}/storage/v1/object/public/${BUCKET}/${r.file}` : r.link,
+      direct: Boolean(r.file),
+      date: r.created_at,
+    }));
+  }
+
+  // ------------------------------------------------------------ presence
+  /** p = { id, secret, name, state: launcher|solo|online|hosting, server: { name, ip, port, httpPort }, car, track, layout } */
+  setPresence(p) {
+    let server = {};
+    if (p.server && p.server.ip) server = { name: String(p.server.name || '').slice(0, 60), ip: String(p.server.ip).slice(0, 64), port: Number(p.server.port) || 0, httpPort: Number(p.server.httpPort) || 0 };
+    else if (p.server && p.server.hostId) server = { name: String(p.server.name || '').slice(0, 60), hostId: String(p.server.hostId).slice(0, 64) };
+    return this.request('/rest/v1/rpc/set_presence', {
+      method: 'POST',
+      body: JSON.stringify({ p_id: p.id, p_secret: p.secret, p_name: String(p.name || 'Pilote').slice(0, 40), p_state: p.state, p_server: server, p_car: p.car || '', p_track: p.track || '', p_layout: p.layout || '' }),
+    });
+  }
+
+  removePresence(id, secret) {
+    return this.request('/rest/v1/rpc/remove_presence', { method: 'POST', body: JSON.stringify({ p_id: id, p_secret: secret }) });
+  }
+
+  async presence() {
+    const rows = await this.request('/rest/v1/lks_presence_live?select=*&order=updated_at.desc&limit=100');
+    return (rows || []).map((r) => ({ id: r.id, name: r.name, state: r.state, server: r.server && (r.server.ip || r.server.hostId) ? r.server : null, car: r.car, track: r.track, layout: r.layout, updatedAt: r.updated_at }));
+  }
+}
+
+/** Status of a proposal from the admins' decisions (manifest.proposals). */
+function decisionOf(manifest, id) {
+  const d = manifest && manifest.proposals && manifest.proposals[id];
+  return d && ['accepted', 'refused'].includes(d.status) ? d : { status: 'pending' };
+}
+
+module.exports = { Community, decisionOf, MAX_UPLOAD, KINDS };

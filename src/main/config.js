@@ -27,6 +27,8 @@ const DEFAULTS = {
   graphics: { preset: '', appliedAt: null },
   lastRunVersion: '',
   discordPresence: true,
+  showOnline: true, // « En ligne maintenant » on the members' home page
+  discordShare: true, // records and battles posted on the group's Discord channel
   host: {},
   telemetry: { enabled: true, shareLaps: true, dashEnabled: false, dashPort: 8095 },
   tools: {},
@@ -129,7 +131,7 @@ class Settings {
 
   /** Public view sent to the renderer (no secrets). */
   public() {
-    const { admin, ...rest } = this.data;
+    const { admin, presenceSecret, ...rest } = this.data;
     return {
       ...rest,
       admin: { repo: admin.repo, tag: admin.tag, hasToken: Boolean(admin.tokenEnc) },

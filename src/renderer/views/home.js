@@ -11,6 +11,8 @@ export default function home(root, _params, { go }) {
   let cspState = null;
   api.call('csp:status').then((s) => { cspState = s; renderStatus(); }).catch(() => {});
   const serversBox = h('div');
+  const onlineBox = h('div');
+  let onlineTimer = null;
   const newsBox = h('div.panel');
 
   const slidesEl = h('div.hero-slides');
@@ -38,6 +40,7 @@ export default function home(root, _params, { go }) {
     ),
     statusBox,
     eventBox,
+    onlineBox,
     presetsBox,
     h('h2.section.garage-title', 'Le Garage'),
     garageEl,
@@ -197,10 +200,24 @@ export default function home(root, _params, { go }) {
           h('div.picker-k', new Date(start).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })),
           h('div.event-title', next.title || 'Event LKS'),
           next.description ? h('p.muted', { style: { margin: '4px 0 0', whiteSpace: 'pre-line' } }, next.description) : null,
+          eventContent(manifest, next),
         ),
         h('div.event-side', timer, join, h('div.hint', 'Rappel 15 min avant')),
       ),
     );
+  }
+
+  /** Track and cars of an event, with « Préparer » (installs what is missing). */
+  function eventContent(manifest, ev) {
+    const track = ev.track && (manifest.tracks || []).find((t) => t.id === ev.track);
+    const cars = (ev.cars || []).map((id) => (manifest.cars || []).find((c) => c.id === id)).filter(Boolean);
+    if (!track && !cars.length) return null;
+    const layout = track && (track.layouts || []).find((l) => l.id === (ev.layout || ''));
+    const items = [...(track ? [{ kind: 'track', id: track.id }] : []), ...cars.map((c) => ({ kind: 'car', id: c.id }))];
+    return h('div.event-content',
+      track ? h('div', h('span.picker-k', 'Circuit '), `${track.name}${layout && layout.name && layout.name !== track.name ? ` — ${layout.name}` : ''}`) : null,
+      cars.length ? h('div', h('span.picker-k', cars.length > 1 ? 'Voitures ' : 'Voiture '), cars.map((c) => c.name).join(', ')) : null,
+      h('button.btn.btn-sm.mt', { title: 'Installe le circuit et les voitures de la soirée s’il en manque', on: { click: () => guard(() => api.call('sync:start', items), 'Préparation lancée : suis l’avancement dans Contenu') } }, icon('download'), 'Préparer'));
   }
 
   // ---------- quick solo sessions published by the group
@@ -237,6 +254,27 @@ export default function home(root, _params, { go }) {
     presetsBox.append(h('h2.section', 'Sessions rapides'), grid);
   }
 
+  // ---------- who is online (members' launchers announce themselves every minute)
+  const STATE = { launcher: 'dans le launcher', solo: 'roule en solo', online: 'roule en ligne', hosting: 'héberge une partie' };
+  async function renderOnline() {
+    const res = await api.call('community:online').catch(() => null);
+    clear(onlineBox);
+    if (!res || !res.configured) return;
+    const people = res.people || [];
+    const rows = people.map((p) => {
+      const where = [p.carName, p.trackName].filter(Boolean).join(' @ ');
+      let join = null;
+      if (p.state === 'hosting' && p.server && p.server.hostId) join = h('button.btn.btn-sm.btn-primary', { on: { click: () => go('servers', { select: `lks-host:${p.server.hostId}` }) } }, icon('play'), 'Rejoindre');
+      else if (p.state === 'online' && p.server && p.server.ip) join = h('button.btn.btn-sm.btn-primary', { on: { click: () => go('servers', { select: `${p.server.ip}:${p.server.httpPort || 8081}`, server: { name: p.server.name || `Serveur de ${p.name}`, ip: p.server.ip, httpPort: p.server.httpPort || 8081 } }) } }, icon('play'), 'Rejoindre');
+      return h('div.online-row',
+        h(`span.online-dot.${p.state}`),
+        h('div.grow', h('strong', p.name), h('span.s', ` ${STATE[p.state] || ''}${p.server && p.server.name ? ` — ${p.server.name}` : ''}`), where ? h('div.s', where) : ''),
+        join || '');
+    });
+    onlineBox.append(h('h2.section', `En ligne maintenant${people.length ? ` (${people.length})` : ''}`),
+      h('div.panel.online-list', rows.length ? rows : h('p.muted', { style: { margin: 0 } }, 'Personne d’autre pour l’instant.')));
+  }
+
   async function renderNews() {
     const manifest = await guard(() => api.call('sync:manifest'));
     if (manifest) {
@@ -263,6 +301,8 @@ export default function home(root, _params, { go }) {
   renderStatus();
   renderServers();
   renderNews();
+  renderOnline();
+  onlineTimer = setInterval(renderOnline, 30000);
   let lastManifest = store.summary && store.summary.manifestUpdatedAt;
   const unsub = subscribe((patch) => {
     if ('summary' in patch || 'content' in patch || 'settings' in patch) renderStatus();
@@ -275,6 +315,7 @@ export default function home(root, _params, { go }) {
   return () => {
     clearInterval(timer);
     clearInterval(countdownTimer);
+    clearInterval(onlineTimer);
     unsub();
     offBrand();
   };

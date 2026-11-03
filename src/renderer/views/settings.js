@@ -44,6 +44,8 @@ export default function settings(root, params) {
       toggle('Réduire le launcher pendant le jeu', s.closeOnLaunch, (v) => saveSettings({ closeOnLaunch: v })),
       field('Pendant le jeu, afficher', select([['', 'Demander à chaque fois'], ['telemetry', 'La télémétrie en direct'], ['launcher', 'Le launcher']], (() => { try { return localStorage.getItem('lks.duringGame') || ''; } catch { return ''; } })(), (v) => { try { localStorage.setItem('lks.duringGame', v); } catch { /* ignore */ } })),
       toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Affiche ta voiture et ta piste sur ton profil Discord.'),
+      toggle('Me montrer en ligne aux membres', s.showOnline !== false, (v) => saveSettings({ showOnline: v }), 'Les membres voient sur l’Accueil que tu es là, et sur quel serveur tu roules (pour te rejoindre).'),
+      toggle('Annoncer mes records et battles sur le Discord du groupe', s.discordShare !== false, (v) => saveSettings({ discordShare: v }), 'Seulement si les admins ont réglé le salon des annonces.'),
       toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification 15 min avant chaque event.'),
       h('div.row.mt',
         h('button.btn.btn-sm', { on: { click: () => api.call('shell:open', 'ac') } }, icon('folder'), 'Dossier du jeu'),
