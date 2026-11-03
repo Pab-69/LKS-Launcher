@@ -1,0 +1,24 @@
+# HTTPS automatique pour le domaine du fichier .env (DOMAIN=lks.mondomaine.fr).
+# Pas de directive « log » : aucun journal d'accès, aucune adresse IP gardée.
+
+{$DOMAIN} {
+	header -Server
+
+	handle_path /rest/v1/* {
+		request_body {
+			max_size 2MB
+		}
+		reverse_proxy rest:3000
+	}
+
+	handle /storage/v1/* {
+		request_body {
+			max_size 55MB
+		}
+		reverse_proxy storage:8080
+	}
+
+	handle {
+		respond "Serveur LKS" 200
+	}
+}

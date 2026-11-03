@@ -1,15 +1,22 @@
--- Classement LKS : à exécuter une fois dans Supabase (SQL Editor > New query > Run).
+-- Classement LKS : à exécuter une fois dans Supabase (SQL Editor > New query > Run),
+-- ou installé tout seul par le serveur du groupe (dossier server/ du launcher).
+--
+-- Données gardées : seulement ce qui sert au groupe. Aucun Steam ID, aucune
+-- adresse e-mail, aucun compte. Un pilote = le nom qu'il a choisi + un
+-- identifiant au hasard créé par son launcher (« player », jamais lisible par
+-- les autres). Les données passagères s'effacent toutes seules (voir lks_cleanup).
+--
 -- Chaque pilote garde une seule entrée par voiture / circuit / tracé / type
 -- (meilleur temps, ou meilleure note de drift / tandem sur 100 pour un parcours
 -- et un mode donnés : « rules » change quand les admins modifient les clips ou
 -- les règles, et finit par -debutant, -normal ou -pro, puis @manche pour un
--- championnat). Les battles ont une ligne par battle (steam_id = b-<id>). Les launchers lisent
+-- championnat). Les battles ont une ligne par battle (player = b-<id>). Les launchers lisent
 -- tout le classement et n'écrivent que via la fonction submit_lap, qui ne
 -- remplace un record que par un meilleur. Le script peut être relancé.
 
 create table if not exists public.lks_laps (
   id bigint generated always as identity primary key,
-  steam_id text not null,
+  player text not null,
   driver text not null,
   car text not null,
   track text not null,
@@ -31,7 +38,20 @@ alter table public.lks_laps alter column score type numeric(4, 1) using least(sc
 alter table public.lks_laps drop constraint if exists lks_laps_steam_id_car_track_layout_kind_key;
 drop function if exists public.submit_lap(text, text, text, text, text, text, integer, integer, text, jsonb);
 
-create unique index if not exists lks_laps_entry on public.lks_laps (steam_id, car, track, layout, kind, rules);
+-- mise à niveau : les Steam ID des anciennes versions sont remplacés par des
+-- identifiants au hasard (la correspondance n'est gardée nulle part)
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'lks_laps' and column_name = 'steam_id') then
+    create temporary table lks_new_ids on commit drop as
+      select old, 'p-' || substr(md5(gen_random_uuid()::text), 1, 16) as new
+        from (select distinct steam_id as old from public.lks_laps where steam_id not like 'b-%') ids;
+    update public.lks_laps l set steam_id = m.new from lks_new_ids m where l.steam_id = m.old;
+    alter table public.lks_laps rename column steam_id to player;
+  end if;
+end $$;
+
+create unique index if not exists lks_laps_entry on public.lks_laps (player, car, track, layout, kind, rules);
 create index if not exists lks_laps_board on public.lks_laps (track, layout, kind, rules);
 
 alter table public.lks_laps enable row level security;
@@ -39,8 +59,9 @@ alter table public.lks_laps enable row level security;
 drop policy if exists "lecture publique" on public.lks_laps;
 create policy "lecture publique" on public.lks_laps for select using (true);
 
+drop function if exists public.submit_lap(text, text, text, text, text, text, integer, numeric, text, jsonb, text);
 create or replace function public.submit_lap(
-  p_steam_id text, p_driver text, p_car text, p_track text, p_layout text,
+  p_player text, p_driver text, p_car text, p_track text, p_layout text,
   p_kind text, p_lap_ms integer, p_score numeric, p_samples text, p_meta jsonb, p_rules text default ''
 ) returns text
 language plpgsql security definer set search_path = public as $$
@@ -48,7 +69,7 @@ declare
   cur public.lks_laps%rowtype;
 begin
   if p_kind not in ('time', 'drift', 'tandem', 'battle')
-     or coalesce(length(p_steam_id), 0) not between 1 and 32
+     or coalesce(p_player, '') !~ '^(p-[0-9a-f]{8,32}|b-[A-Za-z0-9_-]{1,30})$'
      or coalesce(length(p_driver), 0) not between 1 and 40
      or coalesce(length(p_car), 0) not between 1 and 80
      or coalesce(length(p_track), 0) not between 1 and 80
@@ -65,7 +86,7 @@ begin
   end if;
 
   select * into cur from public.lks_laps
-   where steam_id = p_steam_id and car = p_car and track = p_track
+   where player = p_player and car = p_car and track = p_track
      and layout = coalesce(p_layout, '') and kind = p_kind and rules = coalesce(p_rules, '');
   -- un record égal remplace l'ancien seulement s'il apporte un fantôme
   if found and (
@@ -75,9 +96,9 @@ begin
     return 'record précédent conservé';
   end if;
 
-  insert into public.lks_laps (steam_id, driver, car, track, layout, kind, rules, lap_ms, score, samples, meta)
-  values (p_steam_id, p_driver, p_car, p_track, coalesce(p_layout, ''), p_kind, coalesce(p_rules, ''), p_lap_ms, round(p_score, 1), p_samples, coalesce(p_meta, '{}'::jsonb))
-  on conflict (steam_id, car, track, layout, kind, rules) do update
+  insert into public.lks_laps (player, driver, car, track, layout, kind, rules, lap_ms, score, samples, meta)
+  values (p_player, p_driver, p_car, p_track, coalesce(p_layout, ''), p_kind, coalesce(p_rules, ''), p_lap_ms, round(p_score, 1), p_samples, coalesce(p_meta, '{}'::jsonb))
+  on conflict (player, car, track, layout, kind, rules) do update
     set driver = excluded.driver, lap_ms = excluded.lap_ms, score = excluded.score,
         samples = excluded.samples, meta = excluded.meta, created_at = now();
   return 'nouveau record';
@@ -85,7 +106,9 @@ end $$;
 
 revoke all on function public.submit_lap(text, text, text, text, text, text, integer, numeric, text, jsonb, text) from public;
 grant execute on function public.submit_lap(text, text, text, text, text, text, integer, numeric, text, jsonb, text) to anon, authenticated;
-grant select on public.lks_laps to anon, authenticated;
+-- lecture : tout sauf l'identifiant du pilote
+revoke select on public.lks_laps from anon, authenticated;
+grant select (id, driver, car, track, layout, kind, rules, lap_ms, score, samples, meta, created_at) on public.lks_laps to anon, authenticated;
 
 -- Parties hébergées depuis le launcher (onglet Serveurs) : chaque hôte annonce sa
 -- partie toutes les minutes via announce_host ; elle disparaît de la liste 3 min
@@ -140,7 +163,7 @@ begin
      or coalesce(p_slots, 0) not between 0 and 64 then
     raise exception 'données invalides';
   end if;
-  delete from public.lks_hosts where updated_at < now() - interval '1 day';
+  delete from public.lks_hosts where updated_at < now() - interval '15 minutes';
   insert into public.lks_hosts (id, secret, name, host_driver, addresses, tcp_port, http_port, has_password, track, layout, cars, slots, updated_at)
   values (p_id, p_secret, p_name, coalesce(p_host_driver, ''), coalesce(p_addresses, '[]'::jsonb), p_tcp_port, p_http_port, coalesce(p_has_password, false), coalesce(p_track, ''), coalesce(p_layout, ''), coalesce(p_cars, '[]'::jsonb), coalesce(p_slots, 0), now())
   on conflict (id) do update
@@ -186,7 +209,6 @@ create table if not exists public.lks_proposals (
   track text not null default '',
   title text not null,
   author text not null,
-  steam_id text not null default '',
   message text not null default '',
   link text not null default '',
   file text not null default '',
@@ -215,9 +237,11 @@ create view public.lks_proposals_list with (security_invoker = false) as
     from public.lks_proposals p where p.created_at > now() - interval '180 days';
 grant select on public.lks_proposals_list to anon, authenticated;
 
+alter table public.lks_proposals drop column if exists steam_id;
+drop function if exists public.submit_proposal(uuid, text, text, text, text, text, text, text, text, text, text, bigint);
 create or replace function public.submit_proposal(
   p_id uuid, p_kind text, p_car text, p_skin text, p_track text, p_title text,
-  p_author text, p_steam_id text, p_message text, p_link text, p_file text, p_size bigint
+  p_author text, p_message text, p_link text, p_file text, p_size bigint
 ) returns text
 language plpgsql security definer set search_path = public as $$
 begin
@@ -227,7 +251,6 @@ begin
      or coalesce(p_track, '') !~ '^[A-Za-z0-9_.-]{0,80}$'
      or coalesce(length(p_title), 0) not between 1 and 80
      or coalesce(length(p_author), 0) not between 1 and 40
-     or length(coalesce(p_steam_id, '')) > 32
      or length(coalesce(p_message, '')) > 600
      or (coalesce(p_link, '') <> '' and (p_link !~ '^https://[^ ]{4,}$' or length(p_link) > 400))
      or (coalesce(p_file, '') <> '' and p_file !~ '^v1/[0-9a-f-]{36}\.zip$')
@@ -235,18 +258,18 @@ begin
      or coalesce(p_size, 0) not between 0 and 20000000000 then
     raise exception 'données invalides';
   end if;
-  if (select count(*) from public.lks_proposals
-       where (steam_id = coalesce(p_steam_id, '') and coalesce(p_steam_id, '') <> '' or author = p_author)
-         and created_at > now() - interval '1 day') >= 5 then
+  if (select count(*) from public.lks_proposals where author = p_author and created_at > now() - interval '1 day') >= 5 then
     raise exception 'trop de propositions aujourd''hui, réessaie demain';
   end if;
-  insert into public.lks_proposals (id, kind, car, skin, track, title, author, steam_id, message, link, file, size)
-  values (p_id, p_kind, p_car, coalesce(p_skin, ''), coalesce(p_track, ''), p_title, p_author, coalesce(p_steam_id, ''), coalesce(p_message, ''), coalesce(p_link, ''), coalesce(p_file, ''), coalesce(p_size, 0));
+  delete from public.lks_proposals where created_at < now() - interval '180 days';
+  delete from public.lks_votes v where not exists (select 1 from public.lks_proposals p where p.id = v.proposal_id);
+  insert into public.lks_proposals (id, kind, car, skin, track, title, author, message, link, file, size)
+  values (p_id, p_kind, p_car, coalesce(p_skin, ''), coalesce(p_track, ''), p_title, p_author, coalesce(p_message, ''), coalesce(p_link, ''), coalesce(p_file, ''), coalesce(p_size, 0));
   return 'ok';
 end $$;
 
-revoke all on function public.submit_proposal(uuid, text, text, text, text, text, text, text, text, text, text, bigint) from public;
-grant execute on function public.submit_proposal(uuid, text, text, text, text, text, text, text, text, text, text, bigint) to anon, authenticated;
+revoke all on function public.submit_proposal(uuid, text, text, text, text, text, text, text, text, text, bigint) from public;
+grant execute on function public.submit_proposal(uuid, text, text, text, text, text, text, text, text, text, bigint) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Qui est en ligne : chaque launcher ouvert s'annonce toutes les minutes
@@ -286,7 +309,7 @@ begin
      or length(coalesce(p_car, '')) > 80 or length(coalesce(p_track, '')) > 80 or length(coalesce(p_layout, '')) > 80 then
     raise exception 'données invalides';
   end if;
-  delete from public.lks_presence where updated_at < now() - interval '1 day';
+  delete from public.lks_presence where updated_at < now() - interval '15 minutes';
   insert into public.lks_presence (id, secret, name, state, server, car, track, layout, updated_at)
   values (p_id, p_secret, p_name, p_state, coalesce(p_server, '{}'::jsonb), coalesce(p_car, ''), coalesce(p_track, ''), coalesce(p_layout, ''), now())
   on conflict (id) do update
@@ -382,7 +405,6 @@ grant execute on function public.add_photo(uuid, text, text, text, text, text) t
 create table if not exists public.lks_runs (
   id uuid primary key,
   driver text not null,
-  steam_id text not null default '',
   car text not null default '',
   track text not null,
   layout text not null default '',
@@ -399,12 +421,14 @@ create or replace view public.lks_runs_list with (security_invoker = false) as
    where created_at > now() - interval '30 days';
 grant select on public.lks_runs_list to anon, authenticated;
 
+alter table public.lks_runs drop column if exists steam_id;
+drop function if exists public.add_run(uuid, text, text, text, text, text, text, numeric, jsonb);
 create or replace function public.add_run(
-  p_id uuid, p_driver text, p_steam_id text, p_car text, p_track text, p_layout text, p_kind text, p_score numeric, p_detail jsonb
+  p_id uuid, p_driver text, p_car text, p_track text, p_layout text, p_kind text, p_score numeric, p_detail jsonb
 ) returns text
 language plpgsql security definer set search_path = public as $$
 begin
-  if coalesce(length(p_driver), 0) not between 1 and 40 or length(coalesce(p_steam_id, '')) > 32
+  if coalesce(length(p_driver), 0) not between 1 and 40
      or coalesce(p_track, '') !~ '^[A-Za-z0-9_.-]{1,80}$' or coalesce(p_layout, '') !~ '^[A-Za-z0-9_.-]{0,80}$'
      or length(coalesce(p_car, '')) > 80 or p_kind not in ('drift', 'tandem')
      or p_score is null or p_score < 0 or p_score > 100
@@ -415,13 +439,13 @@ begin
     raise exception 'trop de runs aujourd''hui';
   end if;
   delete from public.lks_runs where created_at < now() - interval '30 days';
-  insert into public.lks_runs (id, driver, steam_id, car, track, layout, kind, score, detail)
-  values (p_id, p_driver, coalesce(p_steam_id, ''), coalesce(p_car, ''), p_track, coalesce(p_layout, ''), p_kind, p_score, coalesce(p_detail, '{}'::jsonb))
+  insert into public.lks_runs (id, driver, car, track, layout, kind, score, detail)
+  values (p_id, p_driver, coalesce(p_car, ''), p_track, coalesce(p_layout, ''), p_kind, p_score, coalesce(p_detail, '{}'::jsonb))
   on conflict (id) do nothing;
   return 'ok';
 end $$;
-revoke all on function public.add_run(uuid, text, text, text, text, text, text, numeric, jsonb) from public;
-grant execute on function public.add_run(uuid, text, text, text, text, text, text, numeric, jsonb) to anon, authenticated;
+revoke all on function public.add_run(uuid, text, text, text, text, text, numeric, jsonb) from public;
+grant execute on function public.add_run(uuid, text, text, text, text, text, numeric, jsonb) to anon, authenticated;
 
 -- Direct pendant les soirées : angle, vitesse, avancée de la run et clips pris,
 -- envoyés toutes les 1 à 2 secondes par les launchers des pilotes en piste.
@@ -452,6 +476,7 @@ begin
      or jsonb_typeof(coalesce(p_data, '{}'::jsonb)) <> 'object' or length(coalesce(p_data, '{}'::jsonb)::text) > 2000 then
     raise exception 'données invalides';
   end if;
+  delete from public.lks_live where updated_at < now() - interval '1 minute';
   insert into public.lks_live (id, secret, name, car, track, layout, data, updated_at)
   values (p_id, p_secret, p_name, coalesce(p_car, ''), coalesce(p_track, ''), coalesce(p_layout, ''), coalesce(p_data, '{}'::jsonb), now())
   on conflict (id) do update
@@ -461,3 +486,39 @@ begin
 end $$;
 revoke all on function public.set_live(text, text, text, text, text, text, jsonb) from public;
 grant execute on function public.set_live(text, text, text, text, text, text, jsonb) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Ménage : efface ce qui ne sert plus (les fonctions ci-dessus le font déjà à
+-- chaque envoi ; le serveur du groupe l'appelle aussi toutes les heures).
+-- Pas accessible aux launchers.
+create or replace function public.lks_cleanup() returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.lks_live where updated_at < now() - interval '1 minute';
+  delete from public.lks_presence where updated_at < now() - interval '15 minutes';
+  delete from public.lks_hosts where updated_at < now() - interval '15 minutes';
+  delete from public.lks_runs where created_at < now() - interval '30 days';
+  delete from public.lks_proposals where created_at < now() - interval '180 days';
+  delete from public.lks_votes v where not exists (select 1 from public.lks_proposals p where p.id = v.proposal_id);
+  return 'ok';
+end $$;
+revoke all on function public.lks_cleanup() from public, anon, authenticated;
+
+-- Effacer toutes les données d'un pilote (à sa demande) : à lancer par un admin.
+--   select public.lks_forget('Nom du pilote');
+create or replace function public.lks_forget(p_driver text) returns text
+language plpgsql security definer set search_path = public as $$
+declare n integer := 0; k integer;
+begin
+  delete from public.lks_laps where lower(driver) = lower(p_driver)
+     or (kind = 'battle' and (lower(driver) like lower(p_driver) || ' vs %' or lower(driver) like '% vs ' || lower(p_driver)));
+  get diagnostics k = row_count; n := n + k;
+  delete from public.lks_runs where lower(driver) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_presence where lower(name) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_live where lower(name) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_hosts where lower(host_driver) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_proposals where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_photos where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  return n || ' lignes effacées (les fichiers des photos et propositions sont à effacer dans le stockage)';
+end $$;
+revoke all on function public.lks_forget(text) from public, anon, authenticated;

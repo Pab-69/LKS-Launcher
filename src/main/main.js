@@ -462,6 +462,15 @@ async function installProposal(p) {
 // ---------------------------------------------------------------- who is online (every minute)
 let currentServer = null; // server joined from the launcher: { name, ip, port, httpPort }
 let presenceTimer = null;
+/**
+ * Id of this launcher's driver on the group's server: random, made once. The
+ * Steam ID never leaves the PC (it only serves to recognise your own laps here).
+ */
+function playerId() {
+  if (!/^p-[0-9a-f]{16}$/.test(settings.data.playerId || '')) settings.update({ playerId: `p-${require('crypto').randomBytes(8).toString('hex')}` });
+  return settings.data.playerId;
+}
+
 function presenceIdentity() {
   if (!settings.data.presenceId || !settings.data.presenceSecret) {
     const crypto = require('crypto');
@@ -499,7 +508,7 @@ function announceHost() {
   if (!hostState || !hostAd) return Promise.resolve();
   const list = hostList();
   if (!list) {
-    hostState.listed = { state: 'unavailable', error: 'le classement Supabase n’est pas configuré (Publication → Classement)' };
+    hostState.listed = { state: 'unavailable', error: 'le serveur du groupe n’est pas configuré (Publication → Classement)' };
     return Promise.resolve();
   }
   const s = hostState;
@@ -953,9 +962,9 @@ function shareRun(lap) {
     ...(tandem ? { lead: lap.tandem.lead && lap.tandem.lead.name, proximity: tandem.proximity, avgGap: tandem.avgGap } : {}),
   };
   // same id for the same run, whoever sends it again
-  const hash = require('crypto').createHash('sha1').update(`${settings.data.steamId}|${lap.id}`).digest('hex');
+  const hash = require('crypto').createHash('sha1').update(`${playerId()}|${lap.id}`).digest('hex');
   const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-  c.addRun({ id, driver: lap.driver.name, steamId: lap.driver.steamId, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail }).catch((err) => applog.log('run share', err.message));
+  c.addRun({ id, driver: lap.driver.name, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail }).catch((err) => applog.log('run share', err.message));
 }
 
 /** Evening going on (from 30 min before to the end): live sharing for the judges. */
@@ -1023,7 +1032,7 @@ async function championshipsNow() {
       let error = null;
       if (board && champ.roundStatus(round) !== 'upcoming') {
         try {
-          entries = (await board.list({ track: round.track, layout: round.layout || '', kind, rules, limit: 100 })).map((r) => ({ name: r.driver, steamId: r.steam_id, score: Number(r.score) }));
+          entries = (await board.list({ track: round.track, layout: round.layout || '', kind, rules, limit: 100 })).map((r) => ({ name: r.driver, score: Number(r.score) }));
           if (round.kind === 'battle') battles = (await board.battles({ track: round.track, layout: round.layout || '', rules })).map((b) => ({ ...b.modes[round.mode], date: b.date }));
         } catch (err) {
           error = err.message;
@@ -1111,6 +1120,7 @@ function setupTelemetry() {
     source,
     getDriver: () => ({ name: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' }),
     getBoardConfig: () => sync.manifest.leaderboard || null,
+    getPlayer: playerId,
     getSettings: () => settings.data.telemetry,
     getCourse: driftCourse,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
@@ -1655,7 +1665,7 @@ function setupIpc() {
     if (!webhooks.configured('reports')) throw new Error('Les admins n’ont pas encore réglé le salon des rapports');
     const who = settings.data.driverName || 'Un membre';
     const l = lastCrash.launch || {};
-    const ok = await webhooks.post('reports', `💥 Plantage chez **${who}** (launcher ${app.getVersion()}) — ${l.car ? carLabel(l.car) : '?'} @ ${l.track ? trackLabel(l.track, l.layout) : '?'}\n${(lastCrash.hints || []).map((x) => `• ${x.text}`).join('\n').slice(0, 1200)}`, { name: 'rapport.txt', content: lastCrash.report });
+    const ok = await webhooks.post('reports', `💥 Plantage chez **${who}** (launcher ${app.getVersion()}) — ${l.car ? carLabel(l.car) : '?'} @ ${l.track ? trackLabel(l.track, l.layout) : '?'}\n${crashlog.scrub((lastCrash.hints || []).map((x) => `• ${x.text}`).join('\n')).slice(0, 1200)}`, { name: 'rapport.txt', content: crashlog.scrub(lastCrash.report) });
     if (!ok) throw new Error('Envoi impossible');
     return true;
   });
@@ -2291,14 +2301,14 @@ function setupIpc() {
   });
   handle('proposals:submit', async (p) => {
     const c = community();
-    if (!c) throw new Error('Les propositions ne sont pas encore activées par les admins (classement Supabase)');
+    if (!c) throw new Error('Les propositions ne sont pas encore activées par les admins (serveur du groupe)');
     if (!['car', 'skin', 'setup'].includes(p.kind)) throw new Error('Type de proposition inconnu');
     let zip = null;
     if (!p.link) {
       zip = await zipProposal(p);
       if (zip.length > MAX_UPLOAD) throw new Error(`Trop gros pour l’envoi direct (${Math.round(zip.length / 1048576)} Mo, 50 Mo max) : mets-le sur Google Drive, Mega ou Discord et colle le lien`);
     }
-    const id = await c.propose({ ...p, zip, author: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' });
+    const id = await c.propose({ ...p, zip, author: settings.data.driverName || 'Pilote' });
     settings.update({ myProposals: [...(settings.data.myProposals || []), id].slice(-100) });
     discordPost('news', `📦 **${settings.data.driverName || 'Un membre'}** propose ${p.kind === 'car' ? 'une voiture' : p.kind === 'skin' ? 'une livrée' : 'des setups'} : **${String(p.title || p.car).slice(0, 80)}**`);
     return id;
@@ -2342,7 +2352,8 @@ function setupIpc() {
     const ext = path.extname(file).slice(1).toLowerCase().replace('jpeg', 'jpg');
     const size = fs.statSync(file).size;
     if (size > MAX_PHOTO) throw new Error(`Image trop grosse (${Math.round(size / 1048576)} Mo, 10 Mo max)`);
-    const id = await c.addPhoto({ image: fs.readFileSync(file), ext, author: settings.data.driverName || 'Pilote', caption, car, track });
+    // without the hidden data of the file (GPS position, camera, date…)
+    const id = await c.addPhoto({ image: require('./imagemeta').stripImage(fs.readFileSync(file), ext), ext, author: settings.data.driverName || 'Pilote', caption, car, track });
     discordPost('news', `📸 **${settings.data.driverName || 'Un membre'}** a ajouté une photo à la galerie${caption ? ` : ${String(caption).slice(0, 120)}` : ''}`);
     return id;
   });

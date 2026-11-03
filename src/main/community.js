@@ -18,8 +18,8 @@ const KINDS = ['car', 'skin', 'setup'];
 
 class Community {
   constructor({ url, anonKey, fetchImpl }) {
-    if (!/^https:\/\/[\w.-]+(:\d+)?\/?$/.test(url || '') && !/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url || '')) throw new Error('Adresse Supabase invalide');
-    if (!anonKey) throw new Error('Clé Supabase manquante');
+    if (!/^https:\/\/[\w.-]+(:\d+)?\/?$/.test(url || '') && !/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url || '')) throw new Error('Adresse du serveur invalide');
+    if (!anonKey) throw new Error('Clé du serveur manquante');
     this.url = url.replace(/\/$/, '');
     this.key = anonKey;
     this.fetch = fetchImpl || fetch;
@@ -38,7 +38,7 @@ class Community {
       } catch {
         /* raw */
       }
-      if (res.status === 404) msg = 'pas encore installé (les admins doivent relancer le script SQL dans Supabase)';
+      if (res.status === 404) msg = 'pas encore installé (les admins doivent relancer le script SQL du serveur)';
       throw new Error(`${String(msg).slice(0, 200)}`);
     }
     return text ? JSON.parse(text) : null;
@@ -53,7 +53,7 @@ class Community {
     return file;
   }
 
-  /** p = { kind, car, skin, track, title, author, steamId, message, link, zip? } */
+  /** p = { kind, car, skin, track, title, author, message, link, zip? } (no Steam ID: only the name the member chose) */
   async propose(p) {
     if (!KINDS.includes(p.kind)) throw new Error('Type de proposition inconnu');
     const id = crypto.randomUUID();
@@ -70,7 +70,6 @@ class Community {
         p_track: p.track || '',
         p_title: String(p.title || p.car).slice(0, 80),
         p_author: String(p.author || 'Pilote').slice(0, 40),
-        p_steam_id: String(p.steamId || '').slice(0, 32),
         p_message: String(p.message || '').slice(0, 600),
         p_link: file ? '' : p.link,
         p_file: file,
@@ -108,11 +107,11 @@ class Community {
   }
 
   // ------------------------------------------------------------ runs and live (judges)
-  /** Note of a finished run: r = { id, driver, steamId, car, track, layout, kind, score, detail } */
+  /** Note of a finished run: r = { id, driver, car, track, layout, kind, score, detail } */
   addRun(r) {
     return this.request('/rest/v1/rpc/add_run', {
       method: 'POST',
-      body: JSON.stringify({ p_id: r.id, p_driver: String(r.driver || 'Pilote').slice(0, 40), p_steam_id: String(r.steamId || '').slice(0, 32), p_car: r.car || '', p_track: r.track, p_layout: r.layout || '', p_kind: r.kind === 'tandem' ? 'tandem' : 'drift', p_score: Math.max(0, Math.min(100, Math.round((Number(r.score) || 0) * 10) / 10)), p_detail: r.detail || {} }),
+      body: JSON.stringify({ p_id: r.id, p_driver: String(r.driver || 'Pilote').slice(0, 40), p_car: r.car || '', p_track: r.track, p_layout: r.layout || '', p_kind: r.kind === 'tandem' ? 'tandem' : 'drift', p_score: Math.max(0, Math.min(100, Math.round((Number(r.score) || 0) * 10) / 10)), p_detail: r.detail || {} }),
     });
   }
 

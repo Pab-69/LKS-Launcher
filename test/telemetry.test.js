@@ -259,6 +259,7 @@ test('lap store: bests, leaderboard, export/import, pruning', () => {
   const other = new LapStore(tmp());
   const imported = other.import(store.export('lap-b1'));
   assert.strictEqual(imported.driver.name, 'kaze');
+  assert.strictEqual(imported.driver.steamId, '', 'exported file without Steam ID');
   assert.strictEqual(other.load('lap-b1').samples.length, 30);
   assert.throws(() => other.import(Buffer.from('nope')), /pas un tour/);
 
@@ -278,17 +279,17 @@ test('shared leaderboard client (Supabase REST)', async (t) => {
       calls.push({ method: req.method, url: req.url, key: req.headers.apikey, auth: req.headers.authorization, body });
       if (req.url === '/rest/v1/rpc/submit_lap') {
         const b = JSON.parse(body);
-        rows.push({ id: rows.length + 1, steam_id: b.p_steam_id, driver: b.p_driver, car: b.p_car, track: b.p_track, layout: b.p_layout, kind: b.p_kind, lap_ms: b.p_lap_ms, score: b.p_score, samples: b.p_samples, meta: b.p_meta, created_at: 'now' });
+        rows.push({ id: rows.length + 1, player: b.p_player, driver: b.p_driver, car: b.p_car, track: b.p_track, layout: b.p_layout, kind: b.p_kind, lap_ms: b.p_lap_ms, score: b.p_score, samples: b.p_samples, meta: b.p_meta, created_at: 'now' });
         return res.end(JSON.stringify('nouveau record'));
       }
-      if (req.url.startsWith('/rest/v1/lks_laps')) return res.end(JSON.stringify(rows.map(({ samples, ...r }) => (req.url.includes('select=*') ? { ...r, samples } : r))));
+      if (req.url.startsWith('/rest/v1/lks_laps')) return res.end(JSON.stringify(rows.map(({ samples, ...r }) => (/select=[^&]*samples/.test(decodeURIComponent(req.url)) ? { ...r, samples } : r))));
       res.statusCode = 404;
       res.end('{"message":"nope"}');
     });
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   t.after(() => srv.close());
-  const board = new Leaderboard({ url: `http://127.0.0.1:${srv.address().port}`, anonKey: 'anon-key' });
+  const board = new Leaderboard({ url: `http://127.0.0.1:${srv.address().port}`, anonKey: 'anon-key', player: 'p-0123456789abcdef' });
   const lap = { driver: { name: 'Pab', steamId: '7656' }, car: 'c', track: 't', layout: 'l', lapMs: 60500, topSpeed: 150, session: 'practice', date: 'x', drift: { score: 420 }, samples: Array.from({ length: 3000 }, (_, i) => [i / 2999, i, 100, 1, 0, 4, 5000, 0, 10, 0, 0]) };
   await board.submit(lap, 'time');
   const sent = JSON.parse(calls[0].body);
@@ -296,6 +297,9 @@ test('shared leaderboard client (Supabase REST)', async (t) => {
   assert.strictEqual(calls[0].auth, 'Bearer anon-key');
   assert.deepStrictEqual([sent.p_kind, sent.p_lap_ms, sent.p_score], ['time', 60500, null]);
   assert.strictEqual(unpackSamples(sent.p_samples).length, 1500, 'downsampled before upload');
+  // the Steam ID never leaves the PC: only the launcher's random id
+  assert.strictEqual(sent.p_player, 'p-0123456789abcdef');
+  assert.ok(!calls[0].body.includes('7656') && !('p_steam_id' in sent));
   await board.list({ track: 't', layout: 'l', kind: 'time' });
   assert.match(calls[1].url, /track=eq\.t&layout=eq\.l&kind=eq\.time&rules=eq\.&order=lap_ms\.asc/);
   await board.list({ track: 't', layout: 'l', kind: 'drift', rules: 'abc' });
@@ -316,6 +320,11 @@ test('shared leaderboard client (Supabase REST)', async (t) => {
   assert.deepStrictEqual(remoteT.tandem.leadSamples[0], [1, 2, 30, 80, -30]);
   assert.strictEqual(remoteT.tandem.modes.pro.score, 61.5);
   assert.throws(() => new Leaderboard({ url: 'ftp://x', anonKey: 'k' }), /invalide/);
+  assert.throws(() => new Leaderboard({ url: 'https://x.y', anonKey: 'k' }).submit(lap, 'time'), /Identifiant pilote/);
+  assert.ok(!calls.some((c) => /steam/.test(c.url)), 'never asks for a Steam ID');
+  // one line per driver name (best first): a driver who reinstalled keeps one line
+  rows.push({ id: 90, driver: 'pab', car: 'c', track: 't', layout: 'l', kind: 'time', lap_ms: 70000, meta: {}, created_at: 'now' });
+  assert.strictEqual((await board.list({ track: 't', layout: 'l', kind: 'time' })).filter((r) => r.driver.toLowerCase() === 'pab').length, 1);
   assert.strictEqual(downsample([1, 2, 3], 10).length, 3);
   assert.strictEqual(unpackSamples(packSamples([[1, 2]]))[0][1], 2);
 });

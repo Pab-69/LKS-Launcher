@@ -1,10 +1,12 @@
 'use strict';
 
 /**
- * Shared leaderboard on a free Supabase project (Postgres + REST), set up once
- * by an admin with docs/leaderboard.sql. Each driver keeps one entry per
- * car / track / layout / kind (best time or best drift score); the database
- * function only replaces it with a better one.
+ * Shared leaderboard on the group's server: a free Supabase project or the
+ * group's own server (server/, same REST API), set up once by an admin with
+ * docs/leaderboard.sql. Each driver keeps one entry per car / track / layout /
+ * kind (best time or best drift score); the database function only replaces it
+ * with a better one. A driver is a random id made by the launcher (never the
+ * Steam ID) plus the name he chose.
  */
 
 const zlib = require('zlib');
@@ -13,6 +15,8 @@ const { driftOf } = require('./drift');
 const FOLLOWER_COLS = 14; // tandem rows = follower columns + lead columns
 
 const MAX_SAMPLES = 1500;
+// what the launcher reads (the driver's id stays on the server)
+const COLUMNS = 'id,driver,car,track,layout,kind,rules,lap_ms,score,meta,created_at';
 
 function downsample(samples, max = MAX_SAMPLES) {
   if (samples.length <= max) return samples;
@@ -31,12 +35,13 @@ function unpackLap(b64) {
 const unpackSamples = (b64) => unpackLap(b64).samples;
 
 class Leaderboard {
-  constructor({ url, anonKey, fetchImpl }) {
-    if (!/^https:\/\/[\w.-]+(:\d+)?\/?$/.test(url || '') && !/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url || '')) throw new Error('Adresse Supabase invalide');
-    if (!anonKey) throw new Error('Clé Supabase manquante');
+  constructor({ url, anonKey, fetchImpl, player }) {
+    if (!/^https:\/\/[\w.-]+(:\d+)?\/?$/.test(url || '') && !/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(url || '')) throw new Error('Adresse du serveur invalide');
+    if (!anonKey) throw new Error('Clé du serveur manquante');
     this.url = url.replace(/\/$/, '');
     this.key = anonKey;
     this.fetch = fetchImpl || fetch;
+    this.player = player || '';
   }
 
   headers(extra = {}) {
@@ -78,7 +83,7 @@ class Leaderboard {
     return this.request('/rest/v1/rpc/submit_lap', {
       method: 'POST',
       body: JSON.stringify({
-        p_steam_id: String(lap.driver.steamId || lap.driver.name).slice(0, 32),
+        p_player: this.playerId(),
         p_driver: String(lap.driver.name).slice(0, 40),
         p_car: lap.car,
         p_track: lap.track,
@@ -93,6 +98,12 @@ class Leaderboard {
     });
   }
 
+  /** Random id of this launcher's driver (made once, see main.js): never a Steam ID. */
+  playerId() {
+    if (!/^p-[0-9a-f]{8,32}$/.test(this.player)) throw new Error('Identifiant pilote manquant');
+    return this.player;
+  }
+
   /** A battle (one row per mode); rules can carry a championship round (version@round). */
   submitBattle(battle, mode = 'normal', rules) {
     const res = battle.modes[mode];
@@ -100,7 +111,7 @@ class Leaderboard {
     return this.request('/rest/v1/rpc/submit_lap', {
       method: 'POST',
       body: JSON.stringify({
-        p_steam_id: `b-${battle.id}`.slice(0, 32),
+        p_player: `b-${String(battle.id).replace(/[^\w-]/g, '')}`.slice(0, 32),
         p_driver: `${a.name} vs ${b.name}`.slice(0, 40),
         p_car: battle.cars[a.name] || Object.values(battle.cars)[0] || '?',
         p_track: battle.track,
@@ -124,14 +135,23 @@ class Leaderboard {
     });
   }
 
-  list({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
-    const q = new URLSearchParams({ select: 'id,steam_id,driver,car,track,layout,kind,rules,lap_ms,score,meta,created_at', track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'time' ? '' : rules}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
+  async list({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
+    const q = new URLSearchParams({ select: COLUMNS, track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'time' ? '' : rules}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
     if (car) q.set('car', `eq.${car}`);
-    return this.request(`/rest/v1/lks_laps?${q}`);
+    const rows = (await this.request(`/rest/v1/lks_laps?${q}`)) || [];
+    if (kind === 'battle') return rows;
+    // one line per driver name (a driver who reinstalled has a new id): the best one, rows come best first
+    const seen = new Set();
+    return rows.filter((r) => {
+      const k = String(r.driver || '').trim().toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   }
 
   async lap(id) {
-    const rows = await this.request(`/rest/v1/lks_laps?${new URLSearchParams({ select: '*', id: `eq.${Number(id)}` })}`);
+    const rows = await this.request(`/rest/v1/lks_laps?${new URLSearchParams({ select: `${COLUMNS},samples`, id: `eq.${Number(id)}` })}`);
     if (!rows || !rows[0]) throw new Error('Tour introuvable');
     const r = rows[0];
     const meta = r.meta || {};
@@ -148,7 +168,7 @@ class Leaderboard {
       version: 1,
       id: `remote-${r.id}`,
       remote: true,
-      driver: { name: r.driver, steamId: r.steam_id },
+      driver: { name: r.driver, steamId: '' },
       car: r.car,
       track: r.track,
       layout: r.layout,

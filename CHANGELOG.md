@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.17.0
+
+- **Ton Steam ID ne part plus nulle part** (sauf vers les serveurs de jeu que tu rejoins, le jeu l'exige). Pour le classement, les runs et les propositions, le launcher utilise ton nom de pilote et un identifiant tiré au hasard.
+- **Photos de la galerie sans leurs métadonnées** : position GPS, appareil, date… sont retirées avant l'envoi.
+- **Rapports de plantage nettoyés** avant l'envoi aux admins : Steam ID, nom de session Windows, adresses IP et e-mails masqués.
+- Un tour exporté (`.lkslap`) ne contient plus ton Steam ID.
+- **Admins : le serveur du groupe peut tourner chez vous**. Le dossier `server` (sur GitHub) installe tout en une commande sur un serveur Linux avec Docker : classement, runs, direct, présence, propositions, galerie, HTTPS, ménage automatique, sauvegardes. Il ne garde aucun Steam ID ni aucune adresse IP. Notice : `server/README.md`.
+- **Admins qui restent sur Supabase : relancez le script** (Publication → Classement → Copier le script). Les Steam ID déjà enregistrés sont remplacés par des identifiants au hasard.
+- Les données passagères s'effacent toutes seules : présence 15 min, direct 1 min, parties hébergées 15 min après l'arrêt, runs 30 jours, propositions 180 jours.
+
 ## 1.16.1
 
 - **Carte de la télémétrie dans le bon sens** : elle est maintenant orientée comme la carte du jeu (avant, elle était à l'envers).

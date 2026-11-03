@@ -29,7 +29,7 @@ export default function settings(root, params) {
         field('Nom de pilote', h('input.input', { value: s.driverName, maxlength: 40, on: { change: (e) => saveSettings({ driverName: e.target.value.trim() }) } }), 'Affiché en ligne et dans les résultats.'),
         field('Nationalité', select(NATIONS.map(([c, n]) => [c, `${n} (${c})`]), s.nationality, (v) => saveSettings({ nationality: v }))),
         field('Équipe', h('input.input', { value: s.team, on: { change: (e) => saveSettings({ team: e.target.value.trim() }) } })),
-        field('Steam ID', h('input.input', { value: s.steamId, placeholder: '7656119…', on: { change: (e) => saveSettings({ steamId: e.target.value.trim() }) } }), 'Détecté automatiquement depuis Steam.'),
+        field('Steam ID', h('input.input', { value: s.steamId, placeholder: '7656119…', on: { change: (e) => saveSettings({ steamId: e.target.value.trim() }) } }), 'Détecté automatiquement depuis Steam. Il reste sur ton PC (seuls les serveurs de jeu que tu rejoins le reçoivent).'),
       ),
     );
 

@@ -422,21 +422,22 @@ export default function admin(root) {
           const value = vpnCfg.provider === 'zerotier' ? { provider: 'zerotier', networkId: vpnCfg.networkId } : vpnCfg.provider === 'radmin' ? { provider: 'radmin', networkName: vpnCfg.networkName, password: vpnCfg.password || '' } : null;
           guard(() => api.call('admin:updateMeta', { vpn: value }), 'VPN enregistré');
         } } }, 'Enregistrer'))),
-      h('div.panel', h('h3', 'Classement'),
-        h('p.hint', { style: { marginTop: 0 } }, 'Pour partager les temps entre pilotes. Gratuit avec Supabase.'),
+      h('div.panel', h('h3', 'Classement et serveur du groupe'),
+        h('p.hint', { style: { marginTop: 0 } }, 'Classement, notes des runs, qui est en ligne, propositions, galerie. Deux choix : ton propre serveur (dossier « server » du launcher sur GitHub, avec sa notice) ou un projet Supabase gratuit. Aucun Steam ID n’est envoyé.'),
+        h('p.hint', 'Ton serveur : lance « ./lks.sh install », puis colle ici l’adresse et la clé qu’il affiche. Supabase :'),
         h('ol.vpn-steps',
           h('li', 'Crée un projet sur ', h('a.link', { on: { click: () => api.call('shell:open', 'https://supabase.com/dashboard/new') } }, 'supabase.com'), '.'),
           h('li', 'SQL Editor → colle le script et lance-le. ', h('a.link', { on: { click: async () => { await api.call('clipboard:write', await api.call('admin:leaderboardSql')); toast('Script copié', 'success'); } } }, 'Copier le script')),
           h('li', 'Project Settings → API : copie l’URL et la clé « anon public ».')),
         h('div.grid',
-          field('URL du projet', h('input.input.mono', { value: board.url, placeholder: 'https://xxxx.supabase.co', on: { input: (e) => { board.url = e.target.value.trim().replace(/\/+$/, ''); } } })),
-          field('Clé anon public', h('input.input.mono', { value: board.anonKey, placeholder: 'eyJhbGciOi…', on: { input: (e) => { board.anonKey = e.target.value.trim(); } } }))),
+          field('Adresse du serveur', h('input.input.mono', { value: board.url, placeholder: 'https://lks.mondomaine.fr ou https://xxxx.supabase.co', on: { input: (e) => { board.url = e.target.value.trim().replace(/\/+$/, ''); } } })),
+          field('Clé publique (anon)', h('input.input.mono', { value: board.anonKey, placeholder: 'eyJhbGciOi…', on: { input: (e) => { board.anonKey = e.target.value.trim(); } } }))),
         h('div.row.mt',
           h('button.btn.btn-sm', { on: { click: () => guard(() => api.call('admin:testLeaderboard', board), 'Connexion OK') } }, 'Tester'),
           board.url ? h('button.btn.btn-sm.btn-ghost', { on: { click: () => guard(() => api.call('admin:updateMeta', { leaderboard: null }), 'Classement retiré') } }, 'Retirer') : null,
           h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
-            if (!/^https:\/\/[\w.-]+$/.test(board.url)) return toast('L’URL doit ressembler à https://xxxx.supabase.co', 'warn');
-            if (!board.anonKey) return toast('Colle la clé anon public', 'warn');
+            if (!/^https:\/\/[\w.-]+$/.test(board.url)) return toast('L’adresse doit ressembler à https://lks.mondomaine.fr', 'warn');
+            if (!board.anonKey) return toast('Colle la clé publique (anon)', 'warn');
             if (!(await guard(() => api.call('admin:testLeaderboard', board)))) return;
             guard(() => api.call('admin:updateMeta', { leaderboard: { url: board.url, anonKey: board.anonKey } }), 'Classement enregistré');
           } } }, 'Enregistrer'))),

@@ -153,8 +153,13 @@ class LapStore {
     return Object.values(best).sort((a, b) => (kind === 'time' ? a.lapMs - b.lapMs : b.result.score - a.result.score));
   }
 
+  /** File to share with another driver: without the Steam IDs (only the names). */
   export(id) {
-    return zlib.gzipSync(JSON.stringify(this.load(id)));
+    const lap = this.load(id);
+    const noId = (d) => (d && typeof d === 'object' ? { ...d, steamId: '' } : d);
+    const out = { ...lap, driver: noId(lap.driver) };
+    if (lap.tandem) out.tandem = { ...lap.tandem, lead: noId(lap.tandem.lead) };
+    return zlib.gzipSync(JSON.stringify(out));
   }
 
   import(buffer) {

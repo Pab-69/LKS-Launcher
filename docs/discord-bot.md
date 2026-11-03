@@ -9,7 +9,7 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 - **Le bot ne fait que lire.** Toutes les données sont écrites par les launchers (et par les admins depuis Publication). Le bot les lit et les affiche sur Discord.
 - Il a **deux sources** :
   1. **Le manifeste** : un fichier JSON public sur GitHub, mis à jour par les admins (voitures, circuits, serveurs, actus, soirées, championnats, décisions du juge, propositions acceptées ou refusées).
-  2. **Supabase** : la base du classement, alimentée par les launchers (records, battles, notes de chaque run, qui est en ligne, direct des soirées, propositions, votes, galerie, parties hébergées).
+  2. **Le serveur du groupe** (ton serveur, dossier `server/`, ou un projet Supabase : même API) : la base du classement, alimentée par les launchers (records, battles, notes de chaque run, qui est en ligne, direct des soirées, propositions, votes, galerie, parties hébergées).
 - Bonus : chaque **serveur Assetto Corsa** donne son état sur son port HTTP.
 
 ---
@@ -60,7 +60,7 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 | `proposals` | décisions sur les propositions : `{ "<id>": { status: accepted\|refused, note, by, at } }` |
 | `galleryHidden[]` | ids des photos masquées par les admins (ne pas les afficher) |
 | `discord` | `{ clientId, inviteUrl, webhook, reportWebhook }` |
-| `leaderboard` | `{ url, anonKey }` : l'adresse et la clé publique de Supabase |
+| `leaderboard` | `{ url, anonKey }` : l'adresse et la clé publique du serveur du groupe |
 | `drift` | courses de drift publiées par les admins (clips, lignes) |
 
 **Noms à afficher** : les tables contiennent des ids (`lks_bmw_m2`, `cfd_calmont_2023`). Pour un joli nom, cherche l'id dans `cars[]` / `tracks[]` (et `layouts[]` pour le tracé). Si le nom du tracé commence par le nom du circuit, n'affiche que le tracé (le launcher fait pareil).
@@ -69,7 +69,7 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 
 ---
 
-## 4. Source 2 : Supabase
+## 4. Source 2 : le serveur du groupe (ou Supabase)
 
 ### Se connecter
 
@@ -79,7 +79,7 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 - Filtres (syntaxe PostgREST) : `track=eq.cfd_calmont_2023`, `created_at=gte.2026-11-01T00:00:00Z`, `rules=like.*-normal`, `order=score.desc`, `limit=10`, `select=driver,score`.
 - Fichiers publics (photos) : `{url}/storage/v1/object/public/{bucket}/{file}`.
 
-⚠️ Utilise **uniquement la clé anon** (publique, lecture seule). Ne mets **jamais** la clé `service_role` de Supabase ni un token GitHub dans le bot.
+⚠️ Utilise **uniquement la clé anon** (publique, lecture seule). Ne mets **jamais** le fichier `.env` du serveur, la clé `service_role` de Supabase ni un token GitHub dans le bot.
 
 ### Les tables et vues lisibles
 
@@ -95,14 +95,14 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 
 #### `lks_laps` : records et battles
 
-Colonnes : `id, steam_id, driver, car, track, layout, kind, rules, lap_ms, score, meta, created_at` (évite `samples`, c'est gros).
+Colonnes lisibles : `id, driver, car, track, layout, kind, rules, lap_ms, score, meta, created_at` (évite `samples`, c'est gros). Il n'y a **aucun Steam ID** : l'identifiant du pilote reste sur le serveur, illisible.
 
 - `kind` : `time` (chrono, `lap_ms`), `drift` ou `tandem` (`score` sur 100), `battle`.
-- **Une seule ligne par pilote** et par voiture / circuit / tracé / type / `rules` : c'est son meilleur.
+- **Une seule ligne par pilote** et par voiture / circuit / tracé / type / `rules` : c'est son meilleur. Un pilote qui a réinstallé peut avoir 2 lignes : garde la meilleure par nom (le launcher fait pareil).
 - `rules` (drift, tandem, battle) = `{version}-{mode}` avec `mode` = `debutant`, `normal` ou `pro`. La `version` (8 caractères) change quand les admins modifient les clips ou la ligne : **ne compare que des lignes avec la même `rules`**. Pour un classement « actuel », prends la version la plus récente (celle dont la ligne la plus récente a le `created_at` le plus grand).
 - Manche de championnat : `rules` = `{version}-{mode}@{idDeLaManche}`. Classement général du circuit : exclus les `rules` qui contiennent `@`.
 - `meta` : `{ lapMs, topSpeed, date, mode, drift: {…détail de la note…} }` ou `{ tandem: {…}, lead: { name, car } }`.
-- **Battles** (`kind = battle`) : `steam_id` = `b-{id}`, `driver` = « A vs B », et dans `meta.battle` : `{ id, date, pair, cars, runs, result: { drivers: [{ name, total }], winner, omt } }`.
+- **Battles** (`kind = battle`) : `driver` = « A vs B », et dans `meta.battle` : `{ id, date, pair, cars, runs, result: { drivers: [{ name, total }], winner, omt } }`.
   - **Décision du juge** : si une entrée de `manifest.judging` a le même `pair` (les 2 noms en minuscules, triés, joints par `|`), le même circuit/tracé et une `date` à ± 5 min, c'est elle qui compte : `winner` (ou `omt: true` = one more time) et `note`.
 
 #### `lks_runs_list` : la note de chaque run
@@ -190,7 +190,7 @@ Dans `manifest.championships[]` : `{ id, name, points[], rounds[] }`, chaque man
 
 ### Lier un membre Discord à son pilote
 
-Les données ne contiennent que le **nom du pilote** (et un SteamID dans `lks_laps.steam_id`). Simple : une commande `/lier nom-du-pilote` que le bot garde dans sa propre petite base (fichier JSON ou SQLite). Ça sert pour `/moi`, les rôles et les mentions (« bravo @… pour ton record »).
+Les données ne contiennent que le **nom du pilote** (aucun Steam ID). Simple : une commande `/lier nom-du-pilote` que le bot garde dans sa propre petite base (fichier JSON ou SQLite). Ça sert pour `/moi`, les rôles et les mentions (« bravo @… pour ton record »).
 
 ---
 
@@ -216,14 +216,14 @@ Les données ne contiennent que le **nom du pilote** (et un SteamID dans `lks_la
 - **Limites Discord** : environ 5 messages par 5 s dans un même salon ; modifie un message existant plutôt que d'en poster un nouveau ; une interaction (commande) doit répondre en moins de 3 s (sinon répondre « en cours… » puis compléter).
 - **Heure** : les dates sont en UTC (ISO). Affiche-les en heure de Paris, ou avec le format Discord `<t:TIMESTAMP:F>` / `<t:TIMESTAMP:R>` qui s'affiche dans l'heure de chacun.
 - **Textes** : en français, courts et simples, comme dans le launcher.
-- **Si Supabase répond 404** sur une vue : le script SQL n'a pas été relancé (Publication → Classement → Copier le script, puis exécuter dans Supabase).
+- **Si le serveur répond 404** sur une vue : la base n'est pas à jour (`./lks.sh update` sur ton serveur, ou relancer le script SQL dans Supabase).
 
 ---
 
 ## 9. Ordre conseillé
 
 1. Bot qui répond à `/launcher` et `/soiree` (manifeste seulement).
-2. `/classement`, `/record`, `/derniere-run` (Supabase).
+2. `/classement`, `/record`, `/derniere-run` (serveur du groupe).
 3. `/qui-roule` et `/serveurs`.
 4. Rappels de soirée + événement Discord.
 5. Tableau « en piste » pendant les soirées.

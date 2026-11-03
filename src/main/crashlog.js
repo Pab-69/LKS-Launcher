@@ -129,4 +129,17 @@ function diagnose(ctx) {
   return { hints, errors: [...errors, ...stack.filter((l) => /\.cpp \(\d+\)/.test(l)).slice(0, 6)], report };
 }
 
-module.exports = { diagnose, looksLikeCrash, tail };
+/**
+ * Text sent to the admins (Discord): without what identifies the member —
+ * Steam IDs, Windows account name in paths, IP addresses, e-mail addresses.
+ */
+function scrub(text) {
+  return String(text || '')
+    .replace(/\b7656119\d{10}\b/g, '[steam-id]')
+    .replace(/([A-Za-z]:[\\/](?:Users|Utilisateurs|Documents and Settings)[\\/])[^\\/\r\n]+/gi, '$1[nom]')
+    .replace(/(\/home\/|\/Users\/)[^/\s]+/g, '$1[nom]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[e-mail]');
+}
+
+module.exports = { diagnose, looksLikeCrash, tail, scrub };

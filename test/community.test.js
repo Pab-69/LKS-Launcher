@@ -27,13 +27,14 @@ test('proposals: small files uploaded, big ones by link, list with download link
     ] }
     : { body: 'ok' }));
   const c = new Community({ url: 'https://x.supabase.co', anonKey: 'k', fetchImpl: f });
-  const id = await c.propose({ kind: 'skin', car: 'lks_bmw_m2', skin: 'red', title: 'Livrée rouge', author: 'Pab', steamId: '7656', zip: Buffer.from('PKzip') });
+  const id = await c.propose({ kind: 'skin', car: 'lks_bmw_m2', skin: 'red', title: 'Livrée rouge', author: 'Pab', zip: Buffer.from('PKzip') });
   assert.match(id, /^[0-9a-f-]{36}$/);
   assert.match(f.calls[0].url, new RegExp(`/storage/v1/object/lks-proposals/v1/${id}\\.zip$`));
   assert.strictEqual(f.calls[0].init.headers['Content-Type'], 'application/zip');
   assert.strictEqual(f.calls[1].body.p_file, `v1/${id}.zip`);
   assert.strictEqual(f.calls[1].body.p_link, '');
   assert.strictEqual(f.calls[1].body.p_size, 5);
+  assert.ok(!('p_steam_id' in f.calls[1].body), 'no Steam ID sent');
 
   await c.propose({ kind: 'car', car: 'kaze_s15', title: 'S15', author: 'Kaze', link: 'https://drive.google.com/x' });
   assert.ok(f.calls[2].url.endsWith('/rest/v1/rpc/submit_proposal'), 'link: no upload');
@@ -143,9 +144,10 @@ test('every run note and the live state shared with the judges', async () => {
     return { body: 'ok' };
   });
   const c = new Community({ url: 'https://x.supabase.co', anonKey: 'k', fetchImpl: f });
-  await c.addRun({ id: 'u1', driver: 'Pab', steamId: '7656', car: 'm2', track: 'cfd_calmont_2023', layout: 'Calmont', kind: 'drift', score: 78.44, detail: { clips: [] } });
+  await c.addRun({ id: 'u1', driver: 'Pab', car: 'm2', track: 'cfd_calmont_2023', layout: 'Calmont', kind: 'drift', score: 78.44, detail: { clips: [] } });
   assert.strictEqual(f.calls[0].body.p_score, 78.4);
   assert.strictEqual(f.calls[0].body.p_kind, 'drift');
+  assert.ok(!('p_steam_id' in f.calls[0].body));
   const runs = await c.runs({ track: 'cfd_calmont_2023', layout: 'Calmont', since: '2026-11-03T00:00:00Z' });
   assert.match(f.calls[1].url, /track=eq\.cfd_calmont_2023&layout=eq\.Calmont&created_at=gte\./);
   assert.strictEqual(runs[0].score, 72.4);
