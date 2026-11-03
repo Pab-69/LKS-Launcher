@@ -1757,7 +1757,7 @@ function setupIpc() {
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
-        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}) })), refLine: [], refSpeed: 0 };
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
         const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
         if (gated) for (const k of ['progress', 'start', 'finish', 'grid', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];

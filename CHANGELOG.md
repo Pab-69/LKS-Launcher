@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 1.12.1
+
+- **Clips de Calmont et Biķernieki repris du marquage au sol** : ce sont maintenant exactement les clips peints sur la piste, plus des clips calculés.
+  - Calmont : les 2 cadres et les 3 longues zones peintes le long des bords ; le départ et l'arrivée sont les lignes peintes en travers de la route.
+  - Biķernieki : les 4 zones à la craie entre deux piquets, le repère jaune et la ligne en travers à l'entrée de la boucle ; l'arrivée est la ligne jaune à la sortie de la boucle.
+- Les longues zones comptent sur toute leur longueur (avant, un clip était toujours un cercle).
+- La ligne de référence passe par tous les clips.
+- Appli en jeu 2.1 (mise à jour automatique au lancement du jeu).
+
 ## 1.12.0
 
 - **Clips refaits sur Calmont et Biķernieki**  : chaque circuit a été analysé (murs, bords de route, portes de chrono, traces de pneus) pour placer les cordes, les zones extérieures et une ligne de drift. Ce sont les **parcours officiels** : ils remplacent le tracé automatique. Biķernieki suit les 9 zones de jugement VDC (Pie Ozola, Elkonis, Ģenerālis, Tilts…). Un parcours publié par les admins reste prioritaire.

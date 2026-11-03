@@ -13,7 +13,8 @@
  *
  * Course (per track/layout, published in the manifest or generated from the
  * track's AI line):
- *   { section: [dStart, dEnd], clips: [{ name, kind: 'inner'|'outer', x, z, r }],
+ *   { section: [dStart, dEnd], clips: [{ name, kind: 'inner'|'outer', x, z, r, path? }],
+ *   (a clip with a path is a long zone painted along the road: hit within r of the path)
  *     refLine: [[x, z], …], refSpeed, slipSign, rules: { debutant: {…}, normal: {…}, pro: {…} } }
  */
 
@@ -92,6 +93,23 @@ function merge(base, over) {
   return out;
 }
 
+/** Distance from (x, z) to a clip: to its centre, or to its path for a long zone. */
+function clipDist(c, x, z) {
+  const p = c.path;
+  if (!Array.isArray(p) || p.length < 2) return Math.hypot(x - c.x, z - c.z);
+  let best = Infinity;
+  for (let i = 0; i < p.length - 1; i++) {
+    const [ax, az] = p[i];
+    const [bx, bz] = p[i + 1];
+    const vx = bx - ax;
+    const vz = bz - az;
+    const l2 = vx * vx + vz * vz || 1;
+    const k = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / l2));
+    best = Math.min(best, Math.hypot(x - ax - vx * k, z - az - vz * k));
+  }
+  return best;
+}
+
 /** Rules of a mode for a course: preset + the admins' changes for this track. */
 function rulesFor(course, mode = 'normal') {
   const m = MODES[mode] ? mode : 'normal';
@@ -102,7 +120,7 @@ function rulesFor(course, mode = 'normal') {
 function courseVersion(course, mode = 'normal') {
   const m = MODES[mode] ? mode : 'normal';
   const c = course || {};
-  const body = JSON.stringify([c.section || [0, 1], (c.clips || []).map((k) => [k.kind, r1(k.x), r1(k.z), r1(k.r)]), (c.refLine || []).length, Math.round(c.refSpeed || 0), rulesFor(course, m)]);
+  const body = JSON.stringify([c.section || [0, 1], (c.clips || []).map((k) => [k.kind, r1(k.x), r1(k.z), r1(k.r), ...(Array.isArray(k.path) ? [k.path.length, ...k.path[0], ...k.path[k.path.length - 1]] : [])]), (c.refLine || []).length, Math.round(c.refSpeed || 0), rulesFor(course, m)]);
   return `${crypto.createHash('sha256').update(body).digest('hex').slice(0, 8)}-${m}`;
 }
 
@@ -280,7 +298,7 @@ function scoreDrift(samples, course, mode = 'normal') {
   const clips = ((course && course.clips) || []).map((c, i) => {
     let best = null;
     for (const s of judged) {
-      const dist = Math.hypot(s[C.x] - c.x, s[C.z] - c.z);
+      const dist = clipDist(c, s[C.x], s[C.z]);
       if (!best || dist < best.dist) best = { dist, s };
     }
     const r = (c.r || 3) * rules.clipScale;
@@ -483,12 +501,12 @@ class LiveClips {
   }
 
   reset() {
-    this.state = ((this.course && this.course.clips) || []).map((c, i) => ({ name: c.name || `Clip ${i + 1}`, r: c.r || 3, x: c.x, z: c.z, best: null, hit: false }));
+    this.state = ((this.course && this.course.clips) || []).map((c, i) => ({ name: c.name || `Clip ${i + 1}`, r: c.r || 3, x: c.x, z: c.z, path: c.path, best: null, hit: false }));
   }
 
   feed(x, z, angle, speed) {
     for (const c of this.state) {
-      const dist = Math.hypot(x - c.x, z - c.z);
+      const dist = clipDist(c, x, z);
       if (dist > c.r * 4) continue;
       if (c.best === null || dist < c.best) c.best = dist;
       if (dist <= c.r && angle >= DRIFT_ANGLE && speed >= DRIFT_SPEED) c.hit = true;
@@ -509,6 +527,7 @@ function driftOf(lap, mode = 'normal', kind = 'drift') {
 }
 
 module.exports = {
+  clipDist,
   scoreDrift,
   scoreAllModes,
   scoreTandem,

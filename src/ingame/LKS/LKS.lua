@@ -176,10 +176,27 @@ local function resetClips()
 end
 resetClips()
 
+-- distance au clip : à son centre, ou à sa bande pour une zone longue peinte au sol
+local function clipDist(c, x, z)
+  local path = c.path
+  if not path or #path < 2 then return math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2) end
+  local best = math.huge
+  for i = 1, #path - 1 do
+    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
+    local vx, vz = bx - ax, bz - az
+    local l2 = vx * vx + vz * vz
+    if l2 <= 0 then l2 = 1 end
+    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / l2))
+    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
+    if d < best then best = d end
+  end
+  return best
+end
+
 local function updateClips(car, angle)
   local p = car.position
   for i, c in ipairs(clips) do
-    local dist = math.sqrt((p.x - c.x) ^ 2 + (p.z - c.z) ^ 2)
+    local dist = clipDist(c, p.x, p.z)
     local st = clipState[i]
     if dist < c.r * 4 then
       if st.best == nil or dist < st.best then st.best = dist end
@@ -800,10 +817,14 @@ render.on('main.track.transparent', function()
     for i, c in ipairs(clips) do
       local st = clipState[i]
       local col = (st and st.hit) and GREEN or (c.kind == 'outer' and AMBER or RED)
-      local p = vec3(c.x, (c.y or cy) + 0.15, c.z)
       if car and math.abs(c.x - car.position.x) < 250 and math.abs(c.z - car.position.z) < 250 then
-        if not pcall(render.circle, p, up, c.r, rgbm(col.r, col.g, col.b, 0.25), col) then
-          pcall(render.debugSphere, p, 0.5, col)
+        local pts = c.path or { { c.x, c.z } }
+        local r = c.path and math.min(c.r, 1.2) or c.r
+        for _, q in ipairs(pts) do
+          local p = vec3(q[1], (c.y or cy) + 0.15, q[2])
+          if not pcall(render.circle, p, up, r, rgbm(col.r, col.g, col.b, 0.25), col) then
+            pcall(render.debugSphere, p, 0.4, col)
+          end
         end
       end
     end

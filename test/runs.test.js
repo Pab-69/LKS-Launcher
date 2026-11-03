@@ -40,7 +40,7 @@ test('official courses: Calmont and Biķernieki with gates, line and clips on th
     assert.ok(c, key);
     assert.ok(hasGates(c));
     assert.strictEqual(c.progress, 'line');
-    assert.ok(c.clips.length >= 8 && c.clips.every((k) => ['inner', 'outer'].includes(k.kind) && k.r > 0 && Number.isFinite(k.y)));
+    assert.ok(c.clips.length >= 5 && c.clips.every((k) => ['inner', 'outer'].includes(k.kind) && k.r > 0 && Number.isFinite(k.y)));
     const t = new LineTracker(c.refLine);
     // every clip is close to the line (on the road), in course order
     let last = -1;
@@ -113,7 +113,7 @@ test('runs between gates: Calmont run recorded and judged on the official clips'
   assert.ok(run.samples[0][0] < 0.02 && run.samples[run.samples.length - 1][0] > 0.98);
   assert.ok(run.lapMs > 10000 && run.lapMs < 40000, String(run.lapMs));
   const res = scoreDrift(run.samples, course);
-  assert.ok(res.clips.filter((c) => c.hit).length >= 5, 'driving the line hits most clips');
+  assert.strictEqual(res.clips.filter((c) => c.hit).length, course.clips.length, 'driving the line goes through every painted clip');
   assert.ok(res.line > 0);
   assert.strictEqual(resets.length, 0);
   assert.strictEqual(r.live.run.active, false);
@@ -158,7 +158,8 @@ test('in-game app files: courses with gates, battle runs, ghost library', () => 
   fs.mkdirSync(dir, { recursive: true });
   writeCourses(ac, { 'cfd_calmont_2023|Calmont': bundledCourse('cfd_calmont_2023', 'Calmont'), 'x|': { clips: [{ name: 'A"b', x: 1, z: 2, r: 3 }] } });
   const lua = fs.readFileSync(path.join(dir, 'courses.lua'), 'utf8');
-  assert.match(lua, /start = \{ \{ -70\.2, -10\.4 \}/);
+  assert.match(lua, /start = \{ \{ -67\.6, -11 \}/);
+  assert.match(lua, /path = \{ \{ -?\d/, "long painted zones keep their path");
   assert.match(lua, /line = \{ \{/);
   assert.match(lua, /grid = \{ x = /);
   assert.match(lua, /kind = "outer"/);

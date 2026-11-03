@@ -235,9 +235,19 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
       g.strokeStyle = CLIP_COLORS[c.kind] || CLIP_COLORS.inner;
       g.fillStyle = g.strokeStyle;
       g.lineWidth = 2;
-      g.beginPath();
-      g.arc(px(c.x), pz(c.z), Math.max(5, (c.r || 3) * k), 0, Math.PI * 2);
-      g.stroke();
+      if (Array.isArray(c.path) && c.path.length > 1) {
+        // long zone painted on the ground: a band along its path
+        g.lineWidth = Math.max(4, (c.r || 1.5) * 2 * k);
+        g.globalAlpha = 0.55;
+        g.lineCap = 'round';
+        path(c.path);
+        g.globalAlpha = 1;
+        g.lineWidth = 2;
+      } else {
+        g.beginPath();
+        g.arc(px(c.x), pz(c.z), Math.max(5, (c.r || 3) * k), 0, Math.PI * 2);
+        g.stroke();
+      }
       g.font = '700 12px Barlow Condensed, sans-serif';
       g.fillText(String(i + 1), px(c.x) + Math.max(7, (c.r || 3) * k) + 2, pz(c.z) + 4);
     });

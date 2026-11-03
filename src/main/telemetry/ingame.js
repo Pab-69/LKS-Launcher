@@ -53,7 +53,7 @@ function writeCourses(acRoot, courses = {}) {
   if (!fs.existsSync(dir)) return false;
   const lines = ['-- Généré par le launcher LKS : parcours de drift par circuit.', 'return {'];
   for (const [key, c] of Object.entries(courses || {})) {
-    const clips = (c.clips || []).map((k, i) => `{ name = ${luaStr(k.name || `Clip ${i + 1}`)}, kind = ${luaStr(k.kind === 'outer' ? 'outer' : 'inner')}, x = ${num(k.x)}, z = ${num(k.z)}, r = ${num(k.r || 3)}${Number.isFinite(Number(k.y)) && k.y !== null ? `, y = ${num(k.y)}` : ''} }`);
+    const clips = (c.clips || []).map((k, i) => `{ name = ${luaStr(k.name || `Clip ${i + 1}`)}, kind = ${luaStr(k.kind === 'outer' ? 'outer' : 'inner')}, x = ${num(k.x)}, z = ${num(k.z)}, r = ${num(k.r || 3)}${Number.isFinite(Number(k.y)) && k.y !== null ? `, y = ${num(k.y)}` : ''}${Array.isArray(k.path) && k.path.length > 1 ? `, path = { ${k.path.slice(0, 60).map(pair).join(', ')} }` : ''} }`);
     const parts = [`clips = { ${clips.join(', ')} }`];
     if (Array.isArray(c.start) && Array.isArray(c.finish) && Array.isArray(c.refLine) && c.refLine.length > 1) {
       parts.push(`start = { ${pair(c.start[0])}, ${pair(c.start[1])} }`, `finish = { ${pair(c.finish[0])}, ${pair(c.finish[1])} }`);
