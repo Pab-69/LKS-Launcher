@@ -8,7 +8,7 @@ const path = require('path');
 const http = require('http');
 const dgram = require('dgram');
 const ini = require('../src/main/ini');
-const { buildServerConfig, packContent, ServerHost } = require('../src/main/hosting');
+const { buildServerConfig, packContent, ServerHost, serverStopReason, LOBBY_REFUSED } = require('../src/main/hosting');
 const { findGateway, isPrivateIp } = require('../src/main/upnp');
 const { networkAddresses } = require('../src/main/netinfo');
 const { encodeInvite, decodeInvite } = require('../src/shared/invite');
@@ -282,4 +282,38 @@ test('real PC report: PowerShell progress output, VirtualBox card, v2 box answer
   const gw = new Gateway({ controlUrl: `http://127.0.0.1:${web.address().port}/ctl`, serviceType: 'urn:schemas-upnp-org:service:WANIPConnection:2', localAddress: '192.168.1.117' });
   await gw.map(9600, 'TCP', 'LKS');
   assert.deepStrictEqual(actions, ['AddPortMapping:0', 'AddPortMapping:86400', 'AddPortMapping:3600', 'AddAnyPortMapping:3600']);
+});
+
+test('stop reason: the AC lobby refusing the server is recognised', () => {
+  const log = [
+    'Registering to AC central server',
+    'RESPONSE: ERROR - TOO MANY REGISTRATION ATTEMPTS, SLOW DOWN',
+    'LOBBY COULD NOT BE RACHED, SHUTTING SERVER DOWN',
+    'Serveur arrêté (code 0)',
+  ];
+  assert.strictEqual(serverStopReason(log), LOBBY_REFUSED);
+  assert.strictEqual(serverStopReason(['listen udp :9600: bind: address already in use']), 'un port du serveur est déjà utilisé');
+  assert.strictEqual(serverStopReason(['all good']), '');
+});
+
+test('default assists: no auto clutch, no auto blip, TC off, no penalties', () => {
+  const dir = tmp();
+  const { Settings } = require('../src/main/config');
+  const s = new Settings(dir);
+  assert.strictEqual(s.data.assists.autoClutch, false);
+  assert.strictEqual(s.data.assists.autoBlip, false);
+  assert.strictEqual(s.data.assists.tractionControl, 0);
+  assert.strictEqual(s.data.solo.penalties, false);
+});
+
+test('settings migration 1.10.2: old assist defaults switched off once, choices kept after', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ assists: { preset: 'normal', autoClutch: true, autoBlip: true, tractionControl: 1, abs: 2 }, solo: { penalties: true } }));
+  const { Settings } = require('../src/main/config');
+  const s = new Settings(dir);
+  assert.deepStrictEqual([s.data.assists.autoClutch, s.data.assists.autoBlip, s.data.assists.tractionControl, s.data.solo.penalties, s.data.assists.abs, s.data.assists.preset], [false, false, 0, false, 2, 'custom']);
+  s.update({ assists: { autoClutch: true, tractionControl: 2 } }); // chosen again afterwards: kept
+  const again = new Settings(dir);
+  assert.strictEqual(again.data.assists.autoClutch, true);
+  assert.strictEqual(again.data.assists.tractionControl, 2);
 });

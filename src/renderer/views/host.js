@@ -34,7 +34,7 @@ export default function hostView(root, _params, { go }) {
     road: saved.road ?? 28,
     damage: saved.damage ?? 50,
     password: saved.password || randomPassword(),
-    lobby: Boolean(saved.lobby),
+    launcherList: saved.launcherList !== false,
     upnp: saved.upnp !== false,
     ports: saved.ports || { tcp: 9600, udp: 9600, http: 8081 },
   };
@@ -140,11 +140,18 @@ export default function hostView(root, _params, { go }) {
     }
     if (!(s.invites || []).length) inv.append(h('p.muted', { style: { margin: 0 } }, 'Aucun réseau détecté.'));
     const portsKo = up.state === 'failed' || up.state === 'cgnat';
+    const ls = s.listed || {};
+    const listedText = {
+      ok: ['Visible dans Serveurs pour les membres', 'ok'],
+      failed: [`Pas visible dans Serveurs : ${ls.error}`, 'warn'],
+      unavailable: [`Pas visible dans Serveurs : ${ls.error}`, 'warn'],
+    }[ls.state];
     body.append(
       h('h2.section', 'Inviter'),
       h('div.panel',
         h('div.row.wrap',
           upText[0] ? h(`span.tag.${upText[1]}`, upText[0]) : null,
+          listedText ? h(`span.tag.${listedText[1]}`, listedText[0]) : null,
           up.state === 'manual' ? h('button.btn.btn-sm.btn-ghost', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, 'Repasser en ouverture automatique') : null),
         h('p.hint', 'Envoie un code. Il se colle dans Serveurs → Rejoindre avec un code (mot de passe inclus).'),
         inv),
@@ -230,7 +237,7 @@ export default function hostView(root, _params, { go }) {
         )),
       h('div.panel', h('h3', 'Réseau'),
         toggle('Ouvrir les ports de ma box automatiquement (UPnP)', o.upnp, (v) => { o.upnp = v; }, 'Pour les joueurs qui ne sont pas chez toi.'),
-        toggle('Visible dans la liste publique du jeu', o.lobby, (v) => { o.lobby = v; }, 'Désactivé : seuls ceux qui ont le code peuvent rejoindre.'),
+        toggle('Visible dans le launcher (Serveurs)', o.launcherList, (v) => { o.launcherList = v; }, 'Les membres la voient dans Serveurs et la rejoignent en un clic. Jamais dans la liste publique du jeu. Désactivé : seulement avec un code.'),
         h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Ports (avancé)'),
           h('div.grid.grid-2.mt',
             field('Port jeu (TCP + UDP)', h('input.input', { type: 'number', value: o.ports.tcp, on: { input: (e) => { o.ports = { ...o.ports, tcp: Number(e.target.value), udp: Number(e.target.value) }; } } })),

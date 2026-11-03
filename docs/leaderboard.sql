@@ -86,3 +86,79 @@ end $$;
 revoke all on function public.submit_lap(text, text, text, text, text, text, integer, numeric, text, jsonb, text) from public;
 grant execute on function public.submit_lap(text, text, text, text, text, text, integer, numeric, text, jsonb, text) to anon, authenticated;
 grant select on public.lks_laps to anon, authenticated;
+
+-- Parties hébergées depuis le launcher (onglet Serveurs) : chaque hôte annonce sa
+-- partie toutes les minutes via announce_host ; elle disparaît de la liste 3 min
+-- après la dernière annonce, ou tout de suite à l'arrêt (remove_host). Le mot de
+-- passe de la partie n'est jamais stocké ici. Seul le launcher qui a créé une
+-- annonce (il garde son « secret ») peut la modifier ou la retirer.
+
+create table if not exists public.lks_hosts (
+  id text primary key,
+  secret text not null,
+  name text not null,
+  host_driver text not null default '',
+  addresses jsonb not null default '[]'::jsonb,
+  tcp_port integer not null,
+  http_port integer not null,
+  has_password boolean not null default false,
+  track text not null default '',
+  layout text not null default '',
+  cars jsonb not null default '[]'::jsonb,
+  slots integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.lks_hosts enable row level security;
+revoke all on public.lks_hosts from anon, authenticated;
+-- lecture : tout sauf le secret, et seulement les parties encore annoncées
+create or replace view public.lks_hosts_live with (security_invoker = false) as
+  select id, name, host_driver, addresses, tcp_port, http_port, has_password, track, layout, cars, slots, updated_at
+    from public.lks_hosts where updated_at > now() - interval '3 minutes';
+grant select on public.lks_hosts_live to anon, authenticated;
+
+create or replace function public.announce_host(
+  p_id text, p_secret text, p_name text, p_host_driver text, p_addresses jsonb,
+  p_tcp_port integer, p_http_port integer, p_has_password boolean,
+  p_track text, p_layout text, p_cars jsonb, p_slots integer
+) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(length(p_id), 0) not between 8 and 64
+     or coalesce(length(p_secret), 0) not between 16 and 128
+     or coalesce(length(p_name), 0) not between 1 and 60
+     or length(coalesce(p_host_driver, '')) > 40
+     or jsonb_typeof(coalesce(p_addresses, '[]'::jsonb)) <> 'array'
+     or jsonb_array_length(coalesce(p_addresses, '[]'::jsonb)) > 8
+     or length(coalesce(p_addresses, '[]'::jsonb)::text) > 2000
+     or p_tcp_port not between 1 and 65535
+     or p_http_port not between 1 and 65535
+     or length(coalesce(p_track, '')) > 80
+     or length(coalesce(p_layout, '')) > 80
+     or jsonb_typeof(coalesce(p_cars, '[]'::jsonb)) <> 'array'
+     or length(coalesce(p_cars, '[]'::jsonb)::text) > 4000
+     or coalesce(p_slots, 0) not between 0 and 64 then
+    raise exception 'données invalides';
+  end if;
+  delete from public.lks_hosts where updated_at < now() - interval '1 day';
+  insert into public.lks_hosts (id, secret, name, host_driver, addresses, tcp_port, http_port, has_password, track, layout, cars, slots, updated_at)
+  values (p_id, p_secret, p_name, coalesce(p_host_driver, ''), coalesce(p_addresses, '[]'::jsonb), p_tcp_port, p_http_port, coalesce(p_has_password, false), coalesce(p_track, ''), coalesce(p_layout, ''), coalesce(p_cars, '[]'::jsonb), coalesce(p_slots, 0), now())
+  on conflict (id) do update
+    set name = excluded.name, host_driver = excluded.host_driver, addresses = excluded.addresses,
+        tcp_port = excluded.tcp_port, http_port = excluded.http_port, has_password = excluded.has_password,
+        track = excluded.track, layout = excluded.layout, cars = excluded.cars, slots = excluded.slots, updated_at = now()
+    where public.lks_hosts.secret = excluded.secret;
+  return 'ok';
+end $$;
+
+create or replace function public.remove_host(p_id text, p_secret text) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.lks_hosts where id = p_id and secret = p_secret;
+  return 'ok';
+end $$;
+
+revoke all on function public.announce_host(text, text, text, text, jsonb, integer, integer, boolean, text, text, jsonb, integer) from public;
+grant execute on function public.announce_host(text, text, text, text, jsonb, integer, integer, boolean, text, text, jsonb, integer) to anon, authenticated;
+revoke all on function public.remove_host(text, text) from public;
+grant execute on function public.remove_host(text, text) to anon, authenticated;

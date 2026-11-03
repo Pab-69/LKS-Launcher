@@ -11,6 +11,7 @@ const { scanCars, scanTracks, scanWeathers, resolveContentFile, readCar, readTra
 const { ContentSync } = require('./sync');
 const { buildSoloRaceIni, buildOnlineRaceIni, buildAssistsIni, GameLauncher } = require('./launch');
 const { getServerInfo, getServerCars, resolveTrack } = require('./servers');
+const { HostList, newHostId, bestAddress } = require('./hostList');
 const { GitHub } = require('./github');
 const { Publisher, isOfficial } = require('./publisher');
 const { listFiles, hashFolder } = require('./hash');
@@ -24,7 +25,7 @@ const { BrandingManager } = require('./branding');
 const { SetupSync, localSetupCars } = require('./setups');
 const { DiscordPresence } = require('./discord');
 const { appConfig } = require('./config');
-const { buildServerConfig, ServerHost, serverExe } = require('./hosting');
+const { buildServerConfig, ServerHost, serverExe, serverStopReason, LOBBY_REFUSED } = require('./hosting');
 const { firewallStatus, fixFirewall } = require('./firewall');
 const { findGateway, isPrivateIp, boxGuide } = require('./upnp');
 const { networkAddresses, LABELS: NET_LABELS } = require('./netinfo');
@@ -92,16 +93,9 @@ let hostOpts = null; // settings of the running server (for an automatic restart
 let hostStopRequested = false;
 let hostRestarts = []; // times of the automatic restarts
 let lastHostStop = null; // why the server stopped, shown on the Héberger page
+let hostAd = null; // { id, secret, timer }: the game announced in the launcher's server list
 let appQuitting = false;
 
-/** Why acServer stopped, from the end of its log (Go panic, port taken, missing content…). */
-function serverStopReason(log) {
-  const text = log.slice(-60).join('\n');
-  if (/bind: (?:only one usage|address already in use)|address already in use|Only one usage of each socket/i.test(text)) return 'un port du serveur est déjà utilisé';
-  if (/panic:|goroutine \d+/i.test(text)) return 'le serveur a planté';
-  if (/cannot find|not found|no such file/i.test(text)) return 'un fichier du circuit ou d’une voiture manque';
-  return '';
-}
 let gateway = null;
 let telemetry = null;
 let mappedPorts = [];
@@ -309,6 +303,63 @@ function syncSetups() {
 }
 
 // ---------------------------------------------------------------- hosting a private game
+/** Games hosted from the launcher: listed only in the launcher (never in the public AC lobby). */
+function hostList() {
+  const cfg = sync.manifest && sync.manifest.leaderboard;
+  if (!cfg || !cfg.url || !cfg.anonKey) return null;
+  try {
+    return new HostList(cfg);
+  } catch {
+    return null;
+  }
+}
+
+function announceHost() {
+  if (!hostState || !hostAd) return Promise.resolve();
+  const list = hostList();
+  if (!list) {
+    hostState.listed = { state: 'unavailable', error: 'le classement Supabase n’est pas configuré (Publication → Classement)' };
+    return Promise.resolve();
+  }
+  const s = hostState;
+  return list.announce({
+    id: hostAd.id,
+    secret: hostAd.secret,
+    name: s.name,
+    hostDriver: settings.data.driverName || '',
+    addresses: computeInvites().map((i) => ({ kind: i.kind, address: i.address })),
+    tcpPort: s.ports.tcp,
+    httpPort: s.ports.http,
+    hasPassword: Boolean(s.password),
+    track: s.trackId,
+    layout: s.layoutId,
+    cars: s.cars,
+    slots: s.slots,
+  }).then(() => {
+    if (hostState) hostState.listed = { state: 'ok' };
+  }).catch((err) => {
+    if (hostState) hostState.listed = { state: 'failed', error: err.message };
+    applog.log('host announce failed', err.message);
+  }).finally(() => send('host:changed'));
+}
+
+function startAnnounce() {
+  if (!hostAd) hostAd = { ...newHostId(), timer: null };
+  clearInterval(hostAd.timer);
+  announceHost();
+  setTimeout(announceHost, 15000); // the box / VPN addresses are known a bit later
+  hostAd.timer = setInterval(announceHost, 60000);
+}
+
+function stopAnnounce() {
+  if (!hostAd) return Promise.resolve();
+  const ad = hostAd;
+  hostAd = null;
+  clearInterval(ad.timer);
+  const list = hostList();
+  return list ? list.remove(ad.id, ad.secret).catch(() => {}) : Promise.resolve();
+}
+
 function computeInvites() {
   if (!hostState) return [];
   const invites = [];
@@ -651,13 +702,14 @@ function startHost(opts) {
   const slots = Math.min(Number(opts.slots) || 12, maxSlots);
   const config = buildServerConfig({
     ...opts,
+    lobby: false, // the public AC lobby rate-limits and kills the server: launcher list instead
     layout: layout.id,
     slots,
     cars: cars.map((c) => ({ id: c.id, skins: c.skins.map((k) => k.id) })),
     ports: opts.ports,
   });
   host.start({ acRoot: acRoot(), config, pack: { cars: cars.map((c) => c.id), track: track.id, layout: layout.id }, label: `${track.name}` });
-  hostState = { name: opts.name || 'Partie LKS', ports: config.ports, password: opts.password || '', track: track.name, layout: layout.name, slots, cars: cars.map((c) => c.id), upnp: { state: opts.upnp === false ? 'off' : 'working' }, invites: [] };
+  hostState = { name: opts.name || 'Partie LKS', ports: config.ports, password: opts.password || '', track: track.name, layout: layout.name, trackId: track.id, layoutId: layout.id, slots, cars: cars.map((c) => c.id), upnp: { state: opts.upnp === false ? 'off' : 'working' }, invites: [] };
   hostState.invites = computeInvites();
   settings.update({ host: { ...opts, manualPorts: Boolean(settings.data.host && settings.data.host.manualPorts) } });
   if (!game.running) setPresence({ details: 'Héberge une partie', state: `${track.name} — ${slots} places`, startedAt: Date.now() });
@@ -667,6 +719,11 @@ function startHost(opts) {
   });
   else if (opts.upnp !== false) openPorts();
   checkFirewall();
+  if (opts.launcherList !== false) startAnnounce();
+  else {
+    stopAnnounce();
+    hostState.listed = { state: 'off' };
+  }
   hostOpts = opts;
   hostStopRequested = false;
   lastHostStop = null;
@@ -677,16 +734,22 @@ function setupHosting() {
   host.on('stopped', (info = {}) => {
     const unexpected = !hostStopRequested && !appQuitting;
     const uptime = host.info ? Date.now() - host.info.startedAt : 0;
-    lastHostStop = { at: new Date().toISOString(), code: info.code === undefined ? null : info.code, error: info.error || null, byUser: !unexpected, uptimeMs: uptime, log: host.log.slice(-25), reason: serverStopReason(host.log) };
+    lastHostStop = { at: new Date().toISOString(), code: info.code === undefined ? null : info.code, error: info.error || null, byUser: !unexpected, uptimeMs: uptime, log: host.log.slice(-25), reason: serverStopReason(host.log), ports: hostState && hostState.ports };
     applog.log('server stopped', { code: lastHostStop.code, unexpected, uptimeMs: uptime, reason: lastHostStop.reason });
     hostState = null;
     // stopped on its own: start it again with the same settings (3 times in 15 min at most)
     const now = Date.now();
     hostRestarts = hostRestarts.filter((t) => now - t < 15 * 60 * 1000);
-    if (unexpected && hostOpts && hostRestarts.length < 3) {
+    // the public list refused it (too many registrations): restart off the list, invite codes still work
+    const lobbyRefused = unexpected && lastHostStop.reason === LOBBY_REFUSED && hostOpts && hostOpts.lobby;
+    if (lobbyRefused) hostOpts = { ...hostOpts, lobby: false };
+    if (unexpected && hostOpts && (lobbyRefused || hostRestarts.length < 3)) {
       hostRestarts.push(now);
       lastHostStop.restarted = true;
-      send('toast', { kind: 'warn', text: `Le serveur s’est arrêté tout seul${lastHostStop.reason ? ` (${lastHostStop.reason})` : ''} : redémarrage…` });
+      lastHostStop.lobbyOff = lobbyRefused;
+      send('toast', { kind: 'warn', text: lobbyRefused
+        ? 'La liste publique du jeu refuse ton serveur pour l’instant : relancé sans elle, les codes d’invitation marchent toujours'
+        : `Le serveur s’est arrêté tout seul${lastHostStop.reason ? ` (${lastHostStop.reason})` : ''} : redémarrage…` });
       setTimeout(() => {
         try {
           const keep = lastHostStop;
@@ -704,6 +767,7 @@ function setupHosting() {
       return;
     }
     closePorts();
+    stopAnnounce();
     if (unexpected) {
       send('toast', { kind: 'error', text: `Le serveur s’est arrêté${lastHostStop.reason ? ` : ${lastHostStop.reason}` : ''}` });
       if (Notification.isSupported()) new Notification({ title: 'Serveur arrêté', body: lastHostStop.reason || 'Le serveur Assetto Corsa s’est arrêté tout seul.' }).show();
@@ -1146,12 +1210,35 @@ function setupIpc() {
   });
 
   // Servers
-  handle('servers:list', () => {
+  handle('servers:list', async () => {
     const fromManifest = (sync.manifest.servers || []).map((x) => ({ ...x, source: 'lks' }));
     const custom = (settings.data.customServers || []).map((x) => ({ ...x, source: 'custom' }));
-    return [...fromManifest, ...custom].map((x) => ({ ...x, httpPort: Number(x.httpPort) || 8081, key: `${x.ip}:${x.httpPort || 8081}` }));
+    const list = hostList();
+    const hosted = list ? await list.list().catch((err) => {
+      applog.log('host list failed', err.message);
+      return [];
+    }) : [];
+    const launcher = hosted.filter((e) => e.addresses.length).map((e) => ({
+      name: e.name,
+      ip: e.addresses[0].address,
+      httpPort: e.httpPort,
+      addresses: e.addresses,
+      hostDriver: e.hostDriver,
+      mine: Boolean(hostAd && hostAd.id === e.id),
+      description: `Hébergée par ${e.hostDriver || 'un membre'} depuis le launcher`,
+      source: 'launcher',
+      key: `lks-host:${e.id}`,
+    }));
+    return [...launcher, ...[...fromManifest, ...custom].map((x) => ({ ...x, httpPort: Number(x.httpPort) || 8081, key: `${x.ip}:${x.httpPort || 8081}` }))];
   });
-  handle('servers:info', (server) => getServerInfo(server));
+  handle('servers:info', async (server) => {
+    if (!Array.isArray(server.addresses)) return getServerInfo(server);
+    // a game hosted from the launcher: use whichever of its addresses answers from here
+    const best = await bestAddress(server, getServerInfo);
+    if (best) return best.info;
+    const kinds = server.addresses.map((a) => NET_LABELS[a.kind] || a.kind).join(', ');
+    return { online: false, name: server.name, ip: server.ip, httpPort: server.httpPort, error: `aucune adresse ne répond (${kinds}). Si l'hôte n'a pas pu ouvrir ses ports, rejoignez le VPN du groupe`, hosted: true };
+  });
   handle('servers:cars', (server) => getServerCars(server, settings.data.steamId));
   handle('servers:checkContent', (info) => {
     const content = scanContent(true);
@@ -1313,7 +1400,7 @@ function setupIpc() {
   });
   handle('host:diagnostic', async () => {
     const st = await hostStatus();
-    const s = hostState || {};
+    const s = hostState || { ports: (lastHostStop && lastHostStop.ports) || (hostOpts && hostOpts.ports) };
     const net = require('os').networkInterfaces();
     const lines = [
       `LKS Launcher ${app.getVersion()} — diagnostic hébergement (${new Date().toISOString()})`,
@@ -1325,7 +1412,8 @@ function setupIpc() {
       `Réseaux détectés : ${st.networks.map((n) => `${n.kind}=${n.address}`).join(', ') || 'aucun'}`,
       `Cartes : ${Object.entries(net).map(([k, v]) => `${k}=${(v || []).filter((a) => a.family === 'IPv4').map((a) => a.address).join('/')}`).join(', ')}`,
       `Codes d'invitation : ${(s.invites || []).map((i) => i.kind).join(', ') || 'aucun'}`,
-      `Dernier arrêt : ${lastHostStop ? `${lastHostStop.at} · ${lastHostStop.byUser ? 'demandé' : 'tout seul'} · code ${lastHostStop.code} · après ${Math.round(lastHostStop.uptimeMs / 60000)} min · ${lastHostStop.reason || 'cause inconnue'}${lastHostStop.restarted ? ' · relancé' : ''}` : 'aucun'}`,
+      `Liste du launcher : ${s.listed ? `${s.listed.state}${s.listed.error ? ` — ${s.listed.error}` : ''}` : '—'}`,
+      `Dernier arrêt : ${lastHostStop ? `${lastHostStop.at} · ${lastHostStop.byUser ? 'demandé' : 'tout seul'} · code ${lastHostStop.code} · après ${Math.round(lastHostStop.uptimeMs / 60000)} min · ${lastHostStop.reason || 'cause inconnue'}${lastHostStop.restarted ? ` · relancé${lastHostStop.lobbyOff ? ' hors liste publique' : ''}` : ''}` : 'aucun'}`,
       ...(lastHostStop && !lastHostStop.byUser ? ['--- journal au moment de l’arrêt', ...lastHostStop.log] : []),
       '--- journal du serveur',
       ...(st.log || []).slice(-40),
@@ -1355,7 +1443,7 @@ function setupIpc() {
   handle('host:stop', async () => {
     hostStopRequested = true;
     host.stop();
-    await closePorts();
+    await Promise.all([closePorts(), stopAnnounce()]);
     return true;
   });
   handle('host:decodeInvite', (code) => decodeInvite(code));
@@ -1623,4 +1711,5 @@ app.on('before-quit', () => {
   // never leave a server running or ports open behind us
   if (host.running) host.stop();
   closePorts();
+  stopAnnounce();
 });

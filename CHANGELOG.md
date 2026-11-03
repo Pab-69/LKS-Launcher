@@ -1,5 +1,20 @@
 # Journal des versions
 
+## 1.11.0
+
+- **Parties visibles dans le launcher** : une partie lancée depuis Héberger apparaît dans **Serveurs** pour tous les membres (« Partie LKS », avec le nom de l'hôte), et se rejoint en un clic : le launcher essaie toutes les adresses de l'hôte (internet, VPN, réseau local) et prend celle qui répond. Elle disparaît de la liste à l'arrêt du serveur.
+- Les parties ne s'inscrivent plus dans la liste publique d'Assetto Corsa, qui refusait les serveurs et les faisait s'arrêter.
+- Admins : relancez le script du classement dans Supabase (Publication → Classement → Copier le script) pour activer la liste des parties.
+
+## 1.10.2
+
+- Nouveaux réglages par défaut pour rouler en Solo : embrayage auto, talon-pointe auto et pénalités désactivés, antipatinage sur Off. Ces réglages passent aussi sur ces valeurs chez ceux qui avaient encore les anciens réglages par défaut. Le changement ne se fait qu'une fois : tu peux les réactiver ensuite.
+
+## 1.10.1
+
+- Hébergement : quand la liste publique du jeu refuse ton serveur (« trop de tentatives d'inscription »), Assetto Corsa le coupait au bout de quelques secondes, et chaque redémarrage aggravait le refus. Le launcher reconnaît maintenant cette cause et relance le serveur **hors de la liste publique** : les codes d'invitation marchent toujours. L'option est décochée pour la prochaine fois.
+- Diagnostic : les ports s'affichent aussi quand le serveur est arrêté.
+
 ## 1.10.0
 
 - Hébergement plus fiable :

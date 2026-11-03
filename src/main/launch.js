@@ -65,7 +65,7 @@ function buildSoloRaceIni(o) {
     CARS: cars,
     AI_LEVEL: clampInt(o.aiLevel, 50, 100, 90),
     FIXED_SETUP: o.fixedSetup ? 1 : 0,
-    PENALTIES: o.penalties === false ? 0 : 1,
+    PENALTIES: o.penalties === true ? 1 : 0,
     JUMP_START_PENALTY: 0,
     RACE_LAPS: mode === 'race' ? laps : 0,
   };
@@ -168,7 +168,7 @@ function buildAssistsIni(a) {
       AUTO_BRAKE: a.autoBrake ? 1 : 0,
       AUTO_SHIFTER: a.autoShifter ? 1 : 0,
       ABS: clampInt(a.abs, 0, 2, 1),
-      TRACTION_CONTROL: clampInt(a.tractionControl, 0, 2, 1),
+      TRACTION_CONTROL: clampInt(a.tractionControl, 0, 2, 0),
       AUTO_CLUTCH: a.autoClutch ? 1 : 0,
       VISUALDAMAGE: a.visualDamage ? 1 : 0,
       DAMAGE: clampInt(a.damage, 0, 100, 100),

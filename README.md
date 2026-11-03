@@ -145,6 +145,8 @@ Pour un **classement partagé** entre tous les membres (gratuit) :
 2. Dans **SQL Editor**, colle le contenu de [`docs/leaderboard.sql`](docs/leaderboard.sql) (ou **Publication → Classement → Copier le script**) et lance-le.
 3. Dans **Project Settings → API**, copie l'URL du projet et la clé *anon public*, colle-les dans **Publication → Classement**, puis **Enregistrer**.
 
+Le même script active la liste des parties hébergées depuis le launcher (onglet **Serveurs**) : à relancer après une mise à jour du launcher qui le demande.
+
 Chaque pilote garde une seule entrée par voiture, circuit et type (chrono ou drift). La base ne la remplace que par un meilleur résultat. Sans Supabase, le classement montre les tours du PC et ceux importés.
 
 #### Notation du drift

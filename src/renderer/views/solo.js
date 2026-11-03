@@ -153,7 +153,7 @@ export default function solo(root, params) {
       toggle('Boîte auto', assists.autoShifter, custom((v) => { assists.autoShifter = v; })),
       toggle('Talon-pointe auto', assists.autoBlip, custom((v) => { assists.autoBlip = v; })),
       toggle('Pneus préchauffés', assists.tyreBlankets, custom((v) => { assists.tyreBlankets = v; })),
-      toggle('Pénalités (coupes de piste)', o.penalties !== false, (v) => { o.penalties = v; }),
+      toggle('Pénalités (coupes de piste)', o.penalties === true, (v) => { o.penalties = v; }),
       h('div.grid.mt',
         range('Dégâts', { min: 0, max: 100, step: 10, value: assists.damage, format: (v) => `${v} %`, onInput: custom((v) => { assists.damage = v; }) }),
         range('Consommation', { min: 0, max: 3, step: 1, value: assists.fuelRate, format: (v) => (v ? `x${v}` : 'Off'), onInput: custom((v) => { assists.fuelRate = v; }) }),

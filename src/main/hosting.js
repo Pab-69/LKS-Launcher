@@ -194,6 +194,19 @@ function packContent(acRoot, dir, { cars, track, layout }) {
   return copied;
 }
 
+const LOBBY_REFUSED = 'la liste publique du jeu (lobby) a refusé l’inscription du serveur';
+
+/** Why acServer stopped, from the end of its log (Go panic, port taken, missing content, lobby…). */
+function serverStopReason(log) {
+  const text = (log || []).slice(-60).join('\n');
+  if (/bind: (?:only one usage|address already in use)|address already in use|Only one usage of each socket/i.test(text)) return 'un port du serveur est déjà utilisé';
+  // acServer quits when the AC lobby can't be reached ("RACHED" sic) or rate-limits it
+  if (/LOBBY COULD NOT BE R[E]?ACHED|TOO MANY REGISTRATION ATTEMPTS/i.test(text)) return LOBBY_REFUSED;
+  if (/panic:|goroutine \d+/i.test(text)) return 'le serveur a planté';
+  if (/cannot find|not found|no such file/i.test(text)) return 'un fichier du circuit ou d’une voiture manque';
+  return '';
+}
+
 /** Runs one dedicated server at a time and keeps its last log lines. */
 class ServerHost extends EventEmitter {
   constructor() {
@@ -263,4 +276,4 @@ class ServerHost extends EventEmitter {
   }
 }
 
-module.exports = { buildServerConfig, packContent, ServerHost, serverExe, serverDir, DEFAULT_PORTS, sunAngle };
+module.exports = { buildServerConfig, packContent, ServerHost, serverExe, serverDir, DEFAULT_PORTS, sunAngle, serverStopReason, LOBBY_REFUSED };
