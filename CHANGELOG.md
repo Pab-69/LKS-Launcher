@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.16.1
+
+- **Carte de la télémétrie dans le bon sens** : elle est maintenant orientée comme la carte du jeu (avant, elle était à l'envers).
+- **3 nouveaux circuits avec clips officiels**, relevés sur le marquage au sol de chaque circuit :
+  - **Kart Volan** : 7 clips (5 cadres, l'arc de l'épingle et le losange). Ligne de start et arrivée sur la ligne peinte, ligne de départ sur le trait blanc en bas à gauche.
+  - **PGE Narodowy** : 3 zones peintes le long des murs et 3 clips de corde (dont 2 avec les pneus). Ligne de start sous l'arche, ligne de départ peinte en bas à gauche.
+  - **Englishtown** : 3 zones peintes et 2 clips (avec les poteaux). Ligne de start au départ A→B, ligne de départ sur les 3 traits de la voie de droite, arrivée A→B.
+- Chaque circuit a sa ligne de référence fluide qui passe par tous les clips.
+- Un tracé qui repasse au même endroit (PGE) ne termine plus la run trop tôt.
+
 ## 1.16.0
 
 - **La note de chaque run est partagée**, plus seulement les records : note, clips (✓ ou ✗, % des zones longues), note par zone et pénalités. Elle arrive chez les autres quelques secondes après la fin de la run.

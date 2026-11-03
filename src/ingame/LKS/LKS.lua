@@ -841,8 +841,9 @@ function script.update(dt)
   if gated then
     local d = locate(x, z, run.hint)
     run.d = d
-    if prevPos and not run.active and crossesForward(course.start, d, prevPos.x, prevPos.z, x, z) then onRunStart(car)
-    elseif prevPos and run.active and crossesForward(course.finish, d, prevPos.x, prevPos.z, x, z) then onRunEnd(car, clock - run.t0)
+    -- départ au début du tracé, arrivée à la fin (un tracé peut repasser au même endroit)
+    if prevPos and not run.active and d < 0.3 and crossesForward(course.start, d, prevPos.x, prevPos.z, x, z) then onRunStart(car)
+    elseif prevPos and run.active and d > 0.7 and crossesForward(course.finish, d, prevPos.x, prevPos.z, x, z) then onRunEnd(car, clock - run.t0)
     elseif run.active and clock - run.t0 > 600000 then run.active = false end
   elseif car.lapCount ~= lastLapCount then
     if lastLapCount >= 0 then onRunEnd(car, car.previousLapTimeMs) end

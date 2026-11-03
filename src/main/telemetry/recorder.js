@@ -203,13 +203,14 @@ class TelemetryRecorder extends EventEmitter {
       if (where.dist > 40) lap.offSince = lap.offSince || now;
       else lap.offSince = 0;
       if ((lap.offSince && now - lap.offSince > 3000) || now - lap.startedAt > RUN_MAX_MS) return this.reset(g, now, 'off');
-      if (prev && crossesForward(course.finish, tracker, where.d, prev.x, prev.z, x, z)) {
+      // the finish only counts near the end of the course (a track that passes the same place twice)
+      if (prev && where.d > 0.7 && crossesForward(course.finish, tracker, where.d, prev.x, prev.z, x, z)) {
         this.finishRun(st, now);
         this.lap = null;
       }
       return undefined;
     }
-    if (prev && crossesForward(course.start, tracker, where.d, prev.x, prev.z, x, z)) {
+    if (prev && where.d < 0.3 && crossesForward(course.start, tracker, where.d, prev.x, prev.z, x, z)) {
       this.newLap(g, now);
       this.lap.gate = true;
       this.lap.course = course;

@@ -201,8 +201,10 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
     const k = Math.min((w - 24) / (maxX - minX || 1), (height - 24) / (maxZ - minZ || 1));
     const ox = 12 + (w - 24 - (maxX - minX) * k) / 2;
     const px = (x) => ox + (x - minX) * k;
-    const pz = (z) => 12 + (maxZ - z) * k;
-    proj = { toWorld: (cx, cy) => [minX + (cx - ox) / k, maxZ - (cy - 12) / k], k };
+    // same orientation as the game's own track maps (map.png): z goes down the screen
+    const oz = 12 + (height - 24 - (maxZ - minZ) * k) / 2;
+    const pz = (z) => oz + (z - minZ) * k;
+    proj = { toWorld: (cx, cy) => [minX + (cx - ox) / k, minZ + (cy - oz) / k], k };
     const path = (pts) => {
       g.beginPath();
       pts.forEach(([x, z], j) => (j ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z))));

@@ -33,9 +33,9 @@ test('course line: progress, distance and gates', () => {
   assert.ok(!hasGates({ clips: [] }));
 });
 
-test('official courses: Calmont and Biķernieki with gates, line and clips on the road', () => {
+test('official courses: every track of the group with gates, line and clips on the road', () => {
   const all = bundledCourses();
-  for (const key of ['cfd_calmont_2023|Calmont', 'vdc_bikernieki_2022|drift_vdc']) {
+  for (const key of ['cfd_calmont_2023|Calmont', 'vdc_bikernieki_2022|drift_vdc', 'kart_volan_championship|', 'poland_pge_narodowy_v3|', 'englishtown_gambler_esda|']) {
     const c = all[key];
     assert.ok(c, key);
     assert.ok(hasGates(c));
@@ -63,7 +63,7 @@ test('official courses: Calmont and Biķernieki with gates, line and clips on th
 });
 
 // frames along the Calmont line: stopped before the start, run, then past the finish
-function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt = null } = {}) {
+function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt = null, track = 'cfd_calmont_2023', layout = 'Calmont' } = {}) {
   const line = course.refLine;
   const pts = [];
   const [a, b] = line;
@@ -89,7 +89,7 @@ function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt 
     }
     const physics = L.parsePhysics(L.encode(L.PHYSICS, L.PHYSICS_SIZE, { speedKmh: kmh, gear: 3, localVelocity: [Math.sin(r) * v, 0, Math.cos(r) * v] }));
     const graphics = L.parseGraphics(L.encode(L.GRAPHICS, L.GRAPHICS_SIZE, { status: 2, completedLaps: 0, iCurrentTime: 0, normalizedCarPosition: 0, carCoordinates: [px, 0, pz], isInPit: pitsAt !== null && i >= pitsAt ? 1 : 0 }));
-    const st = L.parseStatic(L.encode(L.STATIC, L.STATIC_SIZE, { carModel: 'lks_bmw_m2', track: 'cfd_calmont_2023', trackConfiguration: 'Calmont' }));
+    const st = L.parseStatic(L.encode(L.STATIC, L.STATIC_SIZE, { carModel: 'lks_bmw_m2', track, trackConfiguration: layout }));
     return { physics, graphics, static: st };
   });
 }
@@ -119,6 +119,23 @@ test('runs between gates: Calmont run recorded and judged on the official clips'
   assert.strictEqual(resets.length, 0);
   assert.strictEqual(r.live.run.active, false);
   assert.ok(r.live.lastMs === run.lapMs);
+});
+
+test('runs on the new tracks: one run from the départ line to the finish, every painted clip on the line', () => {
+  // PGE Narodowy passes its finish area twice: the run must not end on the first pass
+  for (const [track, layout] of [['kart_volan_championship', ''], ['poland_pge_narodowy_v3', ''], ['englishtown_gambler_esda', ''], ['vdc_bikernieki_2022', 'drift_vdc']]) {
+    const course = bundledCourse(track, layout);
+    const r = new TelemetryRecorder({ getDriver: () => ({ name: 'Pab', steamId: '1' }), getCourse: () => course });
+    const laps = [];
+    r.on('lap', (l) => laps.push(l));
+    let t = 0;
+    for (const f of calmontFrames(course, { track, layout })) r.feed(f, (t += 60));
+    assert.strictEqual(laps.length, 1, track);
+    const run = laps[0];
+    assert.ok(run.samples[0][0] < 0.02 && run.samples[run.samples.length - 1][0] > 0.98, track);
+    const res = scoreDrift(run.samples, course);
+    assert.strictEqual(res.clips.filter((c) => c.hit).length, course.clips.length, `${track}: ${JSON.stringify(res.clips.map((c) => [c.name, c.hit, c.dist]))}`);
+  }
 });
 
 test('back to pits or a reset cancels the run (and a lap on lap tracks)', () => {
