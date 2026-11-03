@@ -247,8 +247,16 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
       g.arc(px(x), pz(z), 6, 0, Math.PI * 2);
       g.fill();
     };
-    if (pos) dot(pos.x, pos.z, '#fff');
-    else if (cursorD != null && !onClick) {
+    if (pos) {
+      // other drivers seen by the in-game app
+      for (const o of pos.others || []) {
+        dot(o.x, o.z, COLORS.b);
+        g.fillStyle = '#ece5da';
+        g.font = '600 11px Barlow Condensed, sans-serif';
+        g.fillText(o.name, px(o.x) + 8, pz(o.z) - 6);
+      }
+      dot(pos.x, pos.z, '#fff');
+    } else if (cursorD != null && !onClick) {
       laps.forEach((l, i) => {
         const s = l.samples.find((x) => x[0] >= cursorD) || l.samples[l.samples.length - 1];
         dot(s[COL.x], s[COL.z], i === 0 ? COLORS.a : COLORS.b);
@@ -321,8 +329,9 @@ export default function telemetryView(root, params = {}) {
       h('div.live-grid',
         tile('speed', 'Vitesse', '.big'), tile('gear', 'Rapport', '.big'), tile('angle', 'Angle', '.big'), tile('delta', 'Écart', '.big'),
         h('div.live-tile.wide', h('div.label', 'Régime'), bar('rpm', 'rpm'), h('div.label.mt', 'Gaz'), bar('gas', 'gas'), h('div.label.mt', 'Frein'), bar('brake', 'brake')),
-        h('div.live-tile.wide', h('div.label', 'Tour'), (el.lap = h('div.live-v', '—')), h('div.hint', 'Dernier ', (el.last = h('strong', '—')), ' · Meilleur ', (el.best = h('strong', '—')))),
+        h('div.live-tile.wide', (el.lapLabel = h('div.label', 'Tour')), (el.lap = h('div.live-v', '—')), h('div.hint', 'Dernier ', (el.last = h('strong', '—')), ' · Meilleur ', (el.best = h('strong', '—')))),
         h('div.live-tile.wide', h('div.label', 'Clips'), (el.clips = h('div.clip-chips'))),
+        h('div.live-tile.wide', h('div.label', 'Pilotes autour'), (el.others = h('div.live-others')), (el.battle = h('div.hint.mt'))),
         h('div.live-tile.wide', h('div.label', 'Pneus (°C)'), (el.tyres = h('div.live-tyres')), h('div.hint.mt', (el.session = h('span', '—')))),
       ),
       (el.mapWrap = h('div.panel.mt')),
@@ -341,11 +350,23 @@ export default function telemetryView(root, params = {}) {
       el.rpm.style.width = `${s.maxRpm ? Math.min(100, (s.rpm / s.maxRpm) * 100) : 0}%`;
       el.gas.style.width = `${s.gas * 100}%`;
       el.brake.style.width = `${s.brake * 100}%`;
-      el.lap.textContent = lapTime(s.lapMs);
+      if (s.run) {
+        el.lapLabel.textContent = 'Run (porte de départ → arrivée)';
+        el.lap.textContent = s.run.active ? lapTime(s.lapMs) : 'Passe la porte de départ';
+      } else {
+        el.lapLabel.textContent = 'Tour';
+        el.lap.textContent = lapTime(s.lapMs);
+      }
       el.last.textContent = lapTime(s.lastMs);
       el.best.textContent = lapTime(s.bestMs);
       el.tyres.textContent = (s.tyreTemps || []).map((t) => Math.round(t)).join('  ·  ');
-      el.session.textContent = `${carName(s.car)} · ${trackName(s.track, s.layout)} · tour ${s.laps + 1}`;
+      el.session.textContent = `${carName(s.car)} · ${trackName(s.track, s.layout)}${s.run ? '' : ` · tour ${s.laps + 1}`}`;
+      clear(el.others);
+      if (s.others && s.others.length) {
+        for (const o of s.others.slice(0, 8)) el.others.append(h('div.live-other', h('strong', o.name), h('span.s', `${o.gap === null ? '—' : `${o.gap} m`} · ${o.speed} km/h · ${o.angle}°`)));
+      } else el.others.append(h('span.hint', s.others ? 'Personne autour de toi' : 'Avec l’appli en jeu LKS (Télémétrie → Outils), les autres pilotes s’affichent ici.'));
+      const b = s.battle;
+      el.battle.textContent = b ? `Battle contre ${b.name} : run ${b.run}/2, ${b.role === 'lead' ? 'tu es devant' : 'tu es derrière'}${b.phase === 'done' ? ' · terminée' : ''}` : '';
       clear(el.clips);
       if (s.clips && s.clips.total) s.clips.clips.forEach((c, i) => el.clips.append(h(`span.clip-chip${c.hit ? '.hit' : ''}`, { title: c.dist == null ? '' : `${c.dist} m` }, `${i + 1}`, c.hit ? ' ✓' : '')));
       else el.clips.append(h('span.hint', 'Pas de clips sur ce circuit'));
@@ -362,10 +383,15 @@ export default function telemetryView(root, params = {}) {
           el.mapWrap.append(h('h3', 'Carte'), map);
         } else el.mapWrap.append(h('p.muted', { style: { margin: 0 } }, 'La carte apparaît après ton premier tour complet.'));
       }
-      if (map) map.redraw({ x: s.x, z: s.z });
+      if (map) map.redraw({ x: s.x, z: s.z, others: s.others || [] });
     };
     update(st && st.live);
-    liveOff = window.lks.on('telemetry:live', update);
+    const offLive = window.lks.on('telemetry:live', update);
+    const offReset = window.lks.on('telemetry:reset', (r) => toast(r && r.why === 'pits' ? 'Retour aux stands : run remise à zéro' : 'Voiture replacée : run remise à zéro', 'info'));
+    liveOff = () => {
+      offLive();
+      offReset();
+    };
   }
 
   // ------------------------------------------------------------ laps
@@ -416,7 +442,7 @@ export default function telemetryView(root, params = {}) {
 
   async function useGhost(id) {
     const g = await guard(() => api.call('ghost:set', id));
-    if (g) toast(`Fantôme prêt : ${g.driver} sur ${trackName(g.track, g.layout)}. Il part quand tu passes la ligne de départ.`, 'success', 7000);
+    if (g) toast(`Fantôme prêt : ${g.driver} sur ${trackName(g.track, g.layout)}. Il part à la porte de départ, ou au vert si tu lances les feux dans l’appli en jeu.`, 'success', 7000);
   }
 
   async function openTandem(id) {
@@ -442,7 +468,7 @@ export default function telemetryView(root, params = {}) {
     const parts = [];
     if (kind === 'tandem') parts.push('Note du chase sur 100 : proximité 35, angle copié 25, ligne du leader 20, drift 20, moins les pénalités. Enregistré par l’appli en jeu quand une voiture roule devant toi.');
     else parts.push('Note sur 100 : angle 35, vitesse 30, ligne et clips 35, moins les pénalités.');
-    if (course) parts.push(`${info.source === 'auto' ? 'Tracé automatique' : 'Parcours du groupe'} : ${(course.clips || []).length} clip(s).`);
+    if (course) parts.push(`${info.source === 'auto' ? 'Tracé automatique' : info.source === 'official' ? 'Parcours officiel' : 'Parcours du groupe'} : ${(course.clips || []).length} clip(s)${course.start ? ', run de la porte de départ à l’arrivée' : ''}.`);
     else parts.push('Pas de clips sur ce circuit : seuls l’angle et la vitesse comptent.');
     return h('div.notice.info.mt-s',
       h('span.grow', parts.join(' ')),
@@ -720,7 +746,7 @@ export default function telemetryView(root, params = {}) {
         section: course ? [...(course.section || [0, 1])] : [0, 1],
         clips: course ? (course.clips || []).map((c) => ({ ...c })) : [],
         rules: course && course.rules ? JSON.parse(JSON.stringify(course.rules)) : {},
-        autoRefLine: info.source === 'auto' ? course.refLine : null,
+        autoRefLine: info.source === 'auto' || info.source === 'official' ? course.refLine : null,
         ruleMode: 'normal',
         lapId: '',
         lap: null,
@@ -731,10 +757,10 @@ export default function telemetryView(root, params = {}) {
     if (!editor.lapId && !(currentLine && currentLine.length) && onTrack[0]) editor.lapId = onTrack[0].id;
     if (editor.lapId && (!editor.lap || editor.lap.id !== editor.lapId)) editor.lap = await guard(() => api.call('telemetry:lap', editor.lapId));
 
-    const sourceLabel = editor.source === 'published' ? 'Parcours publié' : editor.source === 'auto' ? 'Tracé automatique (ligne IA du circuit), pas encore publié' : 'Pas encore de parcours';
+    const sourceLabel = editor.source === 'published' ? 'Parcours publié' : editor.source === 'official' ? 'Parcours officiel LKS (analysé circuit par circuit)' : editor.source === 'auto' ? 'Tracé automatique (ligne IA du circuit), pas encore publié' : 'Pas encore de parcours';
     body.append(h('div.toolbar',
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), editor.key, (v) => { editor = { key: v }; render(); }, 'board-select'),
-      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? 'Ligne IA du circuit' : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; render(); }, 'board-select'),
+      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? (editor.source === 'official' ? 'Ligne officielle' : 'Ligne IA du circuit') : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; render(); }, 'board-select'),
       h('button.btn.btn-sm', { on: { click: async () => {
         const auto = await guard(() => api.call('drift:autoCourse', { track, layout }));
         if (!auto) return;
@@ -965,16 +991,16 @@ export default function telemetryView(root, params = {}) {
           toggle('Enregistrer mes tours', st.enabled !== false, (v) => setT({ enabled: v })),
           toggle('Envoyer mes records au classement', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Seuls tes meilleurs tours sont envoyés.' : 'Classement partagé pas encore configuré par les admins.')),
         h('div.panel', h('h3', 'Appli en jeu'),
-          h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips et écart avec ton meilleur tour pendant que tu roules. Elle enregistre aussi tes tandems : c’est elle qui voit la voiture devant toi. Custom Shaders Patch requis.'),
+          h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips sur la piste et écart pendant que tu roules. Boutons : « Feux » pour un vrai départ arrêté, « Fantôme » pour choisir qui suivre, « Battle » pour défier un pilote du serveur. Elle enregistre aussi tes tandems et montre les autres pilotes ici. Custom Shaders Patch requis.'),
           h('div.row.wrap',
             game.installed ? h(`span.tag.${game.upToDate ? 'ok' : 'warn'}`, game.upToDate ? `Installée (v${game.installed})` : `Mise à jour v${game.available}`) : h('span.tag.plain', 'Non installée'),
             h('button.btn.btn-sm.btn-primary', { on: { click: async () => { if (await guard(() => api.call('ingame:install'), 'Appli installée')) render(); } } }, game.installed && game.upToDate ? 'Réinstaller' : 'Installer'),
             game.installed ? h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { await guard(() => api.call('ingame:remove')); render(); } } }, 'Retirer') : null),
-          h('p.hint', 'En jeu : barre d’applis à droite de l’écran, puis « LKS ».'),
+          h('p.hint', 'En jeu : barre d’applis à droite de l’écran, puis « LKS » (et « LKS Feux » pour les feux en grand). Mise à jour automatique au lancement du jeu.'),
           h('h3.mt', 'Fantôme'),
           ghost
             ? h('div.row.wrap', h('span', `${ghost.driver} · ${trackName(ghost.track, ghost.layout)} · ${lapTime(ghost.lapMs)}`), h('button.btn.btn-sm.btn-ghost', { on: { click: async () => { await api.call('ghost:clear'); render(); } } }, 'Retirer'))
-            : h('p.muted', { style: { margin: 0 } }, 'Aucun. Choisis un tour avec « Fantôme » dans Tours ou Classement : une voiture translucide le rejoue pour que tu la suives.')),
+            : h('p.muted', { style: { margin: 0 } }, 'Aucun. Choisis un tour avec « Fantôme » dans Tours ou Classement, ou directement en jeu (bouton « Fantôme » de l’appli) : une voiture translucide le rejoue pour que tu la suives.')),
         h('div.panel', h('h3', 'Tableau de bord sur téléphone'),
           toggle('Activer', Boolean(st.dashEnabled), (v) => setT({ dashEnabled: v }), 'Ouvre l’adresse sur ton téléphone, connecté au même Wi-Fi.'),
           st.dash.running ? h('div.grid.mt', st.dash.urls.map((u) => h('div.row', h('code.invite-code', u), h('button.btn.btn-sm', { on: { click: async () => { await api.call('clipboard:write', u); toast('Adresse copiée', 'success'); } } }, 'Copier')))) : null),

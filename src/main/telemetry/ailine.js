@@ -2,10 +2,12 @@
 
 /**
  * Automatic drift course from a track's AI line (ai/fast_lane.ai, shipped with
- * every Assetto Corsa track): the line gives the trajectory and, in recent
- * files, the distance to the track edges. Corners are found from the
- * curvature; an inner clip goes on the inside edge at the apex and an outer
- * zone on the outside edge at the entry.
+ * most Assetto Corsa tracks): the line and, in recent files, the room on each
+ * side give the road. A smooth line is computed inside it, corners are found
+ * from its curvature; a clip goes on the inside edge where the line comes
+ * closest to it, an outer zone on the outside edge at the corner entry.
+ * Tracks of the group get an official course instead (courses/), worked out
+ * from their geometry.
  *
  * fast_lane.ai (little endian):
  *   int32 version, int32 count, int32 lapTime, int32 sampleCount
@@ -68,7 +70,7 @@ function resample(points, step = 2) {
   return { line: out, total: dist };
 }
 
-/** Signed curvature (1/m) at each point, over ±span points. */
+/** Signed curvature (1/m) at each point, over ±span points (x/z plane, positive = towards +n). */
 function curvatures(line, span) {
   const n = line.length;
   return line.map((p, i) => {
@@ -85,103 +87,169 @@ function curvatures(line, span) {
   });
 }
 
-/**
- * Build a drift course from the AI line points.
- * Options: maxRadius (m) of a corner, minTurn (°) of a corner worth clipping.
- */
-function courseFromAiLine(points, { maxRadius = 120, minTurn = 35, maxClips = 24 } = {}) {
-  const { line, total } = resample(points, 2);
-  if (line.length < 20 || total < 100) throw new Error('Ligne IA trop courte');
-  const curv = curvatures(line, 5); // ±10 m
-  // smooth
-  const sm = curv.map((_, i) => {
+function smooth(values, sigma) {
+  const k = Math.ceil(sigma * 3);
+  const w = Array.from({ length: 2 * k + 1 }, (_, i) => Math.exp(-0.5 * ((i - k) / sigma) ** 2));
+  return values.map((_, i) => {
     let s = 0;
-    let n = 0;
-    for (let k = -3; k <= 3; k++) {
-      const v = curv[i + k];
-      if (v !== undefined) {
-        s += v;
-        n++;
+    let t = 0;
+    for (let j = -k; j <= k; j++) {
+      const v = values[Math.min(values.length - 1, Math.max(0, i + j))];
+      s += v * w[j + k];
+      t += w[j + k];
+    }
+    return s / t;
+  });
+}
+
+/** Unit normals n = forward turned by +90° in the x/z plane (the AI file's « right » side). */
+function normals(line) {
+  return line.map((_, i) => {
+    const a = line[Math.max(0, i - 1)];
+    const b = line[Math.min(line.length - 1, i + 1)];
+    const fx = b.x - a.x;
+    const fz = b.z - a.z;
+    const l = Math.hypot(fx, fz) || 1;
+    return [-fz / l, fx / l];
+  });
+}
+
+/**
+ * Smooth line inside the road: lateral offsets q (lo ≤ q ≤ hi) that keep the
+ * curvature low — wide entry, apex, wide exit. Solved coarse to fine.
+ */
+function minCurvature(base, nrm, lo, hi, { steps = [8, 4, 2, 1], iters = 4000, alpha = 0.05 } = {}) {
+  const n = base.length;
+  let q = null;
+  for (const st of steps) {
+    const idx = [];
+    for (let i = 0; i < n; i += st) idx.push(i);
+    if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+    const m = idx.length;
+    let qc = idx.map((i) => (q ? q[i] : (lo[i] + hi[i]) / 2));
+    const P = idx.map((i) => base[i]);
+    const N = idx.map((i) => nrm[i]);
+    const L = Array.from({ length: m }, () => [0, 0]);
+    for (let it = 0; it < iters; it++) {
+      for (let j = 0; j < m; j++) {
+        L[j][0] = P[j].x + N[j][0] * qc[j];
+        L[j][1] = P[j].z + N[j][1] * qc[j];
+      }
+      for (let j = 2; j < m - 2; j++) {
+        const dx = L[j - 2][0] - 4 * L[j - 1][0] + 6 * L[j][0] - 4 * L[j + 1][0] + L[j + 2][0];
+        const dz = L[j - 2][1] - 4 * L[j - 1][1] + 6 * L[j][1] - 4 * L[j + 1][1] + L[j + 2][1];
+        const i = idx[j];
+        qc[j] = Math.min(hi[i], Math.max(lo[i], qc[j] - alpha * (dx * N[j][0] + dz * N[j][1])));
       }
     }
-    return s / n;
-  });
+    // back to every point
+    const full = new Array(n);
+    for (let j = 0; j < m - 1; j++) {
+      for (let i = idx[j]; i <= idx[j + 1]; i++) {
+        const k = (i - idx[j]) / (idx[j + 1] - idx[j] || 1);
+        full[i] = qc[j] + (qc[j + 1] - qc[j]) * k;
+      }
+    }
+    q = full;
+    qc = null;
+  }
+  return q.map((v, i) => Math.min(hi[i], Math.max(lo[i], v)));
+}
 
-  // corners: runs of the same turn direction tighter than maxRadius
-  const corners = [];
+/** Corners: runs of the same turn direction tighter than maxRadius, turning at least minTurn degrees. */
+function findCorners(k, step, { maxRadius = 70, minTurn = 30, merge = 10 } = {}) {
+  const runs = [];
   let cur = null;
-  sm.forEach((c, i) => {
+  k.forEach((c, i) => {
     const sign = Math.abs(c) >= 1 / maxRadius ? Math.sign(c) : 0;
-    if (cur && (sign !== cur.sign || i === sm.length - 1)) {
+    if (cur && (sign !== cur.sign || i === k.length - 1)) {
       cur.end = i - 1;
-      corners.push(cur);
+      runs.push(cur);
       cur = null;
     }
     if (sign && !cur) cur = { sign, start: i };
   });
-  // merge pieces of the same corner split by a short wobble (< 12 m)
   const merged = [];
-  for (const c of corners) {
+  for (const c of runs) {
     const prev = merged[merged.length - 1];
-    if (prev && prev.sign === c.sign && (line[c.start].dist - line[prev.end].dist) < 12) prev.end = c.end;
+    if (prev && prev.sign === c.sign && (c.start - prev.end) * step < merge) prev.end = c.end;
     else merged.push({ ...c });
   }
-
-  // which side field (left/right) is the inside of a left turn? The AI line hugs
-  // the apex, so the inside distance at apexes is the smaller one on average.
-  const hasSides = line.some((p) => p.sideLeft > 0 || p.sideRight > 0);
-  let leftIsPositive = 0;
-  const turning = [];
+  const out = [];
   for (const c of merged) {
-    let apex = c.start;
-    for (let i = c.start; i <= c.end; i++) if (Math.abs(sm[i]) > Math.abs(sm[apex])) apex = i;
     let turn = 0;
-    for (let i = c.start; i <= c.end; i++) turn += sm[i] * 2; // radians (2 m steps)
+    let apex = c.start;
+    for (let i = c.start; i <= c.end; i++) {
+      turn += k[i] * step;
+      if (Math.abs(k[i]) > Math.abs(k[apex])) apex = i;
+    }
     const deg = Math.abs((turn * 180) / Math.PI);
-    if (deg < minTurn) continue;
-    turning.push({ ...c, apex, deg });
-    if (hasSides) leftIsPositive += (line[apex].sideRight - line[apex].sideLeft) * c.sign;
+    if (deg >= minTurn) out.push({ ...c, apex, deg });
   }
-  // inside side of a corner with this sign: 'left' or 'right'
-  const insideSide = (sign) => ((sign > 0) === (leftIsPositive >= 0) ? 'sideLeft' : 'sideRight');
+  return out;
+}
 
+/**
+ * Build a drift course from the AI line points. The AI file gives the room on
+ * each side of its line (sideRight on the +n side, sideLeft on the other):
+ * the drift line is a smooth line inside that road, and the clips go where it
+ * comes closest to the edges — the inside at the apex (corde), the outside on
+ * the entry (extérieur).
+ */
+function courseFromAiLine(points, { maxRadius = 90, minTurn = 30, maxClips = 24 } = {}) {
+  const STEP = 2;
+  const { line, total } = resample(points, STEP);
+  if (line.length < 20 || total < 100) throw new Error('Ligne IA trop courte');
+  const nrm = normals(line);
+  const hasSides = line.some((p) => p.sideLeft > 0 || p.sideRight > 0);
+  const cap = (v, dflt) => Math.min(12, v > 0 ? v : dflt);
+  const right = smooth(line.map((p) => cap(hasSides ? p.sideRight : 0, 5)), 2);
+  const left = smooth(line.map((p) => cap(hasSides ? p.sideLeft : 0, 5)), 2);
+  const hi = right.map((v) => Math.max(0, v - 1.2));
+  const lo = left.map((v) => -Math.max(0, v - 1.2));
+  const q = minCurvature(line, nrm, lo, hi);
+  const drift = line.map((p, i) => ({ x: p.x + nrm[i][0] * q[i], z: p.z + nrm[i][1] * q[i], dist: p.dist }));
+  const k = smooth(curvatures(drift, 3), 1.5);
+  const corners = findCorners(k, STEP, { maxRadius, minTurn });
+  const at = (i, off) => ({ x: r1(line[i].x + nrm[i][0] * off), z: r1(line[i].z + nrm[i][1] * off) });
+
+  const picked = corners.sort((a, b) => b.deg - a.deg).slice(0, Math.ceil(maxClips / 2)).sort((a, b) => a.start - b.start);
   const clips = [];
-  const normalAt = (i, sign) => {
-    // unit vector towards the inside of the corner (towards the centre of curvature)
-    const a = line[Math.max(0, i - 3)];
-    const b = line[Math.min(line.length - 1, i + 3)];
-    const f = [b.x - a.x, b.z - a.z];
-    const l = Math.hypot(...f) || 1;
-    // rotate the forward vector by +90° (towards positive curvature)
-    return [(-f[1] / l) * sign, (f[0] / l) * sign];
-  };
-  turning.sort((a, b) => b.deg - a.deg);
-  const kept = turning.slice(0, Math.ceil(maxClips / 2)).sort((a, b) => a.start - b.start);
-  kept.forEach((c, n) => {
-    const p = line[c.apex];
-    const inward = normalAt(c.apex, c.sign);
-    const inside = hasSides ? Math.max(0.5, (p[insideSide(c.sign)] || 0) - 0.8) : 2.5;
-    clips.push({ name: `Corde ${n + 1}`, kind: 'inner', x: r1(p.x + inward[0] * inside), z: r1(p.z + inward[1] * inside), r: 2.5, d: p.dist / total });
-    // outer zone: on the outside edge, a third of the way into the corner
-    const e = Math.round(c.start + (c.apex - c.start) / 3);
-    const q = line[e];
-    const outward = normalAt(e, -c.sign);
-    const outSide = insideSide(c.sign) === 'sideLeft' ? 'sideRight' : 'sideLeft';
-    const outside = hasSides ? Math.max(1, (q[outSide] || 0) - 1) : 3;
-    clips.push({ name: `Mur ${n + 1}`, kind: 'outer', x: r1(q.x + outward[0] * outside), z: r1(q.z + outward[1] * outside), r: 4, d: q.dist / total });
+  picked.forEach((c, n) => {
+    const insidePlus = c.sign > 0; // turning towards +n: the inside is the right side
+    // corde: where the line comes closest to the inside edge
+    let best = c.start;
+    for (let i = c.start; i <= c.end; i++) {
+      const gap = insidePlus ? right[i] - q[i] : q[i] + left[i];
+      const g0 = insidePlus ? right[best] - q[best] : q[best] + left[best];
+      if (gap < g0) best = i;
+    }
+    clips.push({ name: `V${n + 1} corde`, kind: 'inner', ...at(best, insidePlus ? right[best] - 2.2 : -left[best] + 2.2), r: 2.5, i: best });
+    // extérieur: on the entry (25 m before the corner to its apex), closest to the outside edge
+    let out = -1;
+    for (let i = Math.max(0, c.start - Math.round(25 / STEP)); i <= c.apex; i++) {
+      const gap = insidePlus ? q[i] + left[i] : right[i] - q[i];
+      const g0 = out < 0 ? Infinity : insidePlus ? q[out] + left[out] : right[out] - q[out];
+      if (gap < g0) out = i;
+    }
+    if (out >= 0) {
+      const p = at(out, insidePlus ? -left[out] + 2.6 : right[out] - 2.6);
+      const near = clips.some((o) => Math.hypot(o.x - p.x, o.z - p.z) < 12);
+      if (!near) clips.push({ name: `V${n + 1} extérieur`, kind: 'outer', ...p, r: 3.5, i: out });
+    }
   });
-  clips.sort((a, b) => a.d - b.d);
-  clips.forEach((c) => delete c.d);
+  clips.sort((a, b) => a.i - b.i);
+  clips.forEach((c) => delete c.i);
 
-  const step = Math.max(1, Math.floor(line.length / 400));
+  const step = Math.max(1, Math.floor(drift.length / 400));
   return {
     auto: true,
     section: [0, 1],
     clips,
-    refLine: line.filter((_, i) => i % step === 0).map((p) => [r1(p.x), r1(p.z)]),
+    refLine: drift.filter((_, i) => i % step === 0).map((p) => [r1(p.x), r1(p.z)]),
     refSpeed: 0, // the AI drives on grip: its speed is no reference for drifting
-    // the AI's grip line is not a drift line: judge the line more loosely
-    rules: { debutant: { lineTol: [4, 15] }, normal: { lineTol: [3, 10] }, pro: { lineTol: [2, 7] } },
+    // a computed line, not a driver's: judge it a bit more loosely
+    rules: { debutant: { lineTol: [4, 14] }, normal: { lineTol: [3, 9] }, pro: { lineTol: [2, 6] } },
   };
 }
 
@@ -229,4 +297,4 @@ function encodeAiLine(points) {
   return buf;
 }
 
-module.exports = { parseAiLine, courseFromAiLine, autoCourse, aiLineFile, encodeAiLine };
+module.exports = { parseAiLine, courseFromAiLine, autoCourse, aiLineFile, encodeAiLine, minCurvature, findCorners };

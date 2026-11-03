@@ -559,6 +559,9 @@ details summary::before { content: '✠ '; color: var(--accent); }
 .live-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .live-tile { padding: 14px 16px; background: rgba(14, 11, 13, 0.92); border: 1px solid var(--line); min-width: 0; }
 .live-tile.wide { grid-column: span 2; }
+.live-others { display: grid; gap: 4px; margin-top: 6px; }
+.live-other { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.live-other .s { color: var(--text-3); white-space: nowrap; }
 .live-tile .label { font: 600 11px var(--display); letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-3); }
 .live-tile .label.mt { margin-top: 8px; }
 .live-v { font: 700 30px/1.15 var(--display); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; color: var(--text); margin-top: 4px; }

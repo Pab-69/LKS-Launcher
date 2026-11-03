@@ -1,5 +1,18 @@
 # Journal des versions
 
+## 1.12.0
+
+- **Clips refaits sur Calmont et Biķernieki**  : chaque circuit a été analysé (murs, bords de route, portes de chrono, traces de pneus) pour placer les cordes, les zones extérieures et une ligne de drift. Ce sont les **parcours officiels** : ils remplacent le tracé automatique. Biķernieki suit les 9 zones de jugement VDC (Pie Ozola, Elkonis, Ģenerālis, Tilts…). Un parcours publié par les admins reste prioritaire.
+- **Runs de la porte de départ à l'arrivée** : sur ces circuits, une run commence en passant la porte de départ et finit à l'arrivée. Avant, Calmont n'enregistrait rien (pas de ligne IA).
+- **Retour aux stands = remise à zéro** : la run (ou le tour) en cours est annulée, les clips repartent à zéro, dans le launcher et dans l'appli en jeu.
+- **Feux de départ** : bouton « Feux » dans l'appli en jeu. Arrête-toi avant la porte, 3 feux rouges puis vert. Bouger avant le vert = faux départ. Fenêtre « LKS Feux » pour les voir en grand.
+- **Choisir son fantôme en jeu** : bouton « Fantôme » dans l'appli, avec les meilleures runs du circuit (les tiennes et celles du classement). Une run faite avec les feux rejoue aussi le départ arrêté : le fantôme part au vert avec toi.
+- **Battles en jeu** : bouton « Battle », choisis un pilote du serveur. Il accepte, vous vous arrêtez avant la porte, les feux partent en même temps chez les deux. Run 1 puis run 2 avec les rôles inversés, et le résultat s'affiche dans le jeu.
+- **Les autres pilotes sur ta télémétrie** : en direct, la carte montre les pilotes autour de toi, avec leur distance, leur vitesse et leur angle.
+- Clips affichés sur la piste dans le jeu (désactivable).
+- Tracé automatique des autres circuits corrigé : les clips se plaçaient parfois du mauvais côté de la route.
+- L'appli en jeu passe en version 2.0. Elle se met à jour toute seule au lancement du jeu.
+
 ## 1.11.0
 
 - **Parties visibles dans le launcher** : une partie lancée depuis Héberger apparaît dans **Serveurs** pour tous les membres (« Partie LKS », avec le nom de l'hôte), et se rejoint en un clic : le launcher essaie toutes les adresses de l'hôte (internet, VPN, réseau local) et prend celle qui répond. Elle disparaît de la liste à l'arrêt du serveur.

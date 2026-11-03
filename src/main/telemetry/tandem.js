@@ -42,6 +42,7 @@ function runToLap(run, driver = {}) {
     tandem: {
       lead: run.role === 'lead' ? { name: String(driver.name || (run.lead && run.lead.name) || '?').slice(0, 40), car: String((run.lead && run.lead.car) || ''), steamId: driver.steamId || '' } : { name: String((run.lead && run.lead.name) || '?').slice(0, 40), car: String((run.lead && run.lead.car) || '') },
       role: run.role === 'lead' ? 'lead' : 'chase',
+      ...(run.battle && /^[\w-]{1,40}$/.test(String(run.battle)) && [1, 2].includes(Number(run.run)) ? { battle: { tag: String(run.battle), run: Number(run.run) } } : {}),
       leadSamples,
     },
     date: new Date(Number(run.time) > 1e9 ? Number(run.time) * 1000 : Date.now()).toISOString(),

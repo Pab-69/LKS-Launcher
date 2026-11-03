@@ -32,14 +32,36 @@ function ingameStatus(acRoot) {
 const luaStr = (v) => `"${String(v).replace(/[\\"]/g, '\\$&').replace(/[\x00-\x1f]/g, ' ')}"`;
 const num = (v) => (Number.isFinite(Number(v)) ? String(Math.round(Number(v) * 100) / 100) : '0');
 
-/** Drift courses (clips) for the in-game app: apps/lua/LKS/courses.lua */
+const pair = (p) => `{ ${num(p[0])}, ${num(p[1])} }`;
+
+/** Course line for the app: at most ~300 points. */
+function thinLine(line = []) {
+  const step = Math.max(1, Math.ceil(line.length / 300));
+  const out = line.filter((_, i) => i % step === 0);
+  if (line.length && out[out.length - 1] !== line[line.length - 1]) out.push(line[line.length - 1]);
+  return out;
+}
+
+/**
+ * Drift courses for the in-game app: apps/lua/LKS/courses.lua
+ * clips (with their height when known), and for runs between gates: the
+ * start/finish gates, the course line (position along the run) and the spot
+ * where to line up for the start lights.
+ */
 function writeCourses(acRoot, courses = {}) {
   const dir = appDir(acRoot);
   if (!fs.existsSync(dir)) return false;
-  const lines = ['-- Généré par le launcher LKS : clips de drift par circuit.', 'return {'];
+  const lines = ['-- Généré par le launcher LKS : parcours de drift par circuit.', 'return {'];
   for (const [key, c] of Object.entries(courses || {})) {
-    const clips = (c.clips || []).map((k, i) => `{ name = ${luaStr(k.name || `Clip ${i + 1}`)}, x = ${num(k.x)}, z = ${num(k.z)}, r = ${num(k.r || 3)} }`);
-    lines.push(`  [${luaStr(key)}] = { clips = { ${clips.join(', ')} } },`);
+    const clips = (c.clips || []).map((k, i) => `{ name = ${luaStr(k.name || `Clip ${i + 1}`)}, kind = ${luaStr(k.kind === 'outer' ? 'outer' : 'inner')}, x = ${num(k.x)}, z = ${num(k.z)}, r = ${num(k.r || 3)}${Number.isFinite(Number(k.y)) && k.y !== null ? `, y = ${num(k.y)}` : ''} }`);
+    const parts = [`clips = { ${clips.join(', ')} }`];
+    if (Array.isArray(c.start) && Array.isArray(c.finish) && Array.isArray(c.refLine) && c.refLine.length > 1) {
+      parts.push(`start = { ${pair(c.start[0])}, ${pair(c.start[1])} }`, `finish = { ${pair(c.finish[0])}, ${pair(c.finish[1])} }`);
+      parts.push(`line = { ${thinLine(c.refLine).map(pair).join(', ')} }`);
+      if (Array.isArray(c.grid) && c.grid.length >= 4) parts.push(`grid = { x = ${num(c.grid[0])}, z = ${num(c.grid[1])}, dx = ${num(c.grid[2])}, dz = ${num(c.grid[3])} }`);
+    }
+    if (c.official) parts.push(`official = ${luaStr(c.official)}`);
+    lines.push(`  [${luaStr(key)}] = { ${parts.join(', ')} },`);
   }
   lines.push('}', '');
   fs.writeFileSync(path.join(dir, 'courses.lua'), lines.join('\n'));
@@ -52,6 +74,7 @@ function installIngame(acRoot, courses) {
   for (const f of fs.readdirSync(SRC)) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   fs.mkdirSync(path.join(dir, 'runs'), { recursive: true }); // tandem runs written by the app
   fs.mkdirSync(path.join(dir, 'ghosts'), { recursive: true }); // laps recorded for the ghost
+  fs.mkdirSync(path.join(dir, 'library'), { recursive: true }); // ghosts to pick in game
   writeCourses(acRoot, courses);
   return ingameStatus(acRoot);
 }

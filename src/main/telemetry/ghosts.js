@@ -7,6 +7,8 @@
  * chosen one to apps/lua/LKS/ghost.json for the app to replay.
  *
  * Ghost row: [tMs, x, y, z, lookX, lookY, lookZ, upX, upY, upZ, speed]
+ * On courses with gates, t = 0 at the start gate; rows before it (negative t)
+ * are the seconds before the start, `green` the moment of the start lights.
  */
 
 const fs = require('fs');
@@ -37,7 +39,7 @@ function readGhostFiles(dir) {
       const g = JSON.parse(fs.readFileSync(file, 'utf8'));
       const rows = cleanRows(g.rows);
       if (g.v !== 1 || !rows || typeof g.track !== 'string') return { file, bad: true };
-      return { file, ghost: { track: g.track, layout: typeof g.layout === 'string' ? g.layout : '', car: String(g.car || ''), driver: String(g.driver || ''), time: Number(g.time) > 1e9 ? Number(g.time) * 1000 : fs.statSync(file).mtimeMs, lapMs: Number(g.lapMs) || 0, rows } };
+      return { file, ghost: { track: g.track, layout: typeof g.layout === 'string' ? g.layout : '', car: String(g.car || ''), driver: String(g.driver || ''), time: Number(g.time) > 1e9 ? Number(g.time) * 1000 : fs.statSync(file).mtimeMs, lapMs: Number(g.lapMs) || 0, rows, ...(Number.isFinite(Number(g.green)) && g.green !== null ? { green: Number(g.green) } : {}) } };
     } catch {
       return { file, bad: true };
     }
@@ -47,14 +49,14 @@ function readGhostFiles(dir) {
 /** The lap of this ghost among the laps (summaries) of this PC's driver. */
 function matchLap(ghost, laps, steamId) {
   return laps
-    .filter((l) => !l.tandem && !l.ghost && l.track === ghost.track && (l.layout || '') === ghost.layout && (l.driver.steamId || '') === (steamId || '') && Math.abs(l.lapMs - ghost.lapMs) <= 30 && Math.abs(Date.parse(l.date) - ghost.time) <= 10 * 60 * 1000)
+    .filter((l) => !l.tandem && !l.ghost && l.track === ghost.track && (l.layout || '') === ghost.layout && (l.driver.steamId || '') === (steamId || '') && Math.abs(l.lapMs - ghost.lapMs) <= 250 && Math.abs(Date.parse(l.date) - ghost.time) <= 10 * 60 * 1000)
     .sort((a, b) => Math.abs(Date.parse(a.date) - ghost.time) - Math.abs(Date.parse(b.date) - ghost.time))[0] || null;
 }
 
 /** Ghost of a lap → what the app reads (ghost.json). */
 function ghostFile(lap) {
   if (!lap || !lap.ghost || !Array.isArray(lap.ghost.rows)) throw new Error('Ce tour n’a pas de fantôme : il faut l’appli en jeu 1.4 pendant le tour.');
-  return { v: 1, track: lap.track, layout: lap.layout || '', car: lap.car, driver: lap.driver.name, lapMs: lap.lapMs, rows: lap.ghost.rows };
+  return { v: 1, track: lap.track, layout: lap.layout || '', car: lap.car, driver: lap.driver.name, lapMs: lap.lapMs, rows: lap.ghost.rows, ...(Number.isFinite(lap.ghost.green) ? { green: lap.ghost.green } : {}) };
 }
 
 function writeGhost(appDir, lap) {
@@ -78,4 +80,29 @@ function clearGhost(appDir) {
   fs.rmSync(path.join(appDir, 'ghost.json'), { force: true });
 }
 
-module.exports = { readGhostFiles, matchLap, ghostFile, writeGhost, currentGhost, clearGhost, cleanRows };
+/**
+ * Ghosts to pick in game: apps/lua/LKS/library/index.json + one file per ghost.
+ * entries = [{ id, lap (full lap with ghost), score }] — at most 12, older files removed.
+ */
+function writeLibrary(appDir, entries) {
+  const dir = path.join(appDir, 'library');
+  fs.mkdirSync(dir, { recursive: true });
+  const items = [];
+  const keep = new Set(['index.json']);
+  for (const e of entries.slice(0, 12)) {
+    try {
+      const data = ghostFile(e.lap);
+      const file = `${String(e.id).replace(/[^\w-]/g, '').slice(0, 40) || 'g'}.json`;
+      keep.add(file);
+      if (!fs.existsSync(path.join(dir, file))) fs.writeFileSync(path.join(dir, file), JSON.stringify(data));
+      items.push({ file, driver: data.driver, car: data.car, track: data.track, layout: data.layout, lapMs: data.lapMs, ...(e.score !== undefined && e.score !== null ? { score: e.score } : {}) });
+    } catch {
+      /* no ghost on this lap */
+    }
+  }
+  for (const f of fs.readdirSync(dir)) if (!keep.has(f)) fs.rmSync(path.join(dir, f), { force: true });
+  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ v: 1, items }));
+  return items.length;
+}
+
+module.exports = { readGhostFiles, matchLap, ghostFile, writeGhost, currentGhost, clearGhost, cleanRows, writeLibrary };

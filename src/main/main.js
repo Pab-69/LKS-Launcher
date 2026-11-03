@@ -37,8 +37,10 @@ const { Simulator } = require('./telemetry/simulator');
 const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
 const { Leaderboard } = require('./telemetry/leaderboard');
-const { courseVersion, referenceFrom, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
+const { courseVersion, referenceFrom, driftOf, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
 const { autoCourse } = require('./telemetry/ailine');
+const { bundledCourse, bundledCourses } = require('./telemetry/courses');
+const { hasGates } = require('./telemetry/geo');
 const { collectRuns } = require('./telemetry/tandem');
 const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
@@ -548,8 +550,9 @@ async function applyDash() {
 
 /**
  * Drift course (clips, reference line, rules) for a track/layout: the one
- * published by the admins, otherwise the one generated from the installed
- * track's AI line.
+ * published by the admins, otherwise the official one shipped with the
+ * launcher (worked out from the track itself), otherwise the one generated
+ * from the installed track's AI line.
  */
 const autoCourses = new Map();
 function autoDriftCourse(track, layout = '') {
@@ -569,6 +572,8 @@ function driftCourseInfo(c) {
   const all = (sync && sync.manifest && sync.manifest.drift) || {};
   const published = all[`${c.track}|${c.layout || ''}`];
   if (published) return { course: published, source: 'published' };
+  const official = bundledCourse(c.track, c.layout || '');
+  if (official) return { course: official, source: 'official' };
   const auto = autoDriftCourse(c.track, c.layout || '');
   return { course: auto, source: auto ? 'auto' : null };
 }
@@ -583,7 +588,7 @@ function allDriftCourses() {
       if (c) out[`${t.id}|${l.id || ''}`] = c;
     }
   }
-  return { ...out, ...((sync.manifest && sync.manifest.drift) || {}) };
+  return { ...bundledCourses(), ...out, ...((sync.manifest && sync.manifest.drift) || {}) };
 }
 
 let driftSignature = null;
@@ -633,7 +638,10 @@ async function importTandemRuns() {
   if (!telemetry || !acRoot() || settings.data.telemetry.enabled === false) return;
   const appDir = ingame.appDir(acRoot());
   try {
-    if (telemetry.attachGhosts(path.join(appDir, 'ghosts'))) send('telemetry:lap', null);
+    if (telemetry.attachGhosts(path.join(appDir, 'ghosts'))) {
+      send('telemetry:lap', null);
+      if (telemetry.recorder.combo) refreshGhostLibrary(telemetry.recorder.combo, true).catch((err) => console.warn('[ghost]', err.message));
+    }
   } catch (err) {
     console.warn('[ghost]', err.message);
   }
@@ -645,6 +653,84 @@ async function importTandemRuns() {
     } catch (err) {
       console.warn('[tandem]', err.message);
     }
+  }
+}
+
+/**
+ * Ghosts to pick in game for the track being driven: the best runs with a
+ * ghost (this PC and the shared leaderboard), one per driver.
+ */
+const libraryState = { key: null, at: 0 };
+async function refreshGhostLibrary(combo, force = false) {
+  if (!telemetry || !acRoot() || !combo) return;
+  const appDir = ingame.appDir(acRoot());
+  if (!fs.existsSync(appDir)) return;
+  const key = `${combo.track}|${combo.layout || ''}`;
+  if (!force && libraryState.key === key && Date.now() - libraryState.at < 5 * 60 * 1000) return;
+  libraryState.key = key;
+  libraryState.at = Date.now();
+  const scoreOf = (l) => {
+    const r = driftOf(l, 'normal', 'drift');
+    return r && r.score > 0 ? r.score : null;
+  };
+  const picks = [];
+  const seen = new Set();
+  const local = telemetry.store
+    .list({ track: combo.track, layout: combo.layout || '' })
+    .filter((l) => l.ghost && !l.tandem)
+    .sort((a, b) => (scoreOf(b) || 0) - (scoreOf(a) || 0) || a.lapMs - b.lapMs);
+  for (const l of local) {
+    const who = (l.driver.name || '').toLowerCase();
+    if (seen.has(who)) continue;
+    seen.add(who);
+    try {
+      picks.push({ id: l.id, lap: telemetry.store.load(l.id), score: scoreOf(l) });
+    } catch {
+      /* lap gone */
+    }
+    if (picks.length >= 6) break;
+  }
+  const board = telemetry.board();
+  if (board) {
+    try {
+      const rows = await board.list({ track: combo.track, layout: combo.layout || '', kind: 'drift', rules: courseVersion(driftCourse(combo), 'normal'), limit: 30 });
+      for (const r of (rows || []).filter((x) => x.meta && x.meta.ghost)) {
+        const who = String(r.driver || '').toLowerCase();
+        if (seen.has(who)) continue;
+        seen.add(who);
+        try {
+          picks.push({ id: `r${r.id}`, lap: await board.lap(r.id), score: r.score === null ? null : Number(r.score) });
+        } catch {
+          /* unreadable */
+        }
+        if (picks.length >= 12) break;
+      }
+    } catch (err) {
+      console.warn('[ghost] classement :', err.message);
+    }
+  }
+  picks.sort((a, b) => (b.score || 0) - (a.score || 0));
+  ghosts.writeLibrary(appDir, picks);
+}
+
+/** Other cars seen by the in-game app (apps/lua/LKS/live.json, written 4 times a second). */
+function liveOthers(live) {
+  if (!acRoot()) return null;
+  try {
+    const file = path.join(ingame.appDir(acRoot()), 'live.json');
+    const st = fs.statSync(file);
+    if (Date.now() - st.mtimeMs > 3000) return null;
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!data || data.track !== live.track || !Array.isArray(data.cars)) return null;
+    const me = data.cars.find((c) => c.i === 0);
+    const others = data.cars
+      .filter((c) => c.i !== 0 && Number.isFinite(c.x) && Number.isFinite(c.z))
+      .map((c) => ({ name: String(c.n || '?').slice(0, 40), car: String(c.c || ''), x: c.x, z: c.z, speed: Math.round(c.s || 0), angle: Math.round(c.a || 0), d: c.d, gap: me ? Math.round(Math.hypot(c.x - me.x, c.z - me.z)) : null }))
+      .sort((a, b) => (a.gap ?? 1e9) - (b.gap ?? 1e9))
+      .slice(0, 24);
+    return { others, battle: data.battle || null };
+  } catch {
+    return null; // file being written: next time
   }
 }
 
@@ -667,7 +753,17 @@ function setupTelemetry() {
     if (me && res.drivers.some((d) => d.name.trim().toLowerCase() === me)) text = `Battle contre ${other.name} : ${res.omt ? 'one more time !' : res.winner.trim().toLowerCase() === me ? 'gagnée' : 'perdue'} (${res.drivers.map((d) => d.total).join(' – ')})`;
     send('toast', { kind: res.omt ? 'info' : 'success', text });
     send('telemetry:lap', null);
+    // battle launched in game: the app shows the result
+    if (b.tag && acRoot()) {
+      try {
+        fs.writeFileSync(path.join(ingame.appDir(acRoot()), 'result.json'), JSON.stringify({ tag: Number(b.tag) || b.tag, text }));
+      } catch (err) {
+        console.warn('[battle]', err.message);
+      }
+    }
   });
+  telemetry.on('combo', (c) => refreshGhostLibrary(c).catch((err) => console.warn('[ghost]', err.message)));
+  telemetry.on('reset', (r) => send('telemetry:reset', r));
   applyDriftCourses();
   telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
     send('telemetry:lap', lap);
@@ -681,9 +777,16 @@ function setupTelemetry() {
   telemetry.on('warning', (err) => console.warn('[telemetry]', err.message));
   telemetry.start();
   setInterval(importTandemRuns, 5000);
+  let othersCache = null;
+  let othersAt = 0;
   setInterval(() => {
     const live = telemetry.live();
-    if (live) send('telemetry:live', live);
+    if (!live) return;
+    if (Date.now() - othersAt > 250) {
+      othersAt = Date.now();
+      othersCache = liveOthers(live);
+    }
+    send('telemetry:live', othersCache ? { ...live, others: othersCache.others, battle: othersCache.battle } : live);
   }, 100);
   applyDash();
 }
@@ -839,6 +942,14 @@ function startGame(launch) {
     if (graphics.repairVideoIni(docsDir())) send('toast', { kind: 'info', text: 'Résolution d’écran corrigée avant le lancement' });
   } catch {
     /* unreadable video.ini: the game will say so */
+  }
+  // in-game app already installed: keep it up to date (new runs, start lights, battles)
+  try {
+    const status = ingame.ingameStatus(acRoot());
+    if (status.installed && !status.upToDate) ingame.installIngame(acRoot(), allDriftCourses());
+    if (status.installed && launch && launch.track) refreshGhostLibrary({ track: launch.track, layout: launch.layout || '' }, true).catch(() => {});
+  } catch (err) {
+    console.warn('[ingame]', err.message);
   }
   lastLaunch = launch;
   game.launch(acRoot(), docsDir());
@@ -1646,12 +1757,15 @@ function setupIpc() {
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
-        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)) })), refLine: [], refSpeed: 0 };
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}) })), refLine: [], refSpeed: 0 };
+        // runs between gates (official course): keep its gates, start spot and zones
+        const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
+        if (gated) for (const k of ['progress', 'start', 'finish', 'grid', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
         if (lapId) {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
           Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
-        } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: 'ligne IA' });
+        } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: gated ? 'ligne officielle' : 'ligne IA' });
         else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
         if (rules) course.rules = cleanRules(rules);
         all[key] = course;

@@ -205,12 +205,14 @@ test('tandem: chase judged on proximity, angle and line', () => {
 
 test('automatic course from the track AI line', () => {
   const { courseFromAiLine, parseAiLine, encodeAiLine, autoCourse } = require('../src/main/telemetry/ailine');
-  // touge: straight, left hairpin (r 30, centre 100;30), straight, right hairpin, straight
+  // touge: straight, hairpin (r 30, centre 100;30), straight, hairpin the other way, straight.
+  // In AI files sideRight is the room on the +n side (forward turned +90° in x/z): an arc
+  // turning towards +n has its inside on sideRight (the AI line hugs it: 1 m).
   const pts = [];
   let x = 0;
   let z = 0;
   let hd = 0;
-  const push = (inLeft) => pts.push({ x, z, sideLeft: inLeft === undefined ? 4 : inLeft ? 1 : 7, sideRight: inLeft === undefined ? 4 : inLeft ? 7 : 1 });
+  const push = (towardsN) => pts.push({ x, z, sideLeft: towardsN === undefined ? 4 : towardsN ? 7 : 1, sideRight: towardsN === undefined ? 4 : towardsN ? 1 : 7 });
   const straight = (len) => { for (let i = 0; i < len; i++) { x += Math.cos(hd); z += Math.sin(hd); push(); } };
   const arc = (r, deg, left) => { for (let i = 0; i < Math.round((r * deg * Math.PI) / 180); i++) { hd += (left ? 1 : -1) / r; x += Math.cos(hd); z += Math.sin(hd); push(left); } };
   straight(100); arc(30, 180, true); straight(120); arc(25, 150, false); straight(150);
@@ -223,8 +225,9 @@ test('automatic course from the track AI line', () => {
   const inner = course.clips[1];
   const outer = course.clips[0];
   const fromCentre = (c) => Math.hypot(c.x - 100, c.z - 30);
-  assert.ok(fromCentre(inner) < 30 && fromCentre(inner) > 27, 'inner clip on the inside of the apex');
-  assert.ok(fromCentre(outer) > 33, 'outer zone towards the outside wall');
+  assert.ok(fromCentre(inner) > 29 && fromCentre(inner) < 32.5, 'inner clip by the inside edge (29 m from the centre)');
+  assert.ok(fromCentre(outer) > 33, 'outer zone towards the outside edge');
+  assert.ok(course.clips.every((c) => /^V\d (corde|extérieur)$/.test(c.name)));
   assert.ok(course.refLine.length > 100);
   // installed track folder
   const ac = tmp();

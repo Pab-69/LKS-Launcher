@@ -15,10 +15,18 @@ const WINDOW_MS = 20 * 60 * 1000;
 const norm = (n) => String(n || '').trim().toLowerCase();
 const pairKey = (a, b) => [norm(a), norm(b)].sort().join('|');
 
-/** Are these two tandem runs the two halves of one battle? */
+/**
+ * Are these two tandem runs the two halves of one battle?
+ * Battles launched in game carry a tag (same battle, run 1 and run 2).
+ */
 function isPair(x, y) {
   if (!x.tandem || !y.tandem || x.id === y.id) return false;
   if (x.track !== y.track || (x.layout || '') !== (y.layout || '')) return false;
+  const tx = x.tandem.battle;
+  const ty = y.tandem.battle;
+  if (tx || ty) {
+    if (!tx || !ty || tx.tag !== ty.tag || tx.run === ty.run) return false;
+  }
   if (norm(x.driver.name) !== norm(y.tandem.lead.name) || norm(y.driver.name) !== norm(x.tandem.lead.name)) return false;
   return Math.abs(Date.parse(x.date) - Date.parse(y.date)) <= WINDOW_MS;
 }
@@ -55,7 +63,9 @@ class BattleStore {
 
   /** Build the battle record from two runs (run1: A leads). */
   static make(run1, run2, course) {
-    const [first, second] = Date.parse(run1.date) <= Date.parse(run2.date) ? [run1, run2] : [run2, run1];
+    const tagged = run1.tandem.battle && run2.tandem.battle;
+    const firstIs1 = tagged ? run1.tandem.battle.run <= run2.tandem.battle.run : Date.parse(run1.date) <= Date.parse(run2.date);
+    const [first, second] = firstIs1 ? [run1, run2] : [run2, run1];
     const modes = judgeBattleAll(first, second, course);
     return {
       id: `b${Date.parse(first.date).toString(36)}${Math.random().toString(36).slice(2, 5)}`,
@@ -63,6 +73,7 @@ class BattleStore {
       layout: first.layout || '',
       date: second.date,
       pair: pairKey(first.driver.name, second.driver.name),
+      ...(tagged ? { tag: first.tandem.battle.tag } : {}),
       cars: { [first.tandem.lead.name]: first.tandem.lead.car || '', [first.driver.name]: first.car },
       runs: [
         { lapId: first.id, lead: first.tandem.lead.name, chase: first.driver.name },

@@ -22,11 +22,11 @@ function downsample(samples, max = MAX_SAMPLES) {
   return out;
 }
 
-const packSamples = (samples, ghost) => zlib.gzipSync(JSON.stringify(ghost ? { v: 2, s: downsample(samples), g: downsample(ghost, 3000) } : downsample(samples))).toString('base64');
+const packSamples = (samples, ghost, green) => zlib.gzipSync(JSON.stringify(ghost ? { v: 2, s: downsample(samples), g: downsample(ghost, 3000), ...(Number.isFinite(green) ? { gr: green } : {}) } : downsample(samples))).toString('base64');
 /** Samples of a shared lap (and its ghost rows, when there is one). */
 function unpackLap(b64) {
   const data = JSON.parse(zlib.gunzipSync(Buffer.from(b64, 'base64')).toString('utf8'));
-  return Array.isArray(data) ? { samples: data, ghost: null } : { samples: data.s || [], ghost: data.g || null };
+  return Array.isArray(data) ? { samples: data, ghost: null } : { samples: data.s || [], ghost: data.g || null, green: Number.isFinite(data.gr) ? data.gr : null };
 }
 const unpackSamples = (b64) => unpackLap(b64).samples;
 
@@ -87,7 +87,7 @@ class Leaderboard {
         p_lap_ms: kind === 'time' ? lap.lapMs : null,
         p_score: res ? res.score : null,
         p_rules: rules || (res ? res.rules || '' : ''),
-        p_samples: packSamples(samples, ghost),
+        p_samples: packSamples(samples, ghost, ghost ? lap.ghost.green : undefined),
         p_meta: meta,
       }),
     });
@@ -158,7 +158,7 @@ class Leaderboard {
       topSpeed: meta.topSpeed || 0,
       drift,
       tandem,
-      ghost: unpacked.ghost ? { rows: unpacked.ghost } : undefined,
+      ghost: unpacked.ghost ? { rows: unpacked.ghost, ...(unpacked.green !== null && unpacked.green !== undefined ? { green: unpacked.green } : {}) } : undefined,
       mode,
       date: r.created_at,
       samples,

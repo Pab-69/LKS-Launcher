@@ -36,8 +36,12 @@ class TelemetryManager extends EventEmitter {
     this.ticks = 0;
 
     this.synced = new Set(); // combos whose bests were sent this session
-    this.recorder.on('combo', (c) => this.loadReference(c));
+    this.recorder.on('combo', (c) => {
+      this.loadReference(c);
+      this.emit('combo', c);
+    });
     this.recorder.on('lap', (lap) => this.onLap(lap));
+    this.recorder.on('reset', (r) => this.emit('reset', r));
   }
 
   start() {
@@ -251,7 +255,7 @@ class TelemetryManager extends EventEmitter {
       if (match) {
         try {
           const lap = this.store.load(match.id);
-          lap.ghost = { rows: ghost.rows };
+          lap.ghost = { rows: ghost.rows, ...(Number.isFinite(ghost.green) ? { green: ghost.green } : {}) };
           this.store.save(lap, { imported: Boolean(match.imported) });
           this.synced.delete(`${lap.car}|${lap.track}|${lap.layout || ''}`); // resend the bests, now with their ghost
           n++;
