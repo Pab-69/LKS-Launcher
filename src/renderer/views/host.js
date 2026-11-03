@@ -79,7 +79,7 @@ export default function hostView(root, _params, { go }) {
   function stopNotice(ls, running) {
     const mins = Math.round((ls.uptimeMs || 0) / 60000);
     const title = running && ls.restarted
-      ? `Le serveur s’est arrêté tout seul après ${mins} min et a été relancé automatiquement.`
+      ? `Le serveur s’est arrêté tout seul après ${mins} min et a été relancé automatiquement${ls.lobbyOff ? ', sans la liste publique du jeu' : ''}.`
       : `Le serveur s’est arrêté tout seul après ${mins} min${ls.code !== null && ls.code !== undefined ? ` (code ${ls.code})` : ''}.`;
     return h('div.notice.mt-s',
       h('div.grow',
@@ -148,7 +148,13 @@ export default function hostView(root, _params, { go }) {
           up.state === 'manual' ? h('button.btn.btn-sm.btn-ghost', { disabled: busy, on: { click: async () => { busy = true; render(); await guard(() => api.call('host:retryPorts')); busy = false; await load(); } } }, 'Repasser en ouverture automatique') : null),
         h('p.hint', 'Envoie un code. Il se colle dans Serveurs → Rejoindre avec un code (mot de passe inclus).'),
         inv),
-      portsKo ? h('div.notice.mt', h('span.grow', 'Ports non ouverts : les joueurs hors de chez toi ne peuvent pas se connecter. Passez par le VPN et envoie le code VPN.')) : null,
+      portsKo ? h('div.notice.mt', h('span.grow', 'Ports non ouverts : les joueurs hors de chez toi ne peuvent pas se connecter. Passez par le VPN et envoie le code VPN.')) : '',
+      s.internetCheck === 'failed' ? h('div.notice.mt', h('span.grow',
+        h('strong', 'Testé depuis internet : ton serveur n’est pas joignable. '),
+        'Le code internet ne marchera pas pour l’instant. Envoie le code Radmin VPN ou ZeroTier, ou vérifie dans ta box que les 3 redirections pointent bien vers ',
+        h('strong', s.lanAddress || 'ce PC'),
+        s.boxGuide && s.boxGuide.brand === 'Bbox' ? ' (sur Bbox, vérifie aussi que le pare-feu de la box n’est pas en niveau « élevé »).' : '.')) : '',
+      s.internetCheck === 'ok' ? h('div.mt', h('span.tag.ok', 'Testé depuis internet : ton serveur est joignable')) : '',
       up.state === 'failed' ? h('div.panel.mt', h('h3', 'Ouvrir les ports à la main'),
         s.boxGuide
           ? h('p', { style: { marginTop: 0 } }, h('strong', `${s.boxGuide.brand} : `), s.boxGuide.steps, ' ', h('a.link', { on: { click: () => api.call('shell:open', s.boxGuide.url) } }, 'Ouvrir l’interface de la box'))
@@ -230,7 +236,7 @@ export default function hostView(root, _params, { go }) {
         )),
       h('div.panel', h('h3', 'Réseau'),
         toggle('Ouvrir les ports de ma box automatiquement (UPnP)', o.upnp, (v) => { o.upnp = v; }, 'Pour les joueurs qui ne sont pas chez toi.'),
-        toggle('Visible dans la liste publique du jeu', o.lobby, (v) => { o.lobby = v; }, 'Désactivé : seuls ceux qui ont le code peuvent rejoindre.'),
+        toggle('Visible dans la liste publique du jeu', o.lobby, (v) => { o.lobby = v; }, 'Désactivé : seuls ceux qui ont le code peuvent rejoindre. Activé : le jeu vérifie aussi depuis internet que tes ports sont ouverts (s’ils ne le sont pas, le launcher la désactive pour garder le serveur en ligne).'),
         h('details.mt', h('summary.muted', { style: { cursor: 'pointer' } }, 'Ports (avancé)'),
           h('div.grid.grid-2.mt',
             field('Port jeu (TCP + UDP)', h('input.input', { type: 'number', value: o.ports.tcp, on: { input: (e) => { o.ports = { ...o.ports, tcp: Number(e.target.value), udp: Number(e.target.value) }; } } })),

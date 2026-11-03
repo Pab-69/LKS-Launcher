@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.10.1
+
+- Correction : avec « Visible dans la liste publique du jeu », le serveur s'arrêtait tout seul au bout d'une minute quand le jeu n'arrivait pas à le joindre depuis internet. Le launcher le relance maintenant sans la liste publique et garde la partie en ligne.
+- Ce test du jeu sert aussi d'indication : la page Héberger dit si ton serveur est joignable depuis internet, ou s'il faut passer par le code Radmin VPN / ZeroTier ou corriger les redirections de la box.
+
 ## 1.10.0
 
 - Hébergement plus fiable :

@@ -93,10 +93,12 @@ let hostStopRequested = false;
 let hostRestarts = []; // times of the automatic restarts
 let lastHostStop = null; // why the server stopped, shown on the Héberger page
 let appQuitting = false;
+let lastInternetCheck = null; // 'failed' / 'ok': answer of the game's public list (it tests from internet)
 
 /** Why acServer stopped, from the end of its log (Go panic, port taken, missing content…). */
 function serverStopReason(log) {
   const text = log.slice(-60).join('\n');
+  if (/LOBBY COULD NOT BE R\w*ACHED|SHUTTING SERVER DOWN/i.test(text)) return 'lobby';
   if (/bind: (?:only one usage|address already in use)|address already in use|Only one usage of each socket/i.test(text)) return 'un port du serveur est déjà utilisé';
   if (/panic:|goroutine \d+/i.test(text)) return 'le serveur a planté';
   if (/cannot find|not found|no such file/i.test(text)) return 'un fichier du circuit ou d’une voiture manque';
@@ -680,6 +682,15 @@ function setupHosting() {
     lastHostStop = { at: new Date().toISOString(), code: info.code === undefined ? null : info.code, error: info.error || null, byUser: !unexpected, uptimeMs: uptime, log: host.log.slice(-25), reason: serverStopReason(host.log) };
     applog.log('server stopped', { code: lastHostStop.code, unexpected, uptimeMs: uptime, reason: lastHostStop.reason });
     hostState = null;
+    // the public list of the game could not reach it from internet: start again without it
+    if (lastHostStop.reason === 'lobby') {
+      lastHostStop.reason = 'la liste publique du jeu n’arrive pas à joindre ton serveur depuis internet (ports pas ouverts), il s’est arrêté';
+      if (hostOpts) {
+        hostOpts = { ...hostOpts, lobby: false };
+        settings.update({ host: { ...(settings.data.host || {}), lobby: false } });
+      }
+      lastHostStop.lobbyOff = true;
+    }
     // stopped on its own: start it again with the same settings (3 times in 15 min at most)
     const now = Date.now();
     hostRestarts = hostRestarts.filter((t) => now - t < 15 * 60 * 1000);
@@ -687,11 +698,13 @@ function setupHosting() {
       hostRestarts.push(now);
       lastHostStop.restarted = true;
       send('toast', { kind: 'warn', text: `Le serveur s’est arrêté tout seul${lastHostStop.reason ? ` (${lastHostStop.reason})` : ''} : redémarrage…` });
+      const internet = lastInternetCheck;
       setTimeout(() => {
         try {
           const keep = lastHostStop;
           startHost(hostOpts);
           lastHostStop = keep; // still shown on the page
+          if (internet && hostState) hostState.internetCheck = internet; // what the public list told us
           send('host:changed');
         } catch (err) {
           lastHostStop.restarted = false;
@@ -711,7 +724,19 @@ function setupHosting() {
     if (!game.running) setPresence({ details: 'Dans le launcher', state: 'Lowkey Syndicate', startedAt: Date.now() });
     send('host:changed');
   });
-  host.on('log', () => send('host:log'));
+  host.on('log', (line) => {
+    // the public list of the game tests the server from internet: a free check of the ports
+    let check = null;
+    if (/CHECK YOUR PORT FORWARDING|INVALID SERVER|CONNECTION TO LOBBY FAILED/i.test(line)) check = 'failed';
+    else if (/LOBBY.*(?:SUCCESS|OK\b)|REGISTERED TO LOBBY|registration successful/i.test(line)) check = 'ok';
+    if (check && hostState && hostState.internetCheck !== check) {
+      hostState.internetCheck = check;
+      lastInternetCheck = check;
+      hostTrace.push(`liste publique du jeu (test depuis internet) : ${check === 'ok' ? 'serveur joignable' : 'serveur injoignable, ports pas ouverts'}`);
+      send('host:changed');
+    }
+    send('host:log');
+  });
 }
 
 function setupSync_() {
@@ -1308,6 +1333,7 @@ function setupIpc() {
   handle('host:status', () => hostStatus());
   handle('host:start', async (opts) => {
     hostRestarts = [];
+    lastInternetCheck = null;
     startHost(opts);
     return hostStatus();
   });
