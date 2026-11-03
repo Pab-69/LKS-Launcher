@@ -313,7 +313,7 @@ export default function telemetryView(root, params = {}) {
   function renderTabs() {
     clear(tabsEl);
     const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat'], ['profile', 'Profil']];
-    if (isAdmin()) tabs.push(['course', 'Parcours drift']);
+    if (isAdmin()) tabs.push(['judge', 'Juge'], ['course', 'Parcours drift']);
     tabs.push(['tools', 'Outils']);
     if (!tabs.some(([k]) => k === tab)) tab = 'live';
     tabsEl.append(seg(tabs, tab, (v) => { tab = v; render(); }));
@@ -327,7 +327,7 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
@@ -412,6 +412,63 @@ export default function telemetryView(root, params = {}) {
       offLive();
       offReset();
     };
+  }
+
+  // ------------------------------------------------------------ judge (admins): live of every driver + notes of every run
+  let judgeTrack = '';
+  let judgeTimer = null;
+  async function renderJudge() {
+    clearInterval(judgeTimer);
+    const { map: combosMap } = await combos();
+    const head = h('div');
+    const liveBox = h('div.judge-live');
+    const feed = h('div.list');
+    body.append(head, h('h2.section', 'En piste'), liveBox, h('h2.section', 'Notes des dernières runs'), feed);
+    const tick = async () => {
+      if (!body.isConnected || tab !== 'judge') {
+        clearInterval(judgeTimer);
+        return;
+      }
+      const [track, layout] = judgeTrack ? judgeTrack.split('|') : [];
+      const res = await api.call('judge:feed', judgeTrack ? { track, layout } : {}).catch((err) => ({ error: err.message }));
+      clear(head);
+      if (res.error || !res.configured) {
+        head.append(h('div.notice', res.error || 'Classement partagé pas encore configuré (Publication → Classement).'));
+        return;
+      }
+      const keys = [...combosMap.keys()];
+      head.append(h('div.toolbar',
+        res.soiree ? h('div.notice.info', { style: { margin: 0 } }, `${res.soiree.title}${res.soiree.trackName ? ` — ${res.soiree.trackName}` : ''} : le direct des pilotes est partagé.`) : h('div.notice', { style: { margin: 0 } }, 'Pas de soirée en cours : les pilotes partagent leur direct seulement pendant une soirée (30 min avant jusqu’à la fin). Les notes des runs arrivent toujours.'),
+        select([['', res.soiree && res.soiree.track ? 'Circuit de la soirée' : 'Tous les circuits'], ...keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)])], judgeTrack, (v) => { judgeTrack = v; tick(); }, 'board-select')));
+      // live
+      clear(liveBox);
+      if (!res.live.length) liveBox.append(h('p.muted', { style: { margin: 0 } }, 'Personne en piste pour l’instant.'));
+      for (const p of res.live) {
+        const d = p.data || {};
+        liveBox.append(h('div.panel.judge-card',
+          h('div.row', h('strong', p.name), h(`span.tag.${d.inRun ? 'ok' : 'plain'}.right`, d.inRun ? 'En run' : 'Hors run')),
+          h('div.s', [p.carName, p.trackName].filter(Boolean).join(' · ')),
+          h('div.judge-nums', h('div', h('span.big', `${d.angle || 0}°`), h('span.s', 'angle')), h('div', h('span.big', String(d.speed || 0)), h('span.s', 'km/h')), h('div', h('span.big', d.total ? `${d.hit}/${d.total}` : '—'), h('span.s', 'clips'))),
+          h('div.live-bar', h('i.gas', { style: { width: `${Math.round((d.d || 0) * 100)}%` } })),
+          d.clips && d.clips.length ? h('div.clip-chips', d.clips.map((c, i) => h(`span.clip-chip${c ? '.hit' : ''}`, `${i + 1}`))) : ''));
+      }
+      // runs
+      clear(feed);
+      if (!res.runs.length) feed.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de run notée.'));
+      for (const r of res.runs) {
+        const dt = r.detail || {};
+        feed.append(h('div.list-row.judge-run',
+          h('div',
+            h('div.t', `${r.driver}${r.kind === 'tandem' ? ` · chase derrière ${dt.lead || '?'}` : ''}`),
+            h('div.s', `${new Date(r.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · ${r.carName} · ${r.trackName}`),
+            h('div.clip-chips', (dt.clips || []).map((c) => h(`span.clip-chip${c.hit ? '.hit' : ''}`, { title: c.name }, `${c.hit ? '✓' : '✗'} ${c.name}${c.cover !== undefined ? ` ${c.cover} %` : ''}`))),
+            (dt.zones || []).length ? h('div.s', `Zones : ${dt.zones.map((z) => `${z.name} ${z.score}`).join(' · ')}`) : '',
+            (dt.penalties || []).length ? h('div.s', `Pénalités : ${dt.penalties.join(', ')}`) : ''),
+          h('div', h('strong.judge-score', `${r.score.toFixed(1)}`), h('div.s', dt.zeroed ? `run à 0 : ${dt.zeroed}` : r.kind === 'tandem' ? `écart moyen ${dt.avgGap ?? '—'} m` : `angle ${dt.angle ?? '—'} · vitesse ${dt.speed ?? '—'} · ligne ${dt.line ?? '—'}`))));
+      }
+    };
+    await tick();
+    judgeTimer = setInterval(tick, 2000);
   }
 
   // ------------------------------------------------------------ profile
@@ -1089,7 +1146,7 @@ export default function telemetryView(root, params = {}) {
       h('div.grid.grid-2',
         h('div.panel', h('h3', 'Réglages'),
           toggle('Enregistrer mes tours', st.enabled !== false, (v) => setT({ enabled: v })),
-          toggle('Envoyer mes records au classement', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Seuls tes meilleurs tours sont envoyés.' : 'Classement partagé pas encore configuré par les admins.')),
+          toggle('Partager mes runs avec le groupe', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Ta note de chaque run (visible par les juges) et tes records (classement).' : 'Classement partagé pas encore configuré par les admins.')),
         h('div.panel', h('h3', 'Appli en jeu'),
           h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips sur la piste et écart pendant que tu roules. Boutons : « Feux » pour un vrai départ arrêté, « Fantôme » pour choisir qui suivre, « Battle » pour défier un pilote du serveur. Elle enregistre aussi tes tandems et montre les autres pilotes ici. Custom Shaders Patch requis.'),
           h('div.row.wrap',

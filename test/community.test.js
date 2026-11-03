@@ -135,3 +135,22 @@ test('judge decisions overrule the launcher’s result of a battle', () => {
   const late = judged({ ...result, omt: false, winner: 'Pab' }, decisionFor(decisions, { ...battle, date: '2026-11-03T23:01:00Z' }));
   assert.deepStrictEqual([late.omt, late.winner], [true, null]);
 });
+
+test('every run note and the live state shared with the judges', async () => {
+  const f = fakeFetch((url) => {
+    if (url.includes('lks_runs_list')) return { body: [{ id: 'r1', driver: 'Kaze', car: 'lks_s14', track: 'cfd_calmont_2023', layout: 'Calmont', kind: 'drift', score: '72.4', detail: { clips: [{ name: 'Clip 1', hit: true }] }, created_at: '2026-11-03T21:05:00Z' }] };
+    if (url.includes('lks_live_now')) return { body: [{ id: 'p1', name: 'Kaze', car: 'lks_s14', track: 'cfd_calmont_2023', layout: 'Calmont', data: { angle: 34, speed: 88, d: 0.4 }, updated_at: 'x' }] };
+    return { body: 'ok' };
+  });
+  const c = new Community({ url: 'https://x.supabase.co', anonKey: 'k', fetchImpl: f });
+  await c.addRun({ id: 'u1', driver: 'Pab', steamId: '7656', car: 'm2', track: 'cfd_calmont_2023', layout: 'Calmont', kind: 'drift', score: 78.44, detail: { clips: [] } });
+  assert.strictEqual(f.calls[0].body.p_score, 78.4);
+  assert.strictEqual(f.calls[0].body.p_kind, 'drift');
+  const runs = await c.runs({ track: 'cfd_calmont_2023', layout: 'Calmont', since: '2026-11-03T00:00:00Z' });
+  assert.match(f.calls[1].url, /track=eq\.cfd_calmont_2023&layout=eq\.Calmont&created_at=gte\./);
+  assert.strictEqual(runs[0].score, 72.4);
+  await c.setLive({ id: 'pabcdef12', secret: 's'.repeat(20), name: 'Pab', car: 'm2', track: 't', data: { angle: 30 } });
+  assert.deepStrictEqual(f.calls[2].body.p_data, { angle: 30 });
+  const live = await c.live();
+  assert.strictEqual(live[0].data.angle, 34);
+});

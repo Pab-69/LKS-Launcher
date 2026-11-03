@@ -373,3 +373,91 @@ begin
 end $$;
 revoke all on function public.add_photo(uuid, text, text, text, text, text) from public;
 grant execute on function public.add_photo(uuid, text, text, text, text, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Notes de toutes les runs (pas seulement les records) : le launcher envoie la
+-- note complète à la fin de chaque run (clips, zones, pénalités), pour que les
+-- juges et le groupe les voient tout de suite. Gardées 30 jours.
+
+create table if not exists public.lks_runs (
+  id uuid primary key,
+  driver text not null,
+  steam_id text not null default '',
+  car text not null default '',
+  track text not null,
+  layout text not null default '',
+  kind text not null check (kind in ('drift', 'tandem')),
+  score numeric(4, 1) not null,
+  detail jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.lks_runs enable row level security;
+revoke all on public.lks_runs from anon, authenticated;
+create index if not exists lks_runs_recent on public.lks_runs (created_at desc);
+create or replace view public.lks_runs_list with (security_invoker = false) as
+  select id, driver, car, track, layout, kind, score, detail, created_at from public.lks_runs
+   where created_at > now() - interval '30 days';
+grant select on public.lks_runs_list to anon, authenticated;
+
+create or replace function public.add_run(
+  p_id uuid, p_driver text, p_steam_id text, p_car text, p_track text, p_layout text, p_kind text, p_score numeric, p_detail jsonb
+) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(length(p_driver), 0) not between 1 and 40 or length(coalesce(p_steam_id, '')) > 32
+     or coalesce(p_track, '') !~ '^[A-Za-z0-9_.-]{1,80}$' or coalesce(p_layout, '') !~ '^[A-Za-z0-9_.-]{0,80}$'
+     or length(coalesce(p_car, '')) > 80 or p_kind not in ('drift', 'tandem')
+     or p_score is null or p_score < 0 or p_score > 100
+     or jsonb_typeof(coalesce(p_detail, '{}'::jsonb)) <> 'object' or length(coalesce(p_detail, '{}'::jsonb)::text) > 6000 then
+    raise exception 'données invalides';
+  end if;
+  if (select count(*) from public.lks_runs where driver = p_driver and created_at > now() - interval '1 day') >= 400 then
+    raise exception 'trop de runs aujourd''hui';
+  end if;
+  delete from public.lks_runs where created_at < now() - interval '30 days';
+  insert into public.lks_runs (id, driver, steam_id, car, track, layout, kind, score, detail)
+  values (p_id, p_driver, coalesce(p_steam_id, ''), coalesce(p_car, ''), p_track, coalesce(p_layout, ''), p_kind, p_score, coalesce(p_detail, '{}'::jsonb))
+  on conflict (id) do nothing;
+  return 'ok';
+end $$;
+revoke all on function public.add_run(uuid, text, text, text, text, text, text, numeric, jsonb) from public;
+grant execute on function public.add_run(uuid, text, text, text, text, text, text, numeric, jsonb) to anon, authenticated;
+
+-- Direct pendant les soirées : angle, vitesse, avancée de la run et clips pris,
+-- envoyés toutes les 1 à 2 secondes par les launchers des pilotes en piste.
+-- Visible 10 secondes après le dernier envoi.
+
+create table if not exists public.lks_live (
+  id text primary key,
+  secret text not null,
+  name text not null,
+  car text not null default '',
+  track text not null default '',
+  layout text not null default '',
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.lks_live enable row level security;
+revoke all on public.lks_live from anon, authenticated;
+create or replace view public.lks_live_now with (security_invoker = false) as
+  select id, name, car, track, layout, data, updated_at from public.lks_live where updated_at > now() - interval '10 seconds';
+grant select on public.lks_live_now to anon, authenticated;
+
+create or replace function public.set_live(p_id text, p_secret text, p_name text, p_car text, p_track text, p_layout text, p_data jsonb) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(length(p_id), 0) not between 8 and 64 or coalesce(length(p_secret), 0) not between 16 and 128
+     or coalesce(length(p_name), 0) not between 1 and 40
+     or length(coalesce(p_car, '')) > 80 or length(coalesce(p_track, '')) > 80 or length(coalesce(p_layout, '')) > 80
+     or jsonb_typeof(coalesce(p_data, '{}'::jsonb)) <> 'object' or length(coalesce(p_data, '{}'::jsonb)::text) > 2000 then
+    raise exception 'données invalides';
+  end if;
+  insert into public.lks_live (id, secret, name, car, track, layout, data, updated_at)
+  values (p_id, p_secret, p_name, coalesce(p_car, ''), coalesce(p_track, ''), coalesce(p_layout, ''), coalesce(p_data, '{}'::jsonb), now())
+  on conflict (id) do update
+    set name = excluded.name, car = excluded.car, track = excluded.track, layout = excluded.layout, data = excluded.data, updated_at = now()
+    where public.lks_live.secret = excluded.secret;
+  return 'ok';
+end $$;
+revoke all on function public.set_live(text, text, text, text, text, text, jsonb) from public;
+grant execute on function public.set_live(text, text, text, text, text, text, jsonb) to anon, authenticated;

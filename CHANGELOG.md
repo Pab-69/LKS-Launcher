@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.16.0
+
+- **La note de chaque run est partagée**, plus seulement les records : note, clips (✓ ou ✗, % des zones longues), note par zone et pénalités. Elle arrive chez les autres quelques secondes après la fin de la run.
+- **Le direct pendant les soirées** : de 30 min avant une soirée du calendrier jusqu'à sa fin, le launcher de chaque pilote partage toutes les 1 à 2 secondes son angle, sa vitesse, l'avancée de sa run et les clips déjà pris.
+- **Onglet Juge** (admins, dans Télémétrie) : tous les pilotes en piste en direct, et les notes de toutes les dernières runs avec le détail. Pas besoin d'être en jeu ni sur le serveur.
+- Paramètres : « Partager mon direct pendant les soirées » se coupe à part. « Partager mes runs avec le groupe » (Télémétrie → Outils) coupe tout le partage.
+- **Admins : relancez le script du classement dans Supabase** (Publication → Classement → Copier le script).
+
 ## 1.15.0
 
 - **Battle des soirées** : en créant une soirée, les admins choisissent « Battle : top 4, 8 ou 16 ». Les qualifs se font en solo pendant la soirée, puis le tableau des meilleurs se remplit tout seul (Télémétrie → Championnat « Soirées LKS »).

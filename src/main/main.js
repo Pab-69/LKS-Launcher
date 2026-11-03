@@ -927,6 +927,85 @@ function writeScoreForGame(lap, pbDrift = [], pbTandem = []) {
   }
 }
 
+/**
+ * Every run's note goes to the group (not only the records): the judges and
+ * the members see it a few seconds after the run.
+ */
+function shareRun(lap) {
+  const c = community();
+  if (!c || !lap || settings.data.telemetry.shareLaps === false) return;
+  if (((lap.driver && lap.driver.steamId) || '') !== (settings.data.steamId || '')) return; // a run where you led: the chaser's launcher sends it
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  const base = tandem || d;
+  if (!base || !(base.score >= 0)) return;
+  const detail = {
+    angle: d && d.angle,
+    speed: d && d.speed,
+    line: d && d.line,
+    penalty: d && d.penalty,
+    zeroed: (d && d.zeroed) || null,
+    avgAngle: d && d.avgAngle,
+    avgSpeed: d && d.avgSpeed,
+    clips: ((d && d.clips) || []).slice(0, 30).map((k) => ({ name: k.name, hit: k.hit, ...(k.cover !== undefined ? { cover: k.cover } : {}) })),
+    zones: ((d && d.zones) || []).slice(0, 30).map((z) => ({ name: z.name, score: z.score })),
+    penalties: ((d && d.penalties) || []).slice(0, 10).map((x) => x.label),
+    ...(tandem ? { lead: lap.tandem.lead && lap.tandem.lead.name, proximity: tandem.proximity, avgGap: tandem.avgGap } : {}),
+  };
+  // same id for the same run, whoever sends it again
+  const hash = require('crypto').createHash('sha1').update(`${settings.data.steamId}|${lap.id}`).digest('hex');
+  const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+  c.addRun({ id, driver: lap.driver.name, steamId: lap.driver.steamId, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail }).catch((err) => applog.log('run share', err.message));
+}
+
+/** Evening going on (from 30 min before to the end): live sharing for the judges. */
+function soireeNow(now = Date.now()) {
+  return (
+    ((sync && sync.manifest && sync.manifest.events) || []).find((ev) => {
+      const start = Date.parse(ev.date);
+      return start && now >= start - 30 * 60000 && now <= start + (Number(ev.durationMinutes) || 120) * 60000;
+    }) || null
+  );
+}
+
+let liveShareAt = 0;
+let liveShareBusy = false;
+function shareLive() {
+  if (liveShareBusy || Date.now() - liveShareAt < 1500) return;
+  if (settings.data.telemetry.shareLaps === false || settings.data.liveShare === false || !soireeNow()) return;
+  const live = telemetry && telemetry.live();
+  const c = community();
+  if (!c || !live || live.status !== 2) return;
+  liveShareAt = Date.now();
+  liveShareBusy = true;
+  const me = presenceIdentity();
+  const run = live.run || null;
+  const clips = live.clips || null;
+  c.setLive({
+    ...me,
+    name: settings.data.driverName || 'Pilote',
+    car: live.car,
+    track: live.track,
+    layout: live.layout,
+    data: {
+      angle: Math.round(live.angle || 0),
+      speed: Math.round(live.speed || 0),
+      inRun: run ? Boolean(run.active) : true,
+      d: Math.round((live.d || 0) * 1000) / 1000,
+      ms: live.lapMs || 0,
+      hit: clips ? clips.hit : 0,
+      total: clips ? clips.total : 0,
+      clips: clips ? clips.clips.slice(0, 30).map((k) => (k.hit ? 1 : 0)) : [],
+      x: Math.round(live.x || 0),
+      z: Math.round(live.z || 0),
+    },
+  })
+    .catch((err) => applog.log('live share', err.message))
+    .finally(() => {
+      liveShareBusy = false;
+    });
+}
+
 /** Championships with every round's results (qualifying, bracket, points). */
 async function championshipsNow() {
   const list = (sync.manifest && sync.manifest.championships) || [];
@@ -1064,6 +1143,7 @@ function setupTelemetry() {
   telemetry.on('lap', ({ lap, pbTime, pbDrift, pbTandem }) => {
     send('telemetry:lap', lap);
     writeScoreForGame(lap, pbDrift, pbTandem);
+    shareRun(lap);
     // the driver's new record (normal mode), on the group's channel
     const me = (settings.data.steamId || '') === ((lap.driver && lap.driver.steamId) || '');
     if (me && settings.data.discordShare !== false) {
@@ -1092,6 +1172,7 @@ function setupTelemetry() {
       liveOthersCache = othersCache;
     }
     send('telemetry:live', othersCache ? { ...live, others: othersCache.others, battle: othersCache.battle } : live);
+    shareLive();
   }, 100);
   applyDash();
 }
@@ -2163,6 +2244,23 @@ function setupIpc() {
       return true;
     }),
   );
+  // judges: every driver's live state (during an evening) and the notes of the latest runs
+  handle('judge:feed', async ({ track, layout } = {}) => {
+    const c = community();
+    if (!c) return { configured: false };
+    const soiree = soireeNow();
+    const since = new Date(Date.now() - 12 * 3600000).toISOString();
+    const onTrack = track || (soiree && soiree.track) || undefined;
+    const onLayout = track ? layout || '' : soiree && soiree.track ? soiree.layout || '' : undefined;
+    const [live, runs] = await Promise.all([c.live().catch(() => []), c.runs({ track: onTrack, layout: onLayout, since, limit: 80 })]);
+    return {
+      configured: true,
+      soiree: soiree ? { title: soiree.title, track: soiree.track || '', layout: soiree.layout || '', trackName: soiree.track ? trackLabel(soiree.track, soiree.layout) : '' } : null,
+      live: live.map((p) => ({ ...p, carName: carLabel(p.car), trackName: trackLabel(p.track, p.layout) })),
+      runs: runs.map((r) => ({ ...r, carName: carLabel(r.car), trackName: trackLabel(r.track, r.layout) })),
+    };
+  });
+
   handle('community:online', async () => {
     const c = community();
     if (!c) return { configured: false, people: [] };

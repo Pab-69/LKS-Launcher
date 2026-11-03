@@ -107,6 +107,34 @@ class Community {
     return this.request('/rest/v1/rpc/vote_proposal', { method: 'POST', body: JSON.stringify({ p_proposal: proposalId, p_voter: voter, p_secret: secret, p_value: value }) });
   }
 
+  // ------------------------------------------------------------ runs and live (judges)
+  /** Note of a finished run: r = { id, driver, steamId, car, track, layout, kind, score, detail } */
+  addRun(r) {
+    return this.request('/rest/v1/rpc/add_run', {
+      method: 'POST',
+      body: JSON.stringify({ p_id: r.id, p_driver: String(r.driver || 'Pilote').slice(0, 40), p_steam_id: String(r.steamId || '').slice(0, 32), p_car: r.car || '', p_track: r.track, p_layout: r.layout || '', p_kind: r.kind === 'tandem' ? 'tandem' : 'drift', p_score: Math.max(0, Math.min(100, Math.round((Number(r.score) || 0) * 10) / 10)), p_detail: r.detail || {} }),
+    });
+  }
+
+  async runs({ track, layout, since, limit = 60 } = {}) {
+    const q = new URLSearchParams({ select: '*', order: 'created_at.desc', limit: String(limit) });
+    if (track) q.set('track', `eq.${track}`);
+    if (track && layout !== undefined) q.set('layout', `eq.${layout}`);
+    if (since) q.set('created_at', `gte.${since}`);
+    const rows = await this.request(`/rest/v1/lks_runs_list?${q}`);
+    return (rows || []).map((r) => ({ id: r.id, driver: r.driver, car: r.car, track: r.track, layout: r.layout, kind: r.kind, score: Number(r.score), detail: r.detail || {}, date: r.created_at }));
+  }
+
+  /** Live state of this driver during an evening (every 1-2 s). */
+  setLive(p) {
+    return this.request('/rest/v1/rpc/set_live', { method: 'POST', body: JSON.stringify({ p_id: p.id, p_secret: p.secret, p_name: String(p.name || 'Pilote').slice(0, 40), p_car: p.car || '', p_track: p.track || '', p_layout: p.layout || '', p_data: p.data || {} }) });
+  }
+
+  async live() {
+    const rows = await this.request('/rest/v1/lks_live_now?select=*&order=name.asc&limit=40');
+    return (rows || []).map((r) => ({ id: r.id, name: r.name, car: r.car, track: r.track, layout: r.layout, data: r.data || {}, updatedAt: r.updated_at }));
+  }
+
   // ------------------------------------------------------------ gallery
   /** p = { image: Buffer, ext: jpg|png|webp, author, caption, car, track } */
   async addPhoto(p) {

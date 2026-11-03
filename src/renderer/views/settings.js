@@ -47,6 +47,7 @@ export default function settings(root, params) {
       h('div.row', h('button.btn.btn-sm', { on: { click: () => showTour() } }, 'Revoir la présentation du launcher')),
       toggle('Afficher mon activité sur Discord', s.discordPresence !== false, (v) => saveSettings({ discordPresence: v }), 'Affiche ta voiture et ta piste sur ton profil Discord.'),
       toggle('Me montrer en ligne aux membres', s.showOnline !== false, (v) => saveSettings({ showOnline: v }), 'Les membres voient sur l’Accueil que tu es là, et sur quel serveur tu roules (pour te rejoindre).'),
+      toggle('Partager mon direct pendant les soirées', s.liveShare !== false, (v) => saveSettings({ liveShare: v }), 'Pendant une soirée du calendrier, les juges voient ton angle, ta vitesse et tes clips en direct.'),
       toggle('Annoncer mes records et battles sur le Discord du groupe', s.discordShare !== false, (v) => saveSettings({ discordShare: v }), 'Seulement si les admins ont réglé le salon des annonces.'),
       toggle('Rappels des events', s.eventNotifications !== false, (v) => saveSettings({ eventNotifications: v }), 'Notification 15 min avant chaque event.'),
       h('div.row.mt',
