@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.12.2
+
+- **Ligne de start et ligne de départ séparées** :
+  - la **ligne de start** est l'endroit où tu t'arrêtes pour les feux (Calmont : la ligne peinte en haut, là où le jeu te place ; Biķernieki : le couloir de cônes) ;
+  - la **ligne de départ** est l'endroit où la run et la note commencent (Calmont : la ligne peinte avant le premier clip ; Biķernieki : la ligne jaune en travers, au début des lignes jaunes).
+  - Les feux ne se lancent que sur la ligne de start. Les deux lignes et l'arrivée s'affichent sur la carte et sur la piste.
+- **Biķernieki : le dernier clip fait toute la boucle**, le long du mur extérieur, d'une ligne jaune en travers à l'autre. La ligne de référence suit maintenant le mur dans la boucle.
+- Le fantôme garde 20 secondes avant la ligne de départ : il rejoue le départ arrêté depuis la ligne de start.
+- Appli en jeu 2.2.
+
 ## 1.12.1
 
 - **Clips de Calmont et Biķernieki repris du marquage au sol** : ce sont maintenant exactement les clips peints sur la piste, plus des clips calculés.

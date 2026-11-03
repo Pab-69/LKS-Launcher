@@ -186,7 +186,7 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
   let proj = null;
   const draw = (pos) => {
     const all = laps.flatMap((l) => l.samples.map((s) => [s[COL.x], s[COL.z]]));
-    if (course) all.push(...(course.refLine || []), ...(course.clips || []).map((c) => [c.x, c.z]));
+    if (course) all.push(...(course.refLine || []), ...(course.clips || []).map((c) => [c.x, c.z]), ...(course.staging || []));
     if (!all.length) return;
     const w = canvas.parentElement ? canvas.parentElement.clientWidth : 300;
     const dpr = window.devicePixelRatio || 1;
@@ -251,6 +251,16 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
       g.font = '700 12px Barlow Condensed, sans-serif';
       g.fillText(String(i + 1), px(c.x) + Math.max(7, (c.r || 3) * k) + 2, pz(c.z) + 4);
     });
+    // ligne de start, ligne de départ, arrivée
+    for (const [line, color, label] of [[course && course.staging, '#ece5da', 'Start'], [course && course.start, '#3fd17f', 'Départ'], [course && course.finish, '#e01b3a', 'Arrivée']]) {
+      if (!Array.isArray(line) || line.length !== 2) continue;
+      g.strokeStyle = color;
+      g.lineWidth = 3;
+      path(line);
+      g.fillStyle = color;
+      g.font = '600 11px Barlow Condensed, sans-serif';
+      g.fillText(label, px(line[1][0]) + 6, pz(line[1][1]) + 4);
+    }
     const dot = (x, z, color) => {
       g.fillStyle = color;
       g.beginPath();

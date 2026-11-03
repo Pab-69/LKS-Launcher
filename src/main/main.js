@@ -1760,7 +1760,7 @@ function setupIpc() {
         const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
         const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
-        if (gated) for (const k of ['progress', 'start', 'finish', 'grid', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
+        if (gated) for (const k of ['progress', 'staging', 'start', 'finish', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
         if (lapId) {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");

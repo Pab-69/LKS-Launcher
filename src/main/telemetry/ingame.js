@@ -45,8 +45,8 @@ function thinLine(line = []) {
 /**
  * Drift courses for the in-game app: apps/lua/LKS/courses.lua
  * clips (with their height when known), and for runs between gates: the
- * start/finish gates, the course line (position along the run) and the spot
- * where to line up for the start lights.
+ * « ligne de start » (where to stop for the start lights), « ligne de départ »
+ * (the run and its judging start there), finish, and the course line.
  */
 function writeCourses(acRoot, courses = {}) {
   const dir = appDir(acRoot);
@@ -58,7 +58,7 @@ function writeCourses(acRoot, courses = {}) {
     if (Array.isArray(c.start) && Array.isArray(c.finish) && Array.isArray(c.refLine) && c.refLine.length > 1) {
       parts.push(`start = { ${pair(c.start[0])}, ${pair(c.start[1])} }`, `finish = { ${pair(c.finish[0])}, ${pair(c.finish[1])} }`);
       parts.push(`line = { ${thinLine(c.refLine).map(pair).join(', ')} }`);
-      if (Array.isArray(c.grid) && c.grid.length >= 4) parts.push(`grid = { x = ${num(c.grid[0])}, z = ${num(c.grid[1])}, dx = ${num(c.grid[2])}, dz = ${num(c.grid[3])} }`);
+      if (Array.isArray(c.staging) && c.staging.length === 2) parts.push(`staging = { ${pair(c.staging[0])}, ${pair(c.staging[1])} }`);
     }
     if (c.official) parts.push(`official = ${luaStr(c.official)}`);
     lines.push(`  [${luaStr(key)}] = { ${parts.join(', ')} },`);

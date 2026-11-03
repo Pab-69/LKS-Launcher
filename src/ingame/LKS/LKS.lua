@@ -11,6 +11,7 @@ local GREEN = rgbm(0.25, 0.85, 0.5, 1)
 local RED = rgbm(0.88, 0.11, 0.23, 1)
 local AMBER = rgbm(1, 0.62, 0.1, 1)
 local GREY = rgbm(0.66, 0.61, 0.58, 1)
+local WHITE = rgbm(1, 1, 1, 1)
 local DARK = rgbm(0.18, 0.16, 0.16, 1)
 
 local function safe(fn, default)
@@ -144,9 +145,23 @@ local function crossesForward(gate, d, ax, az, bx, bz)
   return (bx - ax) * fx + (bz - az) * fz > 0
 end
 
--- derrière la porte de départ (moins de 250 m) ?
+local function segDist(g, x, z)
+  local ax, az, bx, bz = g[1][1], g[1][2], g[2][1], g[2][2]
+  local vx, vz = bx - ax, bz - az
+  local l2 = vx * vx + vz * vz
+  if l2 <= 0 then l2 = 1 end
+  local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / l2))
+  return math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
+end
+
+-- Deux lignes au départ : la « ligne de start » où l'on s'arrête pour les feux,
+-- et la « ligne de départ » où la run et la note commencent.
+local staging = course.staging
+
+-- bien placé pour les feux ?
 local function behindStart(x, z)
   if not gated then return true end
+  if staging then return segDist(staging, x, z) < 15 end
   local mx, mz = (course.start[1][1] + course.start[2][1]) / 2, (course.start[1][2] + course.start[2][2]) / 2
   local fx, fz = lineDir(0)
   local dist = math.sqrt((x - mx) ^ 2 + (z - mz) ^ 2)
@@ -345,7 +360,7 @@ local function recordGhost(car)
     local pre = rec.pre
     if #pre == 0 or clock - pre[#pre][1] >= 50 then
       pre[#pre + 1] = ghostRow(car, clock)
-      while #pre > 0 and clock - pre[1][1] > 8000 do table.remove(pre, 1) end
+      while #pre > 0 and clock - pre[1][1] > 20000 do table.remove(pre, 1) end
     end
     return
   end
@@ -470,7 +485,7 @@ end
 
 local function canStage(car)
   if car.speedKmh > 3 then return false, 'Arrête-toi d’abord' end
-  if gated and not behindStart(car.position.x, car.position.z) then return false, 'Place-toi avant la porte de départ' end
+  if gated and not behindStart(car.position.x, car.position.z) then return false, staging and 'Place-toi sur la ligne de start' or 'Place-toi avant la ligne de départ' end
   return true
 end
 
@@ -829,9 +844,25 @@ render.on('main.track.transparent', function()
       end
     end
   end
+  -- lignes de start, de départ et d'arrivée
+  if show3d and gated then
+    local car = ac.getCar(0)
+    local cy = car and car.position.y or 0
+    for _, g in ipairs({ { staging, WHITE }, { course.start, GREEN }, { course.finish, RED } }) do
+      local line, col = g[1], g[2]
+      if line and car and math.abs(line[1][1] - car.position.x) < 250 and math.abs(line[1][2] - car.position.z) < 250 then
+        for k = 0, 6 do
+          local x = line[1][1] + (line[2][1] - line[1][1]) * k / 6
+          local z = line[1][2] + (line[2][2] - line[1][2]) * k / 6
+          pcall(render.debugSphere, vec3(x, cy + 0.2, z), 0.25, col)
+        end
+      end
+    end
+  end
   if gated and lights.state ~= 'off' then
     local col = lights.state == 'green' and GREEN or (lights.state == 'false' and AMBER or RED)
-    local mx, mz = (course.start[1][1] + course.start[2][1]) / 2, (course.start[1][2] + course.start[2][2]) / 2
+    local sl = staging or course.start
+    local mx, mz = (sl[1][1] + sl[2][1]) / 2, (sl[1][2] + sl[2][2]) / 2
     local car = ac.getCar(0)
     local y = (car and car.position.y or 0) + 4
     for k = 1, 3 do
@@ -925,7 +956,7 @@ function script.windowMain(dt)
   -- run
   if gated then
     if run.active then ui.textColored('Run ' .. fmtMs(clock - run.t0), GREEN)
-    else ui.textColored(run.lastMs and ('Dernière run ' .. fmtMs(run.lastMs)) or 'Passe la porte de départ', GREY) end
+    else ui.textColored(run.lastMs and ('Dernière run ' .. fmtMs(run.lastMs)) or (staging and 'Ligne de start, feux, puis ligne de départ' or 'Passe la ligne de départ'), GREY) end
   end
 
   if #clips > 0 then
@@ -938,7 +969,7 @@ function script.windowMain(dt)
   if battle and battle.phase ~= 'invited' then
     local role = battleRole() == 'lead' and 'devant' or 'derrière'
     local txt = string.format('Battle %d/2 contre %s : %s', battle.run, tostring(battle.name), role)
-    if battle.phase == 'staging' then txt = txt .. (battle.meReady and (battle.otherReady and ' · départ…' or ' · attends l’autre') or ' · arrête-toi avant le départ') end
+    if battle.phase == 'staging' then txt = txt .. (battle.meReady and (battle.otherReady and ' · départ…' or ' · attends l’autre') or (staging and ' · arrête-toi sur la ligne de start' or ' · arrête-toi avant le départ')) end
     if battle.phase == 'done' then txt = 'Battle finie : résultat dans un instant' end
     ui.textColored(txt, AMBER)
   elseif battle then
@@ -964,7 +995,7 @@ function script.windowMain(dt)
   if ghost.data then
     ui.textColored(string.format('Fantôme : %s', tostring(ghost.data.driver or '?')), GREY)
     if ghost.running and ghost.gap then ui.textColored(string.format('à %.0f m', ghost.gap), ghost.gap < 8 and GREEN or GREY)
-    elseif not ghost.running then ui.textColored(gated and 'Il part à la porte de départ, ou au vert' or 'Il part au prochain passage de la ligne', GREY) end
+    elseif not ghost.running then ui.textColored(gated and 'Il part à la ligne de départ, ou au vert des feux' or 'Il part au prochain passage de la ligne', GREY) end
   elseif ghost.note then
     ui.textColored(ghost.note, GREY)
   end

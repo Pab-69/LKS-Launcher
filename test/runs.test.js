@@ -45,6 +45,7 @@ test('official courses: Calmont and Biķernieki with gates, line and clips on th
     // every clip is close to the line (on the road), in course order
     let last = -1;
     for (const k of c.clips) {
+      t.hint = -1;
       const w = t.locate(k.x, k.z);
       assert.ok(w.dist < 9, `${key} ${k.name} ${w.dist}`);
       assert.ok(w.d >= last - 0.02, `${key} clips in order`);
@@ -161,7 +162,7 @@ test('in-game app files: courses with gates, battle runs, ghost library', () => 
   assert.match(lua, /start = \{ \{ -67\.6, -11 \}/);
   assert.match(lua, /path = \{ \{ -?\d/, "long painted zones keep their path");
   assert.match(lua, /line = \{ \{/);
-  assert.match(lua, /grid = \{ x = /);
+  assert.match(lua, /staging = \{ \{ -56\.6, 115\.2 \}/);
   assert.match(lua, /kind = "outer"/);
   assert.match(lua, /name = "A\\"b"/);
   assert.ok(!/\["x\|"\] = \{[^\n]*start =/.test(lua), 'no gates without a course line');
