@@ -1170,7 +1170,10 @@ function setupTelemetry() {
   });
   telemetry.on('submitted', () => send('toast', { kind: 'info', text: 'Envoyé au classement' }));
   telemetry.on('submitError', (err) => send('toast', { kind: 'warn', text: err.message }));
-  telemetry.on('warning', (err) => console.warn('[telemetry]', err.message));
+  telemetry.on('warning', (err) => {
+    console.warn('[telemetry]', err.message);
+    applog.log('telemetry error', err.stack || err.message);
+  });
   telemetry.start();
   setInterval(importTandemRuns, 5000);
   let othersCache = null;
@@ -1997,6 +2000,25 @@ function setupIpc() {
   handle('telemetry:status', () => {
     const t = settings.data.telemetry;
     return { ...t, board: Boolean(telemetry.board()), dash: { running: telemetry.dash.running, urls: telemetry.dash.running ? dashUrls(t.dashPort || 8095) : [] }, live: telemetry.live(), error: telemetry.source.error || telemetry.tickError ? 'Impossible de lire les données du jeu sur ce PC.' : null };
+  });
+  handle('telemetry:diagnostic', () => {
+    const live = telemetry.live();
+    const r = telemetry.recorder;
+    const combo = r.combo;
+    const info = combo ? driftCourseInfo(combo) : null;
+    const c = info && info.course;
+    const err = telemetry.tickError || telemetry.source.error;
+    return [
+      `LKS Launcher ${app.getVersion()} — diagnostic télémétrie (${new Date().toISOString()})`,
+      `Télémétrie : ${settings.data.telemetry.enabled === false ? 'désactivée' : 'activée'} · données du jeu : ${live ? `oui (statut ${live.status}, session ${live.session})` : 'aucune'}${err ? ` · erreur : ${err.message || err}` : ''}`,
+      `Circuit : ${combo ? `${combo.track} | ${combo.layout || '(sans tracé)'} · voiture ${combo.car}` : '—'}`,
+      `Parcours : ${c ? `${info.source} · ${(c.clips || []).length} clip(s) · portes ${c.start && c.finish ? 'oui' : 'non'} · ligne ${(c.refLine || []).length} points` : 'aucun (tours chronométrés)'}`,
+      c && c.start ? `Porte de départ : ${JSON.stringify(c.start)} · arrivée ${JSON.stringify(c.finish)}` : null,
+      live ? `Position : x ${Math.round(live.x * 10) / 10} · z ${Math.round(live.z * 10) / 10} · d ${live.d == null ? '—' : Math.round(live.d * 1000) / 1000} · tours ${live.laps} · run ${live.run ? JSON.stringify(live.run) : '—'}` : null,
+      `Départ : plus près de la porte ${r.diag.startMin == null ? '—' : `${r.diag.startMin} m`} · passages ${JSON.stringify(r.diag.startCross)} · runs démarrées ${JSON.stringify(r.diag.starts)} · finies ${r.diag.runs}${r.diag.rejected ? ` · refusée ${JSON.stringify(r.diag.rejected)}` : ''}`,
+      `Remises à zéro : ${r.diag.resets.map((x) => `${x.at.slice(11, 19)} ${x.why}${x.running ? ' (run en cours)' : ''}`).join(', ') || 'aucune'}`,
+      `Tours enregistrés sur ce circuit : ${combo ? telemetry.store.list({ track: combo.track, layout: combo.layout || '' }).length : '—'}`,
+    ].filter(Boolean).join('\n');
   });
   handle('telemetry:settings', async (patch) => {
     settings.update({ telemetry: patch || {} });

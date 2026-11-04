@@ -13,7 +13,7 @@
 const { EventEmitter } = require('events');
 const { slipAngle, YawFit } = require('./layout');
 const { scoreAllModes, LiveClips } = require('./drift');
-const { hasGates, LineTracker, crossesForward } = require('./geo');
+const { hasGates, LineTracker, crosses, crossesForward } = require('./geo');
 
 const STATUS_LIVE = 2;
 const SESSION_NAMES = { 0: 'practice', 1: 'qualify', 2: 'race', 3: 'hotlap', 4: 'timeattack', 5: 'drift', 6: 'drag' };
@@ -66,6 +66,9 @@ class TelemetryRecorder extends EventEmitter {
     this.course = null; // { course, tracker, at } for the current combo
     this.resetAt = 0;
     this.yawFit = new YawFit();
+    this.prevWhere = null; // position along the course line on the previous frame
+    // for the diagnostic: why no run starts (gate never crossed, resets…)
+    this.diag = { resets: [], startMin: null, startCross: [], runs: 0, starts: [] };
   }
 
   /** Course of the current combo (refreshed every 2 s: the admins may publish a new one). */
@@ -82,6 +85,7 @@ class TelemetryRecorder extends EventEmitter {
   /** Cancel the lap / run going on (back to pits, car reset). */
   reset(g, now, why) {
     if (this.lap) this.emit('reset', { why });
+    this.diag.resets = [...this.diag.resets, { why, at: new Date(now).toISOString(), running: Boolean(this.lap) }].slice(-10);
     this.lap = null;
     this.waitLap = g ? g.completedLaps : null;
     this.resetAt = now;
@@ -109,6 +113,8 @@ class TelemetryRecorder extends EventEmitter {
     if (!this.combo || this.combo.key !== comboKey) {
       this.combo = { ...combo, key: comboKey };
       this.lap = null;
+      this.prevWhere = null;
+      this.diag = { resets: [], startMin: null, startCross: [], runs: 0, starts: [] };
       this.emit('combo', combo);
     }
     this.lastFrameAt = now;
@@ -128,7 +134,7 @@ class TelemetryRecorder extends EventEmitter {
     const d = where ? where.d : g.normalizedCarPosition;
 
     if (g.status === STATUS_LIVE) {
-      if (tracker) this.feedRun({ p, g, st, course, tracker, where, prev: jumped ? null : prev, x, z, now });
+      if (tracker) this.feedRun({ p, g, st, course, tracker, where, prev: jumped ? null : prev, prevWhere: jumped ? null : this.prevWhere, x, z, now });
       else {
         if (this.waitLap !== null && g.completedLaps !== this.waitLap) this.waitLap = null;
         if (this.waitLap === null) {
@@ -155,6 +161,8 @@ class TelemetryRecorder extends EventEmitter {
         lap.clips.feed(x, z, angle, p.speedKmh, yaw);
       }
     }
+
+    this.prevWhere = where;
 
     // live state for the dashboard
     const ref = this.reference;
@@ -196,7 +204,10 @@ class TelemetryRecorder extends EventEmitter {
   }
 
   /** Drift run between the course's gates. */
-  feedRun({ g, st, course, tracker, where, prev, x, z, now }) {
+  feedRun({ g, st, course, tracker, where, prev, prevWhere, x, z, now }) {
+    // also along the course line, in case the gate is narrower than the road:
+    // the line starts at the start gate and ends at the finish
+    const along = (from, to) => prev && prevWhere && where.dist < 15 && prevWhere.dist < 15 && prevWhere.d <= from && where.d > from && where.d <= to;
     const lap = this.lap;
     if (lap) {
       // too far from the course for 3 s, or forgotten: cancelled
@@ -204,13 +215,22 @@ class TelemetryRecorder extends EventEmitter {
       else lap.offSince = 0;
       if ((lap.offSince && now - lap.offSince > 3000) || now - lap.startedAt > RUN_MAX_MS) return this.reset(g, now, 'off');
       // the finish only counts near the end of the course (a track that passes the same place twice)
-      if (prev && where.d > 0.7 && crossesForward(course.finish, tracker, where.d, prev.x, prev.z, x, z)) {
+      if (prev && where.d > 0.7 && (crossesForward(course.finish, tracker, where.d, prev.x, prev.z, x, z) || along(0.997, 1))) {
         this.finishRun(st, now);
         this.lap = null;
       }
       return undefined;
     }
-    if (prev && where.d < 0.3 && crossesForward(course.start, tracker, where.d, prev.x, prev.z, x, z)) {
+    const gate = course.start;
+    if (Array.isArray(gate) && gate.length >= 2) {
+      const [[ax, az], [bx, bz]] = gate;
+      const near = Math.min(Math.hypot(x - (ax + bx) / 2, z - (az + bz) / 2), Math.hypot(x - ax, z - az), Math.hypot(x - bx, z - bz));
+      if (this.diag.startMin === null || near < this.diag.startMin) this.diag.startMin = Math.round(near * 10) / 10;
+      if (prev && crosses(gate, prev.x, prev.z, x, z)) this.diag.startCross = [...this.diag.startCross, { d: Math.round(where.d * 1000) / 1000, forward: crossesForward(gate, tracker, where.d, prev.x, prev.z, x, z) }].slice(-10);
+    }
+    const byGate = prev && where.d < 0.3 && crossesForward(course.start, tracker, where.d, prev.x, prev.z, x, z);
+    if (byGate || along(0.002, 0.05)) {
+      this.diag.starts = [...this.diag.starts, byGate ? 'porte' : 'ligne'].slice(-10);
       this.newLap(g, now);
       this.lap.gate = true;
       this.lap.course = course;
@@ -223,7 +243,11 @@ class TelemetryRecorder extends EventEmitter {
     const lap = this.lap;
     const s = lap.samples;
     const runMs = now - lap.startedAt;
-    if (s.length < 20 || s[0][0] > 0.1 || s[s.length - 1][0] < 0.9) return;
+    if (s.length < 20 || s[0][0] > 0.1 || s[s.length - 1][0] < 0.9) {
+      this.diag.rejected = { samples: s.length, first: s.length ? s[0][0] : null, last: s.length ? s[s.length - 1][0] : null };
+      return;
+    }
+    this.diag.runs++;
     this.lastRunMs = runMs;
     this.emit('lap', this.record(lap, { iLastTime: runMs, session: 6 }, st, 'run'));
   }

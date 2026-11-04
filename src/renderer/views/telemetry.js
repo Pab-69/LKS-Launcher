@@ -358,7 +358,10 @@ export default function telemetryView(root, params = {}) {
       ),
       (el.mapWrap = h('div.panel.mt')),
     );
-    body.append(waiting, panel);
+    body.append(waiting, panel, h('div.row.mt', h('button.btn.btn-sm.btn-ghost.right', { on: { click: async () => {
+      const text = await guard(() => api.call('telemetry:diagnostic'));
+      if (text) { await api.call('clipboard:write', text); toast('Diagnostic copié : colle-le à un admin', 'success'); }
+    } } }, 'Copier le diagnostic')));
     const update = async (s) => {
       const on = s && s.status === 2;
       waiting.hidden = on;

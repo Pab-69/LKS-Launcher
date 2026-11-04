@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 1.17.4
+
+- **Calmont : runs enregistrées même en passant à côté de la porte** : la porte de départ peinte fait environ 12 m de large, la route 15 m. En passant le départ près du bord, la run ne démarrait jamais (rien en direct, aucun tour enregistré). Le départ et l'arrivée sont maintenant aussi détectés le long de la ligne du parcours, sur toute la largeur de la route. Vaut pour tous les parcours avec portes.
+- Télémétrie → En direct : bouton **Copier le diagnostic** (circuit, parcours, position, passages de la porte, remises à zéro). À envoyer si une run ne s'enregistre pas.
+- Les erreurs de lecture de la télémétrie sont gardées dans le journal du launcher.
+
 ## 1.17.3
 
 - **Battles réparées** (appli en jeu 2.4) :

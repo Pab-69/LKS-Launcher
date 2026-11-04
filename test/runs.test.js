@@ -63,7 +63,7 @@ test('official courses: every track of the group with gates, line and clips on t
 });
 
 // frames along the Calmont line: stopped before the start, run, then past the finish
-function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt = null, track = 'cfd_calmont_2023', layout = 'Calmont' } = {}) {
+function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt = null, track = 'cfd_calmont_2023', layout = 'Calmont', side = 0 } = {}) {
   const line = course.refLine;
   const pts = [];
   const [a, b] = line;
@@ -81,8 +81,12 @@ function calmontFrames(course, { slip = 30, kmh = 60, teleportAt = null, pitsAt 
   const v = kmh / 3.6;
   const r = (slip * Math.PI) / 180;
   return pts.map(([x, zz], i) => {
-    let px = x;
-    let pz = zz;
+    // side: metres to the right of the line (the road is wider than the gates)
+    const [nx, nz] = pts[Math.min(i + 1, pts.length - 1)];
+    const [ox, oz] = pts[Math.max(i - 1, 0)];
+    const dl = Math.hypot(nx - ox, nz - oz) || 1;
+    let px = x + ((nz - oz) / dl) * side;
+    let pz = zz - ((nx - ox) / dl) * side;
     if (teleportAt !== null && i >= teleportAt) {
       px = 149;
       pz = 285;
@@ -119,6 +123,19 @@ test('runs between gates: Calmont run recorded and judged on the official clips'
   assert.strictEqual(resets.length, 0);
   assert.strictEqual(r.live.run.active, false);
   assert.ok(r.live.lastMs === run.lapMs);
+});
+
+test('Calmont: a run passing the start beside the painted gate still counts (road wider than the gate)', () => {
+  const course = bundledCourse('cfd_calmont_2023', 'Calmont');
+  for (const side of [7, -7]) {
+    const r = new TelemetryRecorder({ getCourse: () => course });
+    const laps = [];
+    r.on('lap', (l) => laps.push(l));
+    let t = 0;
+    calmontFrames(course, { side }).forEach((f) => r.feed(f, (t += 60)));
+    assert.strictEqual(laps.length, 1, `${side} m beside the line`);
+    assert.strictEqual(r.diag.runs, 1);
+  }
 });
 
 test('runs on the new tracks: one run from the départ line to the finish, every painted clip on the line', () => {
