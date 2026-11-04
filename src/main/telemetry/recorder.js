@@ -52,8 +52,10 @@ function timeAt(samples, d) {
 }
 
 class TelemetryRecorder extends EventEmitter {
-  constructor({ getDriver, getCourse } = {}) {
+  constructor({ getDriver, getCourse, canonical } = {}) {
     super();
+    // ids as the launcher knows them (online, the game gives the layout in lower case)
+    this.canonical = canonical || ((c) => c);
     this.getDriver = getDriver || (() => ({ name: 'Pilote', steamId: '' }));
     this.getCourse = getCourse || (() => null); // drift course (clips, line) for a car/track
     this.lap = null;
@@ -97,7 +99,7 @@ class TelemetryRecorder extends EventEmitter {
 
   comboOf(st) {
     if (!st || !st.carModel || !st.track) return null;
-    return { car: st.carModel, track: st.track, layout: st.trackConfiguration || '' };
+    return this.canonical({ car: st.carModel, track: st.track, layout: st.trackConfiguration || '' });
   }
 
   newLap(g, now) {

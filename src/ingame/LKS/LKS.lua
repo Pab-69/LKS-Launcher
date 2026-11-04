@@ -73,7 +73,22 @@ local function say(text, ms) note.text, note.untilT = text, clock + (ms or 4000)
 local course = {}
 do
   local okFile, courses = pcall(dofile, appDir() .. '/courses.lua')
-  if okFile and type(courses) == 'table' then course = courses[trackId .. '|' .. layoutId] or {} end
+  if okFile and type(courses) == 'table' then
+    course = courses[trackId .. '|' .. layoutId]
+    if course == nil then
+      -- en ligne, le jeu donne le tracé en minuscules (« calmont » pour « Calmont ») :
+      -- on reprend l'écriture du parcours, pour les clips, les fantômes et les runs
+      local want = string.lower(trackId .. '|' .. layoutId)
+      for key, c in pairs(courses) do
+        if type(key) == 'string' and string.lower(key) == want then
+          course = c
+          trackId, layoutId = key:match('^(.-)|(.*)$')
+          break
+        end
+      end
+    end
+    course = course or {}
+  end
 end
 local clips = course.clips or {}
 local gated = course.start ~= nil and course.finish ~= nil and course.line ~= nil and #course.line > 1

@@ -138,6 +138,20 @@ test('Calmont: a run passing the start beside the painted gate still counts (roa
   }
 });
 
+test('online the game gives the layout in lower case (« calmont »): same course, laps filed under « Calmont »', () => {
+  assert.strictEqual(bundledCourse('cfd_calmont_2023', 'calmont'), bundledCourse('cfd_calmont_2023', 'Calmont'));
+  const course = bundledCourse('cfd_calmont_2023', 'Calmont');
+  const canonical = (c) => (c.layout === 'calmont' ? { ...c, layout: 'Calmont' } : c);
+  const r = new TelemetryRecorder({ getCourse: (c) => bundledCourse(c.track, c.layout), canonical });
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  let t = 0;
+  calmontFrames(course, { layout: 'calmont' }).forEach((f) => r.feed(f, (t += 60)));
+  assert.strictEqual(laps.length, 1);
+  assert.strictEqual(laps[0].layout, 'Calmont');
+  assert.strictEqual(r.live.layout, 'Calmont');
+});
+
 test('runs on the new tracks: one run from the départ line to the finish, every painted clip on the line', () => {
   // PGE Narodowy passes its finish area twice: the run must not end on the first pass
   for (const [track, layout] of [['kart_volan_championship', ''], ['poland_pge_narodowy_v3', ''], ['englishtown_gambler_esda', ''], ['vdc_bikernieki_2022', 'drift_vdc']]) {

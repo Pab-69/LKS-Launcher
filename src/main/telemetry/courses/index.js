@@ -32,6 +32,10 @@ function bundledCourse(track, layout = '') {
   const all = load();
   const exact = all.get(`${track}|${layout || ''}`);
   if (exact) return exact;
+  // online, the game gives the layout in lower case (« calmont » for « Calmont »)
+  const want = `${track}|${layout || ''}`.toLowerCase();
+  const same = [...all.entries()].find(([k]) => k.toLowerCase() === want);
+  if (same) return same[1];
   if (!layout) {
     const same = [...all.entries()].filter(([k]) => k.startsWith(`${track}|`));
     if (same.length === 1) return same[0][1];

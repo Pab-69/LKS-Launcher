@@ -18,7 +18,7 @@ const fs = require('fs');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, applyBattleParts, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs, getExchange, exchangeWaitMs }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs, getExchange, exchangeWaitMs, canonical }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
@@ -26,7 +26,7 @@ class TelemetryManager extends EventEmitter {
     // championship rounds open now for a track: [{ id, kind, mode, start, end }]
     this.getRounds = getRounds || (() => []);
     this.getCourse = getCourse || (() => null);
-    this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c) });
+    this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c), canonical });
     this.getBoardConfig = getBoardConfig || (() => null);
     this.getPlayer = getPlayer || (() => '');
     // battles launched in game: each driver's own notes, exchanged through the group's server

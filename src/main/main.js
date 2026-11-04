@@ -759,7 +759,7 @@ function autoDriftCourse(track, layout = '') {
 }
 function driftCourseInfo(c) {
   const all = (sync && sync.manifest && sync.manifest.drift) || {};
-  const published = all[`${c.track}|${c.layout || ''}`];
+  const published = all[`${c.track}|${c.layout || ''}`] || Object.entries(all).find(([k]) => k.toLowerCase() === `${c.track}|${c.layout || ''}`.toLowerCase())?.[1];
   if (published) return { course: published, source: 'published' };
   const official = bundledCourse(c.track, c.layout || '');
   if (official) return { course: official, source: 'official' };
@@ -767,6 +767,37 @@ function driftCourseInfo(c) {
   return { course: auto, source: auto ? 'auto' : null };
 }
 const driftCourse = (c) => driftCourseInfo(c).course;
+
+/**
+ * Track / layout ids as the launcher knows them. Online, the game gives the
+ * layout in lower case (« calmont » for « Calmont »): without this, no course
+ * is found and laps are filed under another name.
+ */
+let canonicalMemo = { at: 0, map: new Map() };
+function canonicalCombo(c) {
+  // called on every frame: remembered (the list of tracks changes rarely)
+  if (Date.now() - canonicalMemo.at > 30000) canonicalMemo = { at: Date.now(), map: new Map() };
+  const memoKey = `${c.track}|${c.layout || ''}`;
+  if (!canonicalMemo.map.has(memoKey)) canonicalMemo.map.set(memoKey, canonicalIds(c));
+  const ids = canonicalMemo.map.get(memoKey);
+  return ids ? { ...c, ...ids } : c;
+}
+
+function canonicalIds(c) {
+  const lower = (v) => String(v || '').toLowerCase();
+  const known = [
+    ...Object.keys(bundledCourses()),
+    ...Object.keys((sync && sync.manifest && sync.manifest.drift) || {}),
+    ...((sync && sync.manifest && sync.manifest.tracks) || []).flatMap((t) => (t.layouts && t.layouts.length ? t.layouts : [{ id: '' }]).map((l) => `${t.id}|${l.id || ''}`)),
+    ...((contentCache && contentCache.tracks) || []).flatMap((t) => (t.layouts && t.layouts.length ? t.layouts : [{ id: '' }]).map((l) => `${t.id}|${l.id || ''}`)),
+  ];
+  const key = `${c.track}|${c.layout || ''}`;
+  if (known.includes(key)) return null;
+  const hit = known.find((k) => lower(k) === lower(key));
+  if (!hit) return null;
+  const i = hit.indexOf('|');
+  return { track: hit.slice(0, i), layout: hit.slice(i + 1) };
+}
 
 /** Courses for the in-game app: published ones + automatic ones for the group's tracks. */
 function allDriftCourses() {
@@ -838,7 +869,7 @@ async function importTandemRuns() {
   if (!fs.existsSync(dir)) return;
   for (const lap of collectRuns(dir, { name: settings.data.driverName || '', steamId: settings.data.steamId || '' })) {
     try {
-      await telemetry.addTandemRun(lap);
+      await telemetry.addTandemRun({ ...lap, ...canonicalCombo(lap) });
     } catch (err) {
       console.warn('[tandem]', err.message);
     }
@@ -1125,6 +1156,7 @@ function setupTelemetry() {
     getExchange: () => (settings.data.telemetry.shareLaps !== false ? community() : null),
     getSettings: () => settings.data.telemetry,
     getCourse: driftCourse,
+    canonical: canonicalCombo,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
     getObs: obsData,
   });

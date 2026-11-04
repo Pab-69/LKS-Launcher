@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.17.5
+
+- **Télémétrie en multi sur Calmont** (et tout circuit avec un tracé) : en ligne, le jeu donne le nom du tracé en minuscules (« calmont » au lieu de « Calmont »). Le launcher ne trouvait plus le parcours officiel : aucune run enregistrée, rien en direct, alors qu'en solo tout marchait. Le tracé est maintenant reconnu quelle que soit la casse, et les runs faites en ligne sont rangées avec celles du solo (mêmes records, même classement).
+- Appli en jeu 2.5 : même correction pour les clips, les portes, les fantômes et les tandems en ligne.
+
 ## 1.17.4
 
 - **Calmont : runs enregistrées même en passant à côté de la porte** : la porte de départ peinte fait environ 12 m de large, la route 15 m. En passant le départ près du bord, la run ne démarrait jamais (rien en direct, aucun tour enregistré). Le départ et l'arrivée sont maintenant aussi détectés le long de la ligne du parcours, sur toute la largeur de la route. Vaut pour tous les parcours avec portes.
