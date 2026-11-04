@@ -488,6 +488,41 @@ revoke all on function public.set_live(text, text, text, text, text, text, jsonb
 grant execute on function public.set_live(text, text, text, text, text, text, jsonb) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Battles lancées en jeu : chaque launcher envoie les notes de son pilote
+-- (lead et chase, calculées sur son PC qui voit sa voiture parfaitement) et
+-- reprend celles de l'adversaire : les deux PC trouvent le même résultat.
+-- Seulement le numéro de la battle, les deux noms et les notes. Gardé 7 jours.
+
+create table if not exists public.lks_battle_parts (
+  tag text not null,
+  driver text not null,
+  opponent text not null default '',
+  parts jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  primary key (tag, driver)
+);
+alter table public.lks_battle_parts enable row level security;
+revoke all on public.lks_battle_parts from anon, authenticated;
+create or replace view public.lks_battle_parts_list with (security_invoker = false) as
+  select tag, driver, opponent, parts, created_at from public.lks_battle_parts where created_at > now() - interval '7 days';
+grant select on public.lks_battle_parts_list to anon, authenticated;
+
+create or replace function public.add_battle_part(p_tag text, p_driver text, p_opponent text, p_parts jsonb) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if coalesce(p_tag, '') !~ '^[A-Za-z0-9_-]{1,24}$' or coalesce(length(p_driver), 0) not between 1 and 40 or length(coalesce(p_opponent, '')) > 40
+     or jsonb_typeof(coalesce(p_parts, '{}'::jsonb)) <> 'object' or length(coalesce(p_parts, '{}'::jsonb)::text) > 600 then
+    raise exception 'données invalides';
+  end if;
+  delete from public.lks_battle_parts where created_at < now() - interval '7 days';
+  insert into public.lks_battle_parts (tag, driver, opponent, parts) values (p_tag, p_driver, coalesce(p_opponent, ''), p_parts)
+  on conflict (tag, driver) do nothing; -- la première note envoyée reste (pas de retouche après coup)
+  return 'ok';
+end $$;
+revoke all on function public.add_battle_part(text, text, text, jsonb) from public;
+grant execute on function public.add_battle_part(text, text, text, jsonb) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Ménage : efface ce qui ne sert plus (les fonctions ci-dessus le font déjà à
 -- chaque envoi ; le serveur du groupe l'appelle aussi toutes les heures).
 -- Pas accessible aux launchers.
@@ -500,6 +535,7 @@ begin
   delete from public.lks_runs where created_at < now() - interval '30 days';
   delete from public.lks_proposals where created_at < now() - interval '180 days';
   delete from public.lks_votes v where not exists (select 1 from public.lks_proposals p where p.id = v.proposal_id);
+  delete from public.lks_battle_parts where created_at < now() - interval '7 days';
   return 'ok';
 end $$;
 revoke all on function public.lks_cleanup() from public, anon, authenticated;
@@ -519,6 +555,7 @@ begin
   delete from public.lks_hosts where lower(host_driver) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   delete from public.lks_proposals where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   delete from public.lks_photos where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_battle_parts where lower(driver) = lower(p_driver) or lower(opponent) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   return n || ' lignes effacées (les fichiers des photos et propositions sont à effacer dans le stockage)';
 end $$;
 revoke all on function public.lks_forget(text) from public, anon, authenticated;

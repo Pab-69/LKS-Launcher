@@ -456,6 +456,67 @@ test('battle tandem: two runs with the roles swapped', async () => {
   assert.ok(close.omt && close.winner === null);
 });
 
+test('battle launched in game: tag kept, both PCs judge with each driver\'s own notes', async () => {
+  const { runToLap } = require('../src/main/telemetry/tandem');
+  const { applyBattleParts } = require('../src/main/telemetry/drift');
+  // the run as written by the in-game app of `recorder`, with the battle tag
+  const makeRun = (role, chaserName, leadName, gapRows, angle, time, run, noise) => {
+    const rows = [];
+    for (let k = 0; k < 400; k++) {
+      const a = k / 60;
+      const la = (k + gapRows) / 60;
+      rows.push([k * 50, k / 400, Math.cos(a) * 40, Math.sin(a) * 40, 70, angle - noise, 1, 0, 4, 0, Math.cos(la) * 40, Math.sin(la) * 40, 35 - noise, 72, 0]);
+    }
+    return { v: 1, role, track: 'lks_touge', layout: 'downhill', car: 'lks_bmw_m2', driver: chaserName, lead: { name: leadName, car: 'lks_s15' }, time, lapMs: 20000, rows, battle: '424242', run };
+  };
+  const table = [];
+  const exchange = {
+    addBattlePart: async (p) => { table.push(p); return 'ok'; },
+    battleParts: async (tag) => table.filter((r) => r.tag === tag),
+  };
+  const t0 = Math.floor(Date.now() / 1000);
+  // each PC sees the other car a bit worse (network): 3° less angle
+  const pc = (name, other) => {
+    const me = { name, steamId: name };
+    const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(new Simulator()), getDriver: () => me, getSettings: () => ({}), getExchange: () => exchange, exchangeWaitMs: 2000 });
+    m.board = () => ({ submit: async () => {}, submitBattle: async () => {} });
+    m.done = [];
+    m.on('battle', (b) => m.done.push(b));
+    return { m, me, name, other };
+  };
+  const pab = pc('Pab', 'Kaze');
+  const kaze = pc('Kaze', 'Pab');
+  // run 1: Pab leads, Kaze chases ; run 2: Kaze leads, Pab chases
+  const runsOf = (p) => (p.name === 'Pab'
+    ? [makeRun('lead', 'Kaze', 'Pab', 6, 30, t0, 1, 3), makeRun('chase', 'Pab', 'Kaze', 6, 30, t0 + 120, 2, -3)]
+    : [makeRun('chase', 'Kaze', 'Pab', 6, 30, t0, 1, -3), makeRun('lead', 'Pab', 'Kaze', 6, 30, t0 + 120, 2, 3)]);
+  await Promise.all([pab, kaze].map(async (p) => {
+    for (const r of runsOf(p)) await p.m.addTandemRun(runToLap(r, p.me));
+  }));
+  await Promise.all([pab.m.battleJobs, kaze.m.battleJobs]);
+  const [a, b] = [pab.m.done[0], kaze.m.done[0]];
+  assert.ok(a && b, 'a battle on each PC');
+  assert.strictEqual(a.tag, '424242', 'the battle tag survives the judging of the runs');
+  assert.strictEqual(a.id, b.id, 'same battle id on both PCs (one result on the server)');
+  assert.ok(a.fair && b.fair);
+  const totals = (x) => Object.fromEntries(x.modes.normal.drivers.map((d) => [d.name, d.total]));
+  assert.deepStrictEqual(totals(a), totals(b), 'same notes on both PCs');
+  assert.strictEqual(a.modes.normal.winner, b.modes.normal.winner);
+  assert.strictEqual(table.length, 2);
+  // no answer from the other launcher: judged on this PC only
+  const lone = pc('Pab', 'Kaze');
+  table.length = 0;
+  lone.m.exchangeWaitMs = 50;
+  exchange.addBattlePart = async () => 'ok';
+  for (const r of runsOf(lone)) await lone.m.addTandemRun(runToLap(r, lone.me));
+  await lone.m.battleJobs;
+  assert.ok(lone.m.done[0].estimated && !lone.m.done[0].fair);
+  // notes outside 0..100 are ignored
+  const modes = { normal: { drivers: [{ name: 'A', lead: 50, chase: 50, total: 50 }, { name: 'B', lead: 40, chase: 40, total: 40 }], winner: 'A', omt: false, diff: 10 } };
+  assert.strictEqual(applyBattleParts(modes, { b: { normal: { lead: 900, chase: 90 } } }, null).normal.winner, 'A');
+  assert.strictEqual(applyBattleParts(modes, { b: { normal: { lead: 90, chase: 90 } } }, null).normal.winner, 'B');
+});
+
 test('championship: rounds, bracket and standings', () => {
   const C = require('../src/main/telemetry/championship');
   assert.deepStrictEqual(C.seedOrder(8), [1, 8, 4, 5, 2, 7, 3, 6]);

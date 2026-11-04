@@ -596,6 +596,34 @@ function judgeBattle(run1, run2, course, mode = 'normal') {
   return { mode, drivers: [a, b], diff, omt, winner: omt ? null : a.total > b.total ? A : B, rules: courseVersion(course, mode) };
 }
 
+/**
+ * Battle result with each driver's own notes: every PC sees its own car
+ * precisely and the other one only through the network, so each launcher sends
+ * its driver's lead and chase notes (computed on its PC) and takes the other
+ * driver's ones. Both PCs then get exactly the same result.
+ * parts = { <driver name lower case>: { <mode>: { lead, chase } } }
+ */
+function applyBattleParts(modes, parts, course) {
+  const out = {};
+  const ok = (v) => Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100;
+  for (const [mode, res] of Object.entries(modes)) {
+    const rules = rulesFor(course, mode);
+    const drivers = res.drivers.map((d) => {
+      const p = parts[String(d.name).trim().toLowerCase()];
+      const m = p && p[mode];
+      if (!m || !ok(m.lead) || !ok(m.chase)) return d;
+      const lead = r1(Number(m.lead));
+      const chase = r1(Number(m.chase));
+      return { ...d, lead, chase, total: r1((lead + chase) / 2) };
+    });
+    const [a, b] = drivers;
+    const diff = r1(Math.abs(a.total - b.total));
+    const omt = diff < ((rules.battle && rules.battle.omtGap) || 0);
+    out[mode] = { ...res, drivers, diff, omt, winner: omt ? null : a.total > b.total ? a.name : b.name };
+  }
+  return out;
+}
+
 function judgeBattleAll(run1, run2, course) {
   const modes = {};
   for (const m of MODE_IDS) modes[m] = judgeBattle(run1, run2, course, m);
@@ -667,6 +695,7 @@ module.exports = {
   scoreTandemAll,
   judgeBattle,
   judgeBattleAll,
+  applyBattleParts,
   leadSamplesAsRun,
   courseVersion,
   rulesFor,

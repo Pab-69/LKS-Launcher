@@ -15,10 +15,10 @@ const { DashServer } = require('./dash-server');
 const { BattleStore, findPartnerRun } = require('./battles');
 const { readGhostFiles, matchLap } = require('./ghosts');
 const fs = require('fs');
-const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, MODE_IDS } = require('./drift');
+const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, applyBattleParts, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs, getExchange, exchangeWaitMs }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
@@ -29,6 +29,10 @@ class TelemetryManager extends EventEmitter {
     this.recorder = new TelemetryRecorder({ getDriver, getCourse: (c) => this.getCourse(c) });
     this.getBoardConfig = getBoardConfig || (() => null);
     this.getPlayer = getPlayer || (() => '');
+    // battles launched in game: each driver's own notes, exchanged through the group's server
+    this.getExchange = getExchange || (() => null);
+    this.exchangeWaitMs = exchangeWaitMs === undefined ? 90000 : exchangeWaitMs;
+    this.battleJobs = Promise.resolve();
     this.getSettings = getSettings || (() => ({}));
     this.dash = new DashServer({ getLive: () => this.live(), getObs: () => (getObs ? getObs() : null) });
     this.timer = null;
@@ -116,7 +120,8 @@ class TelemetryManager extends EventEmitter {
   /** Judge a full lap (solo + tandem when there was a leader). */
   judge(lap, course) {
     lap.drift = { maxAngle: lap.drift ? lap.drift.maxAngle || 0 : 0, avgAngle: 0, driftTime: 0, ...scoreAllModes(lap.samples, course) };
-    if (lap.tandem && lap.tandem.leadSamples) lap.tandem = { lead: lap.tandem.lead, leadSamples: lap.tandem.leadSamples, ...scoreTandemAll(lap.samples, lap.tandem.leadSamples, course) };
+    // the battle tag (battles launched in game) stays with the run
+    if (lap.tandem && lap.tandem.leadSamples) lap.tandem = { lead: lap.tandem.lead, leadSamples: lap.tandem.leadSamples, ...(lap.tandem.battle ? { battle: lap.tandem.battle } : {}), ...scoreTandemAll(lap.samples, lap.tandem.leadSamples, course) };
     return lap;
   }
 
@@ -272,14 +277,66 @@ class TelemetryManager extends EventEmitter {
   /** Two runs with the roles swapped = a battle. */
   async detectBattle(lap) {
     const candidates = this.store.list({ track: lap.track, layout: lap.layout || '' }).filter((l) => l.tandem);
-    const other = findPartnerRun(lap, candidates, this.battles.usedLaps());
+    this.pendingLaps = this.pendingLaps || new Set(); // runs of a battle still waiting for the other driver's notes
+    const used = new Set([...this.battles.usedLaps(), ...this.pendingLaps]);
+    const other = findPartnerRun(lap, candidates, used);
     if (!other) return null;
     const full = this.store.load(other.id);
-    const battle = BattleStore.make(lap, full, this.getCourse(lap));
+    const course = this.getCourse(lap);
+    const battle = BattleStore.make(lap, full, course);
+    if (battle.tag) battle.id = `t${String(battle.tag).replace(/[^\w-]/g, '').slice(0, 24)}`; // same id on both PCs: one result on the server
     for (const run of [lap, full]) {
       run.battleId = battle.id; // kept when old laps are cleaned up
       this.store.save(run, { imported: Boolean(this.store.index.find((l) => l.id === run.id && l.imported)) });
     }
+    const exchange = battle.tag ? this.getExchange() : null;
+    if (!exchange) {
+      await this.finishBattle(battle);
+      return battle;
+    }
+    // the other driver's notes come from his own PC (up to 90 s): in the background
+    for (const run of [lap, full]) this.pendingLaps.add(run.id);
+    const job = this.shareBattleParts(battle, course, exchange)
+      .catch((err) => this.emit('submitError', err))
+      .then(() => this.finishBattle(battle))
+      .finally(() => {
+        for (const run of [lap, full]) this.pendingLaps.delete(run.id);
+      });
+    this.battleJobs = this.battleJobs.then(() => job);
+    return battle;
+  }
+
+  /** Send this PC's driver notes, wait for the other driver's ones, and judge with both. */
+  async shareBattleParts(battle, course, exchange) {
+    const me = String((this.recorder.getDriver() || {}).name || '').trim().toLowerCase();
+    const res = battle.modes.normal;
+    const mine = res && res.drivers.find((d) => String(d.name).trim().toLowerCase() === me);
+    const other = res && res.drivers.find((d) => String(d.name).trim().toLowerCase() !== me);
+    if (!mine || !other) return;
+    const parts = {};
+    for (const [mode, r] of Object.entries(battle.modes)) {
+      const d = r.drivers.find((x) => String(x.name).trim().toLowerCase() === me);
+      parts[mode] = { lead: d.lead, chase: d.chase };
+    }
+    await exchange.addBattlePart({ tag: String(battle.tag), driver: mine.name, opponent: other.name, parts });
+    const until = Date.now() + this.exchangeWaitMs;
+    for (;;) {
+      const rows = await exchange.battleParts(String(battle.tag)).catch(() => []);
+      const theirs = rows.find((r) => String(r.driver).trim().toLowerCase() === String(other.name).trim().toLowerCase() && String(r.opponent || '').trim().toLowerCase() === me);
+      if (theirs) {
+        battle.modes = applyBattleParts(battle.modes, { [me]: parts, [String(other.name).trim().toLowerCase()]: theirs.parts }, course);
+        battle.fair = true;
+        return;
+      }
+      if (Date.now() >= until) {
+        battle.estimated = true; // the other launcher did not answer: judged on this PC only
+        return;
+      }
+      await new Promise((r) => setTimeout(r, Math.min(5000, Math.max(50, until - Date.now()))));
+    }
+  }
+
+  async finishBattle(battle) {
     this.battles.add(battle);
     this.emit('battle', battle);
     const board = this.getSettings().shareLaps !== false ? this.board() : null;

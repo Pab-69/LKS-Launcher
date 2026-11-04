@@ -577,11 +577,38 @@ end
 local online = safe(function() return ac.getSim().isOnlineRace end, false)
 local mySid = function() return safe(function() return ac.getCar(0).sessionID end, -1) end
 local battleEvent = nil
+safe(function() math.randomseed(os.time() + mySid() * 7919 + math.floor(os.clock() * 1000)) end)
 local KIND = { challenge = 1, accept = 2, cancel = 3, ready = 4, lights = 5, done = 6 }
+
+-- Sur un serveur AC original, le CSP passe les messages par le chat : 200 ms au
+-- moins entre deux envois, sinon le message est refusé. Tout passe donc par une
+-- file d'attente : un message toutes les 250 ms, renvoyé tant qu'il est refusé.
+local outbox, lastSendAt = {}, -1e9
+local msgStats = { sent = 0, received = 0 }
 
 local function send(kind, to, tag, runN)
   if not battleEvent then return false end
-  return safe(function() return battleEvent({ kind = kind, to = to, tag = tag, run = runN or 0, mode = 0 }) end, false)
+  runN = runN or 0
+  for _, m in ipairs(outbox) do
+    if m.kind == kind and m.to == to and m.tag == tag and m.run == runN then return true end
+  end
+  outbox[#outbox + 1] = { kind = kind, to = to, tag = tag, run = runN, at = clock }
+  return true
+end
+
+local function flushOutbox()
+  if not battleEvent or #outbox == 0 or clock - lastSendAt < 250 then return end
+  local m = outbox[1]
+  if clock - m.at > 30000 then -- personne ne répond depuis 30 s : abandon
+    table.remove(outbox, 1)
+    return
+  end
+  lastSendAt = clock
+  local ok = safe(function() return battleEvent({ kind = m.kind, to = m.to, tag = m.tag, run = m.run, mode = 0 }) end, false)
+  if ok ~= false then
+    table.remove(outbox, 1)
+    msgStats.sent = msgStats.sent + 1
+  end
 end
 
 local function carBySid(sid)
@@ -614,7 +641,10 @@ local function onMessage(sender, data)
   local fromMe = sender ~= nil and sender.index == 0
   local fromSid = sender and safe(function() return sender.sessionID end, -1) or -1
   if fromMe or data.to ~= mySid() then return end -- mes propres messages sont traités à l'envoi
+  msgStats.received = msgStats.received + 1
   local kind, tag = data.kind, data.tag
+  -- l'autre est déjà prêt ou donne le départ : son « j'accepte » s'est perdu, la battle commence quand même
+  if battle and battle.tag == tag and battle.mine and battle.phase == 'invited' and (kind == KIND.ready or kind == KIND.lights) then stageRun(1) end
   if kind == KIND.challenge then
     local idx = carBySid(fromSid)
     invites[#invites + 1] = { sid = fromSid, idx = idx, tag = tag, name = idx and safe(function() return ac.getDriverName(idx) end, '?') or '?', at = clock }
@@ -650,7 +680,8 @@ end
 
 local function challenge(idx)
   local sid = safe(function() return ac.getCar(idx).sessionID end, -1)
-  local tag = math.random(100000, 2000000000)
+  -- numéro de battle unique sur le serveur (chaque pilote a son propre numéro de session)
+  local tag = (mySid() % 200) * 10000000 + math.random(1, 9999999)
   battle = { tag = tag, sid = sid, idx = idx, name = safe(function() return ac.getDriverName(idx) end, '?'), mine = true, run = 1, phase = 'invited', at = clock }
   if not send(KIND.challenge, sid, tag) then say('Message non envoyé, réessaie dans une seconde') end
 end
@@ -668,6 +699,7 @@ local function cancelBattle()
 end
 
 local function updateBattle(car)
+  flushOutbox()
   if not battle then return end
   if battle.idx == nil or not ac.getCar(battle.idx) then
     battle.idx = carBySid(battle.sid)
@@ -747,6 +779,8 @@ end
 -- ------------------------------------------------------------- début / fin de run
 local function onRunStart(car)
   run.active, run.t0, run.current, run.hint = true, clock, {}, {}
+  -- battle : si le signal des feux s'est perdu, la run compte quand même dès la ligne de départ
+  if battle and (battle.phase == 'staging' or battle.phase == 'lights') then battle.phase = 'running' end
   run.lights = lights.greenAt ~= nil and clock - lights.greenAt < 30000
   resetClips()
   if not tandem.closing then resetTandem() end
@@ -1013,8 +1047,13 @@ local function battlePanel()
     ui.textColored('Les battles se lancent sur un serveur.', GREY)
     return
   end
+  if not battleEvent then
+    ui.textColored('Messages entre pilotes indisponibles : mets à jour le CSP (0.1.79 ou plus récent).', RED)
+    return
+  end
   if battle then
     ui.textColored(string.format('Battle contre %s', tostring(battle.name)), GREEN)
+    if #outbox > 0 and clock - outbox[1].at > 4000 then ui.textColored('Envoi en cours… (le serveur ralentit les messages)', GREY) end
     if ui.button('Annuler la battle') then cancelBattle() end
     return
   end

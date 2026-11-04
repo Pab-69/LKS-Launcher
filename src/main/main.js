@@ -1121,6 +1121,8 @@ function setupTelemetry() {
     getDriver: () => ({ name: settings.data.driverName || 'Pilote', steamId: settings.data.steamId || '' }),
     getBoardConfig: () => sync.manifest.leaderboard || null,
     getPlayer: playerId,
+    // battles launched in game: each driver's notes come from his own PC (group's server)
+    getExchange: () => (settings.data.telemetry.shareLaps !== false ? community() : null),
     getSettings: () => settings.data.telemetry,
     getCourse: driftCourse,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),

@@ -134,6 +134,26 @@ class Community {
     return (rows || []).map((r) => ({ id: r.id, name: r.name, car: r.car, track: r.track, layout: r.layout, data: r.data || {}, updatedAt: r.updated_at }));
   }
 
+  // ------------------------------------------------------------ battles launched in game
+  /** This PC's driver notes for a battle: { tag, driver, opponent, parts: { mode: { lead, chase } } } */
+  addBattlePart(p) {
+    const parts = {};
+    for (const [mode, v] of Object.entries(p.parts || {})) {
+      if (!['debutant', 'normal', 'pro'].includes(mode)) continue;
+      parts[mode] = { lead: Math.max(0, Math.min(100, Number(v.lead) || 0)), chase: Math.max(0, Math.min(100, Number(v.chase) || 0)) };
+    }
+    return this.request('/rest/v1/rpc/add_battle_part', {
+      method: 'POST',
+      body: JSON.stringify({ p_tag: String(p.tag).slice(0, 24), p_driver: String(p.driver || 'Pilote').slice(0, 40), p_opponent: String(p.opponent || '').slice(0, 40), p_parts: parts }),
+    });
+  }
+
+  async battleParts(tag) {
+    const q = new URLSearchParams({ select: 'tag,driver,opponent,parts,created_at', tag: `eq.${String(tag).slice(0, 24)}`, limit: '10' });
+    const rows = await this.request(`/rest/v1/lks_battle_parts_list?${q}`);
+    return (rows || []).map((r) => ({ tag: r.tag, driver: r.driver, opponent: r.opponent, parts: r.parts || {}, date: r.created_at }));
+  }
+
   // ------------------------------------------------------------ gallery
   /** p = { image: Buffer, ext: jpg|png|webp, author, caption, car, track } */
   async addPhoto(p) {

@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.17.3
+
+- **Battles réparées** (appli en jeu 2.4) :
+  - sur un serveur AC classique, certains messages entre les deux appli (départ des feux, acceptation, fin de run) étaient refusés par le serveur et jamais renvoyés : le chaser ne voyait pas les feux, sa run ne comptait pas, et la battle restait bloquée. Les messages passent maintenant par une file d'attente et sont renvoyés jusqu'à ce qu'ils partent ;
+  - si un signal se perd quand même, la run compte dès la ligne de départ ;
+  - deux battles en même temps sur un serveur ne peuvent plus se mélanger (numéro de battle unique) ;
+  - le launcher gardait mal le numéro de la battle : le résultat n'apparaissait pas dans le jeu.
+- **Même résultat sur les deux PC** : chaque PC voit sa voiture parfaitement et l'autre moins bien (réseau), et donnait un peu l'avantage à son pilote. Maintenant, chaque launcher envoie les notes de son pilote au serveur du groupe et prend celles de l'adversaire : les deux trouvent exactement le même résultat, et une seule battle est enregistrée. Sans réponse de l'autre dans les 90 s, le résultat est estimé sur ton PC comme avant.
+- **Admins** : serveur du groupe → `./lks.sh update` ; sur Supabase → relancez le script (Publication → Classement → Copier le script).
+
 ## 1.17.2
 
 - **Saisons** : chaque championnat peut être rangé dans une saison (« Saison 2026 »). Le launcher l'affiche et permet de la régler dans l'éditeur de championnat.
