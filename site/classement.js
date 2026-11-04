@@ -57,7 +57,7 @@
           body.appendChild(h('tr', { class: i < 3 ? 'top' + (i + 1) : null },
             h('td', String(i + 1)), h('td', r.driver), h('td', L.carName(g, r.car)),
             h('td.num', kind === 'time' ? fmtMs(r.lap_ms) : Number(r.score).toFixed(1)),
-            h('td.muted', new Date(r.created_at).toLocaleDateString('fr-FR'))));
+            h('td.muted.col-date', new Date(r.created_at).toLocaleDateString('fr-FR'))));
         });
         $('board').hidden = !list.length;
         status.textContent = list.length ? '' : 'Pas encore de score ici.';

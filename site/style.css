@@ -93,7 +93,25 @@ h3.sub { font: 600 30px 'Grenze Gotisch', serif; letter-spacing: 0; text-transfo
 .btn.small { padding: 8px 14px; font-size: 14px; }
 .btn.danger { border-color: #6b1a28; color: #ffb3bf; }
 button.btn { cursor: pointer; }
-@media (max-width: 600px) { .top-links a { margin-left: 12px; } .board { font-size: 14px; } .board th, .board td { padding: 7px 5px; } section h2 { font-size: 34px; } }
+@media (max-width: 600px) {
+  .top { padding: 14px 16px; }
+  .top-links { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .top-links a { margin-left: 0; font-size: 13px; letter-spacing: 0.12em; }
+  main { padding: 0 16px 30px; }
+  section { margin: 46px 0; }
+  section h2 { font-size: 34px; }
+  .btn { padding: 13px 20px; font-size: 15px; letter-spacing: 0.12em; }
+  .btn.small { padding: 8px 12px; font-size: 13px; }
+  .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .filters select { min-width: 0; }
+  .board { font-size: 14px; }
+  .board th, .board td { padding: 8px 5px; }
+  .board .col-date { display: none; }
+  .card, .champ, .event { padding: 14px; }
+  .round-edit { padding: 10px; }
+  h3.sub { font-size: 26px; }
+  .season-pick { max-width: none; }
+}
 
 .rounds-edit { display: grid; gap: 10px; }
 .round-edit { border: 1px solid var(--line); padding: 14px; display: grid; gap: 10px; }
