@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.17.2
+
+- **Saisons** : chaque championnat peut être rangé dans une saison (« Saison 2026 »). Le launcher l'affiche et permet de la régler dans l'éditeur de championnat.
+- **Site vitrine** : les admins créent et modifient les championnats depuis la page Admin (nom, saison, points, manches avec circuit, format, mode, dates, tableau, ordre). La page Classements propose le choix de la saison.
+
 ## 1.17.1
 
 - **Site vitrine** (admins avec le serveur du groupe) : page **Admin** pour créer, modifier ou retirer les soirées et publier les actus depuis le navigateur ; page **Classements** (drift, tandem, chrono, championnats) ; soirées et actus toujours à jour sur l'accueil. Mise en place : `server/README.md`, partie « Le site vitrine ».

@@ -55,7 +55,7 @@ Ce document explique où sont les données du groupe, ce que le launcher fait d�
 | `cars[]` | voitures : `{ id, name, brand, carClass, skins[], specs, version, size, preview, publishedAt, notes }` |
 | `tracks[]` | circuits : `{ id, name, country, layouts[{ id, name, length, pitboxes }], version, size, preview, publishedAt, notes }` |
 | `events[]` | soirées : `{ id, title, date, durationMinutes, description, track, layout, cars[], server, battle: { size, mode } }` |
-| `championships[]` | championnats : `{ id, name, points[], rounds[] }` (voir partie 5) |
+| `championships[]` | championnats : `{ id, name, season, points[], rounds[] }` (voir partie 5) ; `season` regroupe les championnats (« Saison 2026 ») |
 | `judging[]` | décisions du juge : `{ pair, track, layout, date, winner, omt, note, by, at }` |
 | `proposals` | décisions sur les propositions : `{ "<id>": { status: accepted\|refused, note, by, at } }` |
 | `galleryHidden[]` | ids des photos masquées par les admins (ne pas les afficher) |
@@ -147,7 +147,7 @@ Image : `{url}/storage/v1/object/public/lks-gallery/{file}`. Ne montre pas les i
 
 ## 5. Championnats (si tu veux le classement dans Discord)
 
-Dans `manifest.championships[]` : `{ id, name, points[], rounds[] }`, chaque manche : `{ id, name, track, layout, kind (drift|tandem|battle), mode, start, end, bracket }`.
+Dans `manifest.championships[]` : `{ id, name, season, points[], rounds[] }`, chaque manche : `{ id, name, track, layout, kind (drift|tandem|battle), mode, start, end, bracket }`.
 
 - **État d'une manche** : à venir avant `start`, en cours entre `start` et `end`, terminée après.
 - **Résultats d'une manche drift / tandem** : lignes de `lks_laps` avec ce `track` / `layout` / `kind` et `rules=like.*@{idManche}` ; on classe par `score` décroissant.

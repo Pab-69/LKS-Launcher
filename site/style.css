@@ -94,3 +94,9 @@ h3.sub { font: 600 30px 'Grenze Gotisch', serif; letter-spacing: 0; text-transfo
 .btn.danger { border-color: #6b1a28; color: #ffb3bf; }
 button.btn { cursor: pointer; }
 @media (max-width: 600px) { .top-links a { margin-left: 12px; } .board { font-size: 14px; } .board th, .board td { padding: 7px 5px; } section h2 { font-size: 34px; } }
+
+.rounds-edit { display: grid; gap: 10px; }
+.round-edit { border: 1px solid var(--line); padding: 14px; display: grid; gap: 10px; }
+.round-n { color: var(--accent-2); font: 700 15px 'Barlow Condensed', sans-serif; letter-spacing: 0.14em; }
+.season-label { margin: 18px 0 4px; color: var(--accent-2); }
+.season-pick { margin-bottom: 14px; max-width: 260px; }

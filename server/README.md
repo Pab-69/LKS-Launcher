@@ -99,9 +99,12 @@ Le site vitrine gagne trois choses, toutes servies par ce serveur :
 - **accueil** : les prochaines soirées et les dernières actus, toujours à jour (plus besoin de
   reconstruire le site) ;
 - **Classements** (`classement.html`) : drift, tandem et chrono par circuit, mode et voiture, et
-  le classement des championnats (même calcul que dans le launcher) ;
+  le classement des championnats par saison (même calcul que dans le launcher) ;
 - **Admin** (`admin.html`, lien en bas de page) : créer, modifier ou retirer une soirée (circuit,
-  voitures imposées, serveur, battle top 4/8/16), publier ou retirer une actu.
+  voitures imposées, serveur, battle top 4/8/16), publier ou retirer une actu, et gérer les
+  **championnats** : nom, **saison** (« Saison 2026 »…), points par place, et les **manches**
+  (circuit, format solo drift / tandem / battle, mode, dates, tableau top 4/8/16, ordre).
+  Sur la page Classements, on choisit la saison à afficher.
   Ça arrive dans tous les launchers dans les 5 minutes, exactement comme depuis l'onglet
   Publication. Les nouvelles soirées et actus sont annoncées sur Discord (case à décocher pour
   une actu).

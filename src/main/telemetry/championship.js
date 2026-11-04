@@ -138,6 +138,7 @@ function cleanChampionships(list) {
   return (Array.isArray(list) ? list : []).slice(0, 20).map((c) => ({
     id: id(c.id) || Math.random().toString(36).slice(2, 8),
     name: String(c.name || 'Championnat').slice(0, 60),
+    season: String(c.season || '').replace(/\s+/g, ' ').trim().slice(0, 40), // groups championships (« Saison 2026 »)
     points: (Array.isArray(c.points) && c.points.length ? c.points : DEFAULT_POINTS).slice(0, 32).map((p) => Math.max(0, Math.min(1000, Number(p) || 0))),
     rounds: (Array.isArray(c.rounds) ? c.rounds : []).slice(0, 40).map((r) => ({
       id: id(r.id) || Math.random().toString(36).slice(2, 8),

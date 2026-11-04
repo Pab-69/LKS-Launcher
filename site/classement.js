@@ -70,11 +70,33 @@
     // ------------------------------------------------ championnats (même calcul que le launcher)
     var C = window.LKSChamp;
     var champs = L.clear($('champs'));
-    var list = (g.championships || []).filter(function (c) { return (c.rounds || []).length; });
+    var all = (g.championships || []).filter(function (c) { return (c.rounds || []).length; });
+    // saisons : la plus récente d'abord (celle dont une manche a commencé le plus tard)
+    var latest = {};
+    all.forEach(function (c) {
+      var k = c.season || '';
+      (c.rounds || []).forEach(function (r) { latest[k] = Math.max(latest[k] || 0, Date.parse(r.start) || 0); });
+    });
+    var seasons = Object.keys(latest).sort(function (a, b) { return latest[b] - latest[a]; });
+    var pick = null;
+    if (seasons.length > 1 || (seasons.length === 1 && seasons[0])) {
+      pick = h('select', [h('option', { value: '*' }, 'Toutes les saisons')].concat(seasons.map(function (x) { return h('option', { value: x }, x || 'Sans saison'); })));
+      pick.value = seasons[0];
+      champs.parentNode.insertBefore(h('label.season-pick', 'Saison', pick), champs);
+    }
+    var boxes = [];
+    var showSeason = function () {
+      boxes.forEach(function (b) { b.el.hidden = pick && pick.value !== '*' && pick.value !== b.season; });
+    };
+    if (pick) pick.addEventListener('change', showSeason);
+    var list = all;
     if (!list.length) champs.appendChild(h('p.status', 'Aucun championnat pour le moment.'));
     list.forEach(function (c) {
-      var box = h('div.champ', h('h3', c.name), h('p.status', 'Calcul…'));
+      var title = (c.season ? c.season + ' — ' : '') + c.name;
+      var box = h('div.champ', h('h3', title), h('p.status', 'Calcul…'));
       champs.appendChild(box);
+      boxes.push({ el: box, season: c.season || '' });
+      showSeason();
       Promise.all((c.rounds || []).map(function (round) {
         if (C.roundStatus(round) === 'upcoming') return Promise.resolve(Object.assign({}, round, { status: 'upcoming', results: [] }));
         var base = '&track=eq.' + encodeURIComponent(round.track) + '&layout=eq.' + encodeURIComponent(round.layout || '') + '&rules=like.*' + encodeURIComponent('@' + round.id) + '&limit=500';
@@ -87,7 +109,7 @@
         });
       })).then(function (rounds) {
         var table = C.standings(c, rounds);
-        L.clear(box).appendChild(h('h3', c.name));
+        L.clear(box).appendChild(h('h3', title));
         if (table.length) {
           box.appendChild(h('table.board',
             h('thead', h('tr', h('th', '#'), h('th', 'Pilote'), h('th.num', 'Points'), h('th.num', 'Victoires'), h('th.num', 'Podiums'))),
@@ -102,7 +124,7 @@
           rl.appendChild(h('div.round', h('strong', r.name), h('span.muted', ' — ' + L.trackName(g, r.track, r.layout) + ' · ' + L.dateFr(r.start, { day: 'numeric', month: 'short' }) + ' · ' + label), top ? h('div', top) : null));
         });
         box.appendChild(rl);
-      }).catch(function (err) { L.clear(box).appendChild(h('p.status', c.name + ' : ' + err.message)); });
+      }).catch(function (err) { L.clear(box).appendChild(h('p.status', title + ' : ' + err.message)); });
     });
   }).catch(function (err) {
     status.textContent = err.message;

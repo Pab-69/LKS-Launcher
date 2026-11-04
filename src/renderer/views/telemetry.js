@@ -1023,7 +1023,7 @@ export default function telemetryView(root, params = {}) {
   const KIND_LABEL = { drift: 'Solo drift', tandem: 'Tandem', battle: 'Battle' };
   const STATUS_TAG = { upcoming: ['plain', 'À venir'], live: ['warn', 'En cours'], done: ['ok', 'Terminée'] };
   const toLocal = (iso) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
+  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, season: c.season || '', points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
 
   async function renderChamp() {
     const list = (await guard(() => api.call('champ:list'))) || [];
@@ -1036,7 +1036,7 @@ export default function telemetryView(root, params = {}) {
     champIndex = Math.min(champIndex, list.length - 1);
     const c = list[champIndex];
     body.append(h('div.toolbar',
-      list.length > 1 ? select(list.map((x, i) => [String(i), x.name]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select') : h('h2.champ-name', c.name),
+      list.length > 1 ? select(list.map((x, i) => [String(i), champLabel(x)]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select') : h('h2.champ-name', champLabel(c)),
       isAdmin() ? h('button.btn.btn-sm.right', { on: { click: () => { champEditor = strip(list); render(); } } }, 'Modifier') : null));
     // standings
     const st = h('div.panel', h('h3', 'Classement général'));
@@ -1086,8 +1086,12 @@ export default function telemetryView(root, params = {}) {
         h('div.s', m.bye ? 'Qualifié d’office' : m.winner ? (m.battle ? `${m.battle.drivers.map((d) => d.total.toFixed(1)).join(' – ')}` : '') : m.omt ? 'One more time' : m.a && m.b ? 'À jouer' : ''))))));
   }
 
+  function champLabel(c) {
+    return c.season ? `${c.season} — ${c.name}` : c.name;
+  }
+
   function newChamp() {
-    return { id: Math.random().toString(36).slice(2, 8), name: 'Saison 1', points: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], rounds: [] };
+    return { id: Math.random().toString(36).slice(2, 8), name: 'Championnat', season: `Saison ${new Date().getFullYear()}`, points: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], rounds: [] };
   }
 
   async function renderChampEditor() {
@@ -1097,7 +1101,7 @@ export default function telemetryView(root, params = {}) {
     champIndex = Math.min(champIndex, champEditor.length - 1);
     const c = champEditor[champIndex];
     body.append(h('div.toolbar',
-      select(champEditor.map((x, i) => [String(i), x.name]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select'),
+      select(champEditor.map((x, i) => [String(i), champLabel(x)]), String(champIndex), (v) => { champIndex = Number(v); render(); }, 'board-select'),
       h('button.btn.btn-sm', { on: { click: () => { champEditor.push(newChamp()); champIndex = champEditor.length - 1; render(); } } }, icon('plus'), 'Nouveau championnat'),
       h('button.btn.btn-sm.btn-ghost.right', { on: { click: () => { champEditor = null; render(); } } }, 'Annuler')));
     const roundsBox = h('div.grid');
@@ -1121,6 +1125,7 @@ export default function telemetryView(root, params = {}) {
       h('div.panel',
         h('div.grid.grid-2',
           field('Nom', h('input.input', { value: c.name, maxlength: 60, on: { input: (e) => { c.name = e.target.value; } } })),
+          field('Saison', h('input.input', { value: c.season || '', maxlength: 40, placeholder: 'Saison 2026', on: { input: (e) => { c.season = e.target.value; } } }), 'Regroupe les championnats (laisser vide si besoin)'),
           field('Points par place', h('input.input.mono', { value: c.points.join(', '), on: { change: (e) => { c.points = e.target.value.split(/[,; ]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0); } } }), '1er, 2e, 3e…')),
         h('h3.mt', 'Manches'),
         h('p.hint', 'Solo drift et tandem : la meilleure note de chaque pilote pendant la manche. Battle : qualifs en solo pendant la manche, puis tableau à élimination avec les battles.'),

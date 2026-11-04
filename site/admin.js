@@ -135,6 +135,94 @@
     h('div.row', h('button.btn.btn-primary', { type: 'submit' }, ev.id ? 'Enregistrer' : 'Publier la soirée'), msg));
   }
 
+  // ------------------------------------------------------------ championnats, saisons, manches
+  var KINDS = [['drift', 'Solo drift'], ['tandem', 'Tandem'], ['battle', 'Battle']];
+  var MODES = [['normal', 'Normal'], ['debutant', 'Débutant'], ['pro', 'Compétition']];
+  var rid = function () { return Math.random().toString(36).slice(2, 8); };
+
+  function champForm(g, c, done) {
+    var auto = c && c.id === 'soiree';
+    var data = JSON.parse(JSON.stringify(c || { id: rid(), name: 'Championnat', season: 'Saison ' + new Date().getFullYear(), points: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], rounds: [] }));
+    var tracks = [];
+    (g.tracks || []).forEach(function (t) {
+      var layouts = t.layouts && t.layouts.length ? t.layouts : [{ id: '' }];
+      layouts.forEach(function (l) { tracks.push([t.id + '|' + (l.id || ''), L.trackName(g, t.id, l.id)]); });
+    });
+    var seasons = {};
+    (g.championships || []).forEach(function (x) { if (x.season) seasons[x.season] = true; });
+    var listId = 'seasons-' + data.id;
+    var name = h('input', { value: data.name, required: true, maxlength: 60 });
+    var season = h('input', { value: data.season || '', maxlength: 40, placeholder: 'Saison 2026', list: listId });
+    var points = h('input', { value: (data.points || []).join(', ') });
+    var roundsBox = h('div.rounds-edit');
+    var msg = h('p.status');
+    function sel(options, value, onchange) {
+      return h('select', { onchange: function (e) { onchange(e.target.value); } }, options.map(function (o) { return h('option', { value: o[0], selected: String(o[0]) === String(value) }, o[1]); }));
+    }
+    function drawRounds() {
+      L.clear(roundsBox);
+      if (auto) {
+        roundsBox.appendChild(h('p.muted', 'Les manches de « Soirées LKS » viennent des soirées avec battle : ajoute ou retire une battle dans une soirée.'));
+        return;
+      }
+      if (!data.rounds.length) roundsBox.appendChild(h('p.muted', 'Aucune manche.'));
+      data.rounds.forEach(function (r, i) {
+        var date = function (key) {
+          return h('input', { type: 'datetime-local', value: toLocal(r[key]), onchange: function (e) { r[key] = new Date(e.target.value).toISOString(); } });
+        };
+        roundsBox.appendChild(h('div.round-edit',
+          h('strong.round-n', 'M' + (i + 1)),
+          h('div.grid2',
+            h('label', 'Nom', h('input', { value: r.name, maxlength: 60, oninput: function (e) { r.name = e.target.value; } })),
+            h('label', 'Circuit', sel(tracks, r.track + '|' + (r.layout || ''), function (v) { var tl = v.split('|'); r.track = tl[0]; r.layout = tl[1] || ''; })),
+            h('label', 'Format', sel(KINDS, r.kind, function (v) { r.kind = v; drawRounds(); })),
+            h('label', 'Mode', sel(MODES, r.mode, function (v) { r.mode = v; })),
+            h('label', 'Début', date('start')),
+            h('label', 'Fin', date('end')),
+            r.kind === 'battle' ? h('label', 'Tableau', sel([[4, 'Top 4'], [8, 'Top 8'], [16, 'Top 16']], r.bracket || 8, function (v) { r.bracket = Number(v); })) : null),
+          h('div.row',
+            h('div.actions',
+              i > 0 ? h('button.btn.small', { type: 'button', onclick: function () { data.rounds.splice(i - 1, 0, data.rounds.splice(i, 1)[0]); drawRounds(); } }, '↑') : null,
+              i < data.rounds.length - 1 ? h('button.btn.small', { type: 'button', onclick: function () { data.rounds.splice(i + 1, 0, data.rounds.splice(i, 1)[0]); drawRounds(); } }, '↓') : null),
+            h('button.btn.small.danger', { type: 'button', onclick: function () { if (confirm('Retirer la manche « ' + r.name + ' » ? Ses résultats ne compteront plus.')) { data.rounds.splice(i, 1); drawRounds(); } } }, 'Retirer la manche'))));
+      });
+    }
+    drawRounds();
+    return h('form.card', {
+      onsubmit: function (e) {
+        e.preventDefault();
+        data.name = name.value;
+        data.season = season.value;
+        data.points = points.value.split(/[,; ]+/).map(Number).filter(function (n) { return isFinite(n) && n >= 0; });
+        message(msg, 'Publication…');
+        call('PUT', '/championships/' + encodeURIComponent(data.id), data).then(function () {
+          message(msg, 'Publié : les launchers le reçoivent dans les 5 minutes.', true);
+          done();
+        }).catch(function (err) { message(msg, err.message); });
+      },
+    },
+    h('datalist', { id: listId }, Object.keys(seasons).map(function (x) { return h('option', { value: x }); })),
+    h('div.grid2', h('label', 'Nom', name), h('label', 'Saison', season), h('label', 'Points par place (1er, 2e, 3e…)', points)),
+    h('span.label', 'Manches'),
+    h('p.muted.small', 'Solo drift et tandem : la meilleure note de chaque pilote pendant la manche. Battle : qualifs en solo pendant la manche, puis tableau à élimination. Changer le circuit ou le mode d’une manche déjà courue repart de zéro pour cette manche.'),
+    roundsBox,
+    h('div.row',
+      auto ? h('span') : h('button.btn', {
+        type: 'button',
+        onclick: function () {
+          if (!tracks.length) return message(msg, 'Aucun circuit publié dans le groupe.');
+          var last = data.rounds[data.rounds.length - 1];
+          var start = last ? new Date(Date.parse(last.end) + 86400000) : new Date();
+          start.setHours(20, 0, 0, 0);
+          var tl = (last ? last.track + '|' + (last.layout || '') : tracks[0][0]).split('|');
+          data.rounds.push({ id: rid(), name: 'Manche ' + (data.rounds.length + 1), track: tl[0], layout: tl[1] || '', kind: last ? last.kind : 'drift', mode: last ? last.mode : 'normal', start: start.toISOString(), end: new Date(start.getTime() + 7 * 86400000).toISOString(), bracket: 8 });
+          drawRounds();
+        },
+      }, '+ Ajouter une manche'),
+      h('button.btn.btn-primary', { type: 'submit' }, c ? 'Enregistrer' : 'Créer le championnat'),
+      msg));
+  }
+
   function showAdmin() {
     document.getElementById('logout').hidden = false;
     var s = page();
@@ -174,6 +262,36 @@
           slot));
       });
       if (!(g.events || []).length) evs.appendChild(h('p.muted', 'Aucune soirée prévue.'));
+
+      // championnats, regroupés par saison
+      box.appendChild(h('h3.sub', 'Championnats'));
+      var chs = h('div');
+      box.appendChild(chs);
+      var creating = h('div');
+      chs.appendChild(h('button.btn', { onclick: function () { L.clear(creating).appendChild(champForm(g, null, reload)); } }, '+ Nouveau championnat'));
+      chs.appendChild(creating);
+      var bySeason = {};
+      (g.championships || []).forEach(function (c) { (bySeason[c.season || 'Sans saison'] = bySeason[c.season || 'Sans saison'] || []).push(c); });
+      Object.keys(bySeason).sort().reverse().forEach(function (season) {
+        chs.appendChild(h('div.label.season-label', season));
+        bySeason[season].forEach(function (c) {
+          var slot = h('div');
+          var span = (c.rounds || []).length ? L.dateFr(c.rounds[0].start, { day: 'numeric', month: 'short' }) + ' → ' + L.dateFr(c.rounds[c.rounds.length - 1].end, { day: 'numeric', month: 'short', year: 'numeric' }) : 'aucune manche';
+          chs.appendChild(h('article.card',
+            h('div.row',
+              h('div', h('strong', c.name), h('div.muted', (c.rounds || []).length + ' manche' + ((c.rounds || []).length > 1 ? 's' : '') + ' · ' + span + (c.id === 'soiree' ? ' · suit les soirées' : ''))),
+              h('div.actions',
+                h('button.btn.small', { onclick: function () { L.clear(slot).appendChild(champForm(g, c, reload)); } }, 'Modifier'),
+                c.id === 'soiree' ? null : h('button.btn.small.danger', {
+                  onclick: function () {
+                    if (!confirm('Supprimer le championnat « ' + c.name + ' » ? Les scores restent sur le serveur, mais le classement du championnat disparaît.')) return;
+                    call('DELETE', '/championships/' + encodeURIComponent(c.id)).then(reload).catch(function (err) { alert(err.message); });
+                  },
+                }, 'Supprimer'))),
+            slot));
+        });
+      });
+      if (!(g.championships || []).length) chs.appendChild(h('p.muted', 'Aucun championnat.'));
 
       // actus
       box.appendChild(h('h3.sub', 'Actus'));

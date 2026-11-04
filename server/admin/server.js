@@ -13,6 +13,8 @@
  *   DELETE /admin/api/news?date=<iso>
  *   PUT    /admin/api/events/<id>       the event (created or replaced)
  *   DELETE /admin/api/events/<id>
+ *   PUT    /admin/api/championships/<id> { name, season, points, rounds }
+ *   DELETE /admin/api/championships/<id>
  *
  * The GitHub token stays on the server (never sent to the browser). Admins:
  * file ADMINS_FILE, one « name:scrypt$salt$hash » per line (./lks.sh add-admin).
@@ -286,6 +288,67 @@ async function deleteNews(by, date) {
   });
 }
 
+/**
+ * A championship from the site, checked like the launcher does (cleanChampionships)
+ * but with clear messages. « Soirées LKS » (id soiree) follows the calendar: only its
+ * name, season and points can change here.
+ */
+function cleanChampionship(id, c, m, existing) {
+  const name = clean(c.name, 60);
+  if (!name) throw Object.assign(new Error('Il faut un nom'), { status: 400 });
+  const points = (Array.isArray(c.points) ? c.points : String(c.points || '').split(/[,; ]+/)).map(Number).filter((n) => Number.isFinite(n) && n >= 0).slice(0, 32);
+  if (!points.length) throw Object.assign(new Error('Indique les points par place (ex. 25, 18, 15…)'), { status: 400 });
+  let rounds;
+  if (id === 'soiree') rounds = (existing && existing.rounds) || [];
+  else {
+    const seen = new Set();
+    rounds = (Array.isArray(c.rounds) ? c.rounds : []).slice(0, 40).map((r, i) => {
+      const label = `Manche ${i + 1}`;
+      let rid = String(r.id || '').replace(/[^\w-]/g, '').slice(0, 6);
+      while (!rid || seen.has(rid)) rid = crypto.randomBytes(4).toString('hex').slice(0, 6);
+      seen.add(rid);
+      const track = clean(r.track, 80);
+      if (!(m.tracks || []).some((t) => t.id === track)) throw Object.assign(new Error(`${label} : choisis un circuit du groupe`), { status: 400 });
+      const start = Date.parse(r.start);
+      const end = Date.parse(r.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) throw Object.assign(new Error(`${label} : dates invalides`), { status: 400 });
+      if (end <= start) throw Object.assign(new Error(`${label} : la fin doit être après le début`), { status: 400 });
+      return { id: rid, name: clean(r.name, 60) || label, track, layout: clean(r.layout, 80), kind: r.kind, mode: r.mode, start: new Date(start).toISOString(), end: new Date(end).toISOString(), bracket: Number(r.bracket) || 8 };
+    });
+  }
+  return champ.cleanChampionships([{ id, name, season: clean(c.season, 40), points, rounds }])[0];
+}
+
+async function putChampionship(by, id, body) {
+  if (!/^[\w-]{1,6}$/.test(id)) throw Object.assign(new Error('Identifiant invalide'), { status: 400 });
+  return serial(async () => {
+    const state = await openManifest();
+    const m = state.manifest;
+    const list = [...(m.championships || [])];
+    const i = list.findIndex((c) => c.id === id);
+    if (i < 0 && list.length >= 20) throw Object.assign(new Error('20 championnats au plus : supprime les anciens'), { status: 400 });
+    const c = cleanChampionship(id, body, m, i >= 0 ? list[i] : null);
+    if (i >= 0) list[i] = c;
+    else list.push(c);
+    m.championships = list;
+    await saveManifest(state, m, `${by} (site)`, [`${i >= 0 ? 'Championnat modifié' : 'Championnat créé'} : ${c.season ? `${c.season} — ` : ''}${c.name}`]);
+    return c;
+  });
+}
+
+async function deleteChampionship(by, id) {
+  if (id === 'soiree') throw Object.assign(new Error('« Soirées LKS » suit le calendrier : retire les battles des soirées à la place'), { status: 400 });
+  return serial(async () => {
+    const state = await openManifest();
+    const m = state.manifest;
+    const c = (m.championships || []).find((x) => x.id === id);
+    if (!c) throw Object.assign(new Error('Championnat introuvable'), { status: 404 });
+    m.championships = m.championships.filter((x) => x.id !== id);
+    await saveManifest(state, m, `${by} (site)`, [`Championnat supprimé : ${c.name}`]);
+    return true;
+  });
+}
+
 // ------------------------------------------------------------------ HTTP
 function cors(req, res, open) {
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
@@ -348,6 +411,9 @@ const server = http.createServer(async (req, res) => {
     const ev = p.match(/^\/admin\/api\/events\/([\w-]{3,40})$/);
     if (ev && req.method === 'PUT') return json(res, 200, await putEvent(me.name, ev[1], await readJson(req)));
     if (ev && req.method === 'DELETE') return json(res, 200, await deleteEvent(me.name, ev[1]));
+    const ch = p.match(/^\/admin\/api\/championships\/([\w-]{1,6})$/);
+    if (ch && req.method === 'PUT') return json(res, 200, await putChampionship(me.name, ch[1], await readJson(req)));
+    if (ch && req.method === 'DELETE') return json(res, 200, await deleteChampionship(me.name, ch[1]));
     return json(res, 404, { message: 'Introuvable' });
   } catch (err) {
     return json(res, err.status || 500, { message: String(err.message || 'Erreur').slice(0, 300) });
@@ -372,4 +438,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { server, hashPassword, checkPassword, publicView, cleanEvent };
+module.exports = { server, hashPassword, checkPassword, publicView, cleanEvent, cleanChampionship };

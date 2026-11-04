@@ -55,3 +55,20 @@ test('rounds from the server rows: latest course version, best line per driver',
   const r = rounds.roundFromRows(round, { entryRows: rows, points: [10, 5] });
   assert.deepStrictEqual(r.results.map((x) => [x.name, x.score, x.points]), [['Pab', 80, 10], ['Kaze', 75, 5]]);
 });
+
+test('championships from the site: season kept, rounds checked with clear messages, « Soirées LKS » rounds untouched', () => {
+  const { cleanChampionship } = require('../server/admin/server');
+  const r = (o) => ({ name: 'M', track: 'cfd_calmont_2023', layout: 'Calmont', kind: 'drift', mode: 'normal', start: '2026-12-01T20:00:00Z', end: '2026-12-08T20:00:00Z', ...o });
+  const c = cleanChampionship('abc123', { name: 'Coupe', season: ' Saison  2026 ', points: '25, 18, 15', rounds: [r({ id: 'r1' }), r({ id: 'r1', kind: 'battle', bracket: 16 }), r({ id: '', mode: 'pro' })] }, manifest, null);
+  assert.strictEqual(c.season, 'Saison 2026');
+  assert.deepStrictEqual(c.points, [25, 18, 15]);
+  assert.strictEqual(new Set(c.rounds.map((x) => x.id)).size, 3, 'round ids unique (results are kept by round id)');
+  assert.strictEqual(c.rounds[1].bracket, 16);
+  assert.throws(() => cleanChampionship('abc123', { name: 'C', points: [1], rounds: [r({ track: 'autre' })] }, manifest), /Manche 1 : choisis un circuit/);
+  assert.throws(() => cleanChampionship('abc123', { name: 'C', points: [1], rounds: [r({ end: '2026-11-01T00:00:00Z' })] }, manifest), /Manche 1 : la fin/);
+  assert.throws(() => cleanChampionship('abc123', { name: 'C', points: [] }, manifest), /points/);
+  const soiree = { id: 'soiree', name: 'Soirées LKS', points: [10], rounds: [{ id: 'x1', name: 'S', track: 'cfd_calmont_2023', layout: '', kind: 'battle', mode: 'normal', start: '2026-12-01T20:00:00Z', end: '2026-12-01T22:00:00Z', bracket: 8 }] };
+  const s = cleanChampionship('soiree', { name: 'Soirées', season: 'Saison 2026', points: [12], rounds: [] }, manifest, soiree);
+  assert.deepStrictEqual([s.name, s.season, s.points, s.rounds.map((x) => x.id)], ['Soirées', 'Saison 2026', [12], ['x1']]);
+  assert.strictEqual(champ.cleanChampionships([{ id: 'a', name: 'A', season: 'S1', rounds: [] }])[0].season, 'S1', 'the launcher keeps the season too');
+});
