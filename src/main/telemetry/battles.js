@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { judgeBattleAll, MODE_IDS } = require('./drift');
+const { dedupe } = require('./rounds');
 
 const WINDOW_MS = 20 * 60 * 1000;
 const norm = (n) => String(n || '').trim().toLowerCase();
@@ -113,13 +114,4 @@ function findPartnerRun(lap, laps, used = new Set()) {
 }
 
 /** Battles from several sources (this PC + shared board): one per pair/track within 5 min. */
-function dedupe(battles) {
-  const out = [];
-  for (const b of [...battles].sort((x, y) => Date.parse(y.date) - Date.parse(x.date))) {
-    if (out.some((o) => o.pair === b.pair && o.track === b.track && (o.layout || '') === (b.layout || '') && Math.abs(Date.parse(o.date) - Date.parse(b.date)) < 5 * 60 * 1000)) continue;
-    out.push(b);
-  }
-  return out;
-}
-
 module.exports = { BattleStore, isPair, findPartnerRun, pairKey, dedupe };

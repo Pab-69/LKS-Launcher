@@ -153,4 +153,35 @@ function cleanChampionships(list) {
   }));
 }
 
-module.exports = { roundStatus, openRounds, pointsFor, seedOrder, bracket, roundResults, standings, cleanChampionships, DEFAULT_POINTS };
+/**
+ * Events (soirées) with a battle: one round each in the « Soirées LKS »
+ * championship (qualifying runs during the evening, then the bracket of the
+ * best ones). Past rounds stay (results), future rounds follow the calendar.
+ * Returns the new championships list, or null when nothing changes.
+ * Used by the launcher (Publication) and by the group's server (site admin).
+ */
+function syncSoirees(championships, events, now = Date.now()) {
+  const champs = [...(championships || [])];
+  let soirees = champs.find((c) => c.id === 'soiree');
+  const roundId = (ev) => String(ev.id || '').replace(/[^\w-]/g, '').slice(-6);
+  const wanted = (events || []).filter((ev) => ev.battle && ev.battle.size && ev.track && roundId(ev));
+  if (!wanted.length && !soirees) return null;
+  if (!soirees) {
+    soirees = { id: 'soiree', name: 'Soirées LKS', points: DEFAULT_POINTS, rounds: [] };
+    champs.push(soirees);
+  }
+  const keepIds = new Set(wanted.map(roundId));
+  const rounds = (soirees.rounds || []).filter((r) => keepIds.has(r.id) || Date.parse(r.start) < now);
+  for (const ev of wanted) {
+    const start = new Date(ev.date).toISOString();
+    const end = new Date(Date.parse(ev.date) + (Number(ev.durationMinutes) || 120) * 60000).toISOString();
+    const round = { id: roundId(ev), name: ev.title || 'Soirée LKS', track: ev.track, layout: ev.layout || '', kind: 'battle', mode: ['debutant', 'normal', 'pro'].includes(ev.battle.mode) ? ev.battle.mode : 'normal', start, end, bracket: Number(ev.battle.size) };
+    const i = rounds.findIndex((r) => r.id === round.id);
+    if (i >= 0) rounds[i] = round;
+    else rounds.push(round);
+  }
+  soirees.rounds = rounds.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  return cleanChampionships(champs);
+}
+
+module.exports = { roundStatus, openRounds, pointsFor, seedOrder, bracket, roundResults, standings, cleanChampionships, syncSoirees, DEFAULT_POINTS };

@@ -46,6 +46,11 @@
         </div>
       </section>
 
+      <section id="soirees" class="events" hidden>
+        <h2>Prochaines soirées</h2>
+        <div class="event-list"></div>
+      </section>
+
       {{GARAGE}}
       {{NEWS}}
       {{SUPPORT}}
@@ -53,8 +58,10 @@
 
     <footer>
       <p>© {{YEAR}} Lowkey Syndicate — association. Le nom, le logo et les visuels sont la propriété de l'association.</p>
-      <p>Le code du launcher est un logiciel libre sous licence GPL-3.0 : <a href="https://github.com/{{REPO}}">code source</a> · <a href="https://github.com/{{REPO}}/blob/main/PRIVACY.md">confidentialité</a> · <a href="https://github.com/{{REPO}}/blob/main/TRADEMARKS.md">marques</a>.</p>
+      <p>Le code du launcher est un logiciel libre sous licence GPL-3.0 : <a href="https://github.com/{{REPO}}">code source</a> · <a href="https://github.com/{{REPO}}/blob/main/PRIVACY.md">confidentialité</a> · <a href="https://github.com/{{REPO}}/blob/main/TRADEMARKS.md">marques</a>{{ADMIN_LINK}}.</p>
       <p class="muted">Assetto Corsa est une marque de Kunos Simulazioni. Ce site n'est pas affilié à Kunos ni à Steam.</p>
     </footer>
+    <script src="config.js"></script>
+    <script src="site.js"></script>
   </body>
 </html>

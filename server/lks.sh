@@ -11,6 +11,12 @@
 #   ./lks.sh forget "<pilote>"   efface toutes les données d'un pilote (à sa demande)
 #   ./lks.sh delete-photo <id>   efface une photo de la galerie (fichier compris)
 #   ./lks.sh import-supabase <url> <clé>   reprend les records et la galerie d'un projet Supabase
+#   ./lks.sh add-admin <nom>     ajoute (ou change le mot de passe d') un admin du site
+#   ./lks.sh remove-admin <nom>  retire un admin du site
+#   ./lks.sh admins              liste les admins du site
+#   ./lks.sh github-token        règle le jeton GitHub (publier soirées et actus depuis le site)
+#   ./lks.sh site <adresse>      adresse du site vitrine autorisée (ex. https://lks-syndicate.fr)
+#   ./lks.sh site-build <dossier>  reconstruit le site vitrine dans ce dossier (ex. /var/www/lks)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -82,6 +88,7 @@ EOF
   fi
   mkdir -p data/db data/storage data/caddy backups
   chown 1000:1000 data/storage 2>/dev/null || true
+  admins_file
   dc up -d
   say "Démarrage… (le premier certificat HTTPS peut prendre une minute)"
   for _ in $(seq 1 60); do
@@ -97,6 +104,91 @@ EOF
   say "puis : ./lks.sh status"
 }
 
+# admins du site : un « nom:empreinte » par ligne, lisible seulement par le service admin
+admins_file() {
+  [ -f admins ] || : > admins
+  chown 1000:1000 admins 2>/dev/null || true
+  chmod 600 admins
+}
+
+env_set() {
+  # $1 = clé, $2 = valeur (remplace la ligne, ou l'ajoute)
+  local tmp
+  tmp=$(mktemp)
+  grep -vE "^$1=" .env > "$tmp" || true
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  cat "$tmp" > .env
+  rm -f "$tmp"
+}
+
+add_admin() {
+  local name="${1:-}" p1 p2 line tmp
+  [[ "$name" =~ ^[A-Za-z0-9_.-]{2,40}$ ]] || die "./lks.sh add-admin <nom> (lettres, chiffres, . _ -)"
+  read -rsp "Mot de passe pour $name (10 caractères ou plus) : " p1; echo
+  read -rsp "Encore une fois : " p2; echo
+  [ "$p1" = "$p2" ] || die "les deux mots de passe sont différents"
+  [ "${#p1}" -ge 10 ] || die "10 caractères au moins"
+  line=$(printf '%s' "$p1" | docker run --rm -i -v "$PWD/admin/server.js:/app/server.js:ro" -v "$PWD/../src/main/telemetry/championship.js:/app/championship.js:ro" node:22-alpine node /app/server.js hash "$name")
+  admins_file
+  tmp=$(mktemp)
+  grep -viE "^$name:" admins > "$tmp" || true
+  printf '%s\n' "$line" >> "$tmp"
+  cat "$tmp" > admins
+  rm -f "$tmp"
+  say "Admin « $name » enregistré (le mot de passe n'est gardé que sous forme d'empreinte)."
+}
+
+remove_admin() {
+  local name="${1:-}" tmp
+  [ -n "$name" ] || die "./lks.sh remove-admin <nom>"
+  admins_file
+  tmp=$(mktemp)
+  grep -viE "^$name:" admins > "$tmp" || true
+  cat "$tmp" > admins
+  rm -f "$tmp"
+  say "Admin « $name » retiré."
+}
+
+github_token() {
+  local t
+  say "Jeton GitHub « fine-grained » : github.com → Settings → Developer settings → Personal access tokens"
+  say "→ Fine-grained tokens → Generate. Dépôt : seulement LKS-Launcher. Permission : Contents = Read and write."
+  read -rsp "Colle le jeton : " t; echo
+  [[ "$t" =~ ^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$ ]] || die "ça ne ressemble pas à un jeton GitHub"
+  env_set GITHUB_TOKEN "$t"
+  dc up -d admin
+  say "Jeton enregistré dans .env (jamais envoyé au navigateur)."
+}
+
+site_origin() {
+  local o="${1:-}"
+  [[ "$o" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || die "./lks.sh site https://mon-site.fr (sans / à la fin)"
+  local cur
+  cur=$(env_get SITE_ORIGINS || true)
+  case ",$cur," in *",$o,"*) ;; *) env_set SITE_ORIGINS "${cur:+$cur,}$o" ;; esac
+  dc up -d admin
+  say "Le site $o peut maintenant utiliser la page admin."
+}
+
+site_build() {
+  local dir="${1:-}"
+  [ -n "$dir" ] || die "./lks.sh site-build <dossier du site> (ex. /var/www/lks)"
+  mkdir -p "$dir"
+  dir=$(cd "$dir" && pwd)
+  case "$dir" in /|/root|/home|/home/*[!/]*/..|"$HOME") die "dossier refusé : $dir" ;; esac
+  if [ -n "$(ls -A "$dir")" ] && [ ! -f "$dir/index.html" ]; then
+    die "$dir n'est pas vide et ne contient pas de site (index.html) : choisis le dossier du site"
+  fi
+  local url=""
+  if [ -f .env ]; then url=$(base_url); fi
+  docker run --rm -e LKS_SERVER_URL="$url" -v "$PWD/..:/repo:ro" -v "$dir:/out" -w /repo node:22-alpine node tools/build-site.js /out/.lks-build
+  # remplace le contenu du site d'un coup (les visiteurs ne voient jamais un site à moitié copié)
+  find "$dir" -mindepth 1 -maxdepth 1 ! -name .lks-build -exec rm -rf {} +
+  cp -a "$dir/.lks-build/." "$dir/"
+  rm -rf "$dir/.lks-build"
+  say "Site reconstruit dans $dir (soirées, actus et classements se mettent à jour tout seuls ensuite)."
+}
+
 status() {
   dc ps
   if api_ok; then say "API : OK ($(base_url))"; else say "API : ne répond pas ($(base_url))"; fi
@@ -105,6 +197,7 @@ status() {
 update() {
   need
   if [ -d ../.git ]; then git -C .. pull --ff-only; fi
+  admins_file
   dc pull
   dc up -d
   psql_lks -f /docker-entrypoint-initdb.d/10-leaderboard.sql >/dev/null
@@ -183,5 +276,11 @@ case "$cmd" in
   forget) forget "$@" ;;
   delete-photo) delete_photo "$@" ;;
   import-supabase) import_supabase "$@" ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  add-admin) add_admin "$@" ;;
+  remove-admin) remove_admin "$@" ;;
+  admins) admins_file; cut -d: -f1 admins ;;
+  github-token) github_token ;;
+  site) site_origin "$@" ;;
+  site-build) site_build "$@" ;;
+  *) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

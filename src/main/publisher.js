@@ -81,7 +81,7 @@ class Publisher {
   }
 
   async publishItems(acRoot, items, { force = false, notes = '' } = {}) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lks-publish-'));
     const report = [];
     try {
@@ -161,7 +161,7 @@ class Publisher {
   }
 
   async removeItems(items) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     for (const { kind, id } of items) {
       this.manifest[plural(kind)] = this.manifest[plural(kind)].filter((e) => e.id !== id);
       this.log(`− ${kind === 'car' ? 'Voiture' : 'Circuit'} ${id} retiré du manifeste`);
@@ -173,7 +173,7 @@ class Publisher {
 
   /** Replace servers / news / group name. */
   async updateMeta(patch) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     for (const key of META_KEYS) {
       if (patch[key] === undefined) continue;
       this.manifest[key] = patch[key];
@@ -218,7 +218,7 @@ class Publisher {
    * folder. These files are kept out of the launcher itself (all rights reserved).
    */
   async publishBranding(dir) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     const { files, showcase } = readBrandingFolder(dir);
     const entries = [];
     const total = crypto.createHash('sha256');
@@ -257,7 +257,7 @@ class Publisher {
    * One small archive per car; members get them next to their own setups.
    */
   async publishSetups(docsDir, cars, names = {}) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     if (!Array.isArray(this.manifest.setups)) this.manifest.setups = [];
     const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lks-setups-'));
     const report = [];
@@ -312,7 +312,7 @@ class Publisher {
   }
 
   async removeSetups(cars) {
-    if (!this.manifest) await this.open();
+    await this.open(); // always the latest: the site or another admin may have published meanwhile
     this.manifest.setups = (this.manifest.setups || []).filter((s) => !cars.includes(s.car));
     for (const c of cars) this.note(`Setups ${c} retirés`);
     await this.saveManifest();

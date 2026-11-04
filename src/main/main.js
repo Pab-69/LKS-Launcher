@@ -50,6 +50,7 @@ const { collectRuns } = require('./telemetry/tandem');
 const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
 const { dedupe: dedupeBattles } = require('./telemetry/battles');
+const { ruledBattles } = require('./telemetry/rounds');
 
 const MANIFEST_POLL_MS = 5 * 60 * 1000;
 
@@ -1041,8 +1042,7 @@ async function championshipsNow() {
       if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
       if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
       const decisions = (sync.manifest && sync.manifest.judging) || [];
-      const withPairs = dedupeBattles(battles.map((b) => ({ ...b, pair: b.drivers.map((d) => d.name.toLowerCase()).sort().join('|'), track: round.track, layout: round.layout || '' })));
-      const ruled = withPairs.map((b) => ({ ...b, ...judging.judged(b, judging.decisionFor(decisions, { ...b, result: b })) }));
+      const ruled = ruledBattles(round, battles, decisions);
       rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: ruled, points: c.points }), error });
     }
     out.push({ ...c, rounds, standings: champ.standings(c, rounds) });
@@ -2451,33 +2451,10 @@ function setupIpc() {
     withAdmin(async () => {
       const pub = getPublisher();
       // events with a battle: one round each in the « Soirées LKS » championship
-      // (qualifying runs during the evening, then the bracket of the best ones)
       if (patch && Array.isArray(patch.events)) {
         if (!pub.manifest) await pub.open();
-        const champs = [...(pub.manifest.championships || [])];
-        let soirees = champs.find((c) => c.id === 'soiree');
-        const roundId = (ev) => String(ev.id || '').replace(/[^\w-]/g, '').slice(-6);
-        const wanted = patch.events.filter((ev) => ev.battle && ev.battle.size && ev.track && roundId(ev));
-        if (wanted.length || soirees) {
-          if (!soirees) {
-            soirees = { id: 'soiree', name: 'Soirées LKS', points: champ.DEFAULT_POINTS, rounds: [] };
-            champs.push(soirees);
-          }
-          const now = Date.now();
-          const keepIds = new Set(wanted.map(roundId));
-          // past rounds stay (results), future rounds follow the calendar
-          const rounds = (soirees.rounds || []).filter((r) => keepIds.has(r.id) || Date.parse(r.start) < now);
-          for (const ev of wanted) {
-            const start = new Date(ev.date).toISOString();
-            const end = new Date(Date.parse(ev.date) + (Number(ev.durationMinutes) || 120) * 60000).toISOString();
-            const round = { id: roundId(ev), name: ev.title || 'Soirée LKS', track: ev.track, layout: ev.layout || '', kind: 'battle', mode: ['debutant', 'normal', 'pro'].includes(ev.battle.mode) ? ev.battle.mode : 'normal', start, end, bracket: Number(ev.battle.size) };
-            const i = rounds.findIndex((r) => r.id === round.id);
-            if (i >= 0) rounds[i] = round;
-            else rounds.push(round);
-          }
-          soirees.rounds = rounds.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
-          patch = { ...patch, championships: champ.cleanChampionships(champs) };
-        }
+        const championships = champ.syncSoirees(pub.manifest.championships || [], patch.events);
+        if (championships) patch = { ...patch, championships };
       }
       // new events: announced on the group's channel
       if (patch && Array.isArray(patch.events)) {

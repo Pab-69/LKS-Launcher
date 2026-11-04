@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.17.1
+
+- **Site vitrine** (admins avec le serveur du groupe) : page **Admin** pour créer, modifier ou retirer les soirées et publier les actus depuis le navigateur ; page **Classements** (drift, tandem, chrono, championnats) ; soirées et actus toujours à jour sur l'accueil. Mise en place : `server/README.md`, partie « Le site vitrine ».
+- Publication depuis le launcher : le manifeste est relu juste avant chaque envoi, pour ne jamais effacer ce qui vient d'être publié depuis le site ou par un autre admin.
+
 ## 1.17.0
 
 - **Ton Steam ID ne part plus nulle part** (sauf vers les serveurs de jeu que tu rejoins, le jeu l'exige). Pour le classement, les runs et les propositions, le launcher utilise ton nom de pilote et un identifiant tiré au hasard.

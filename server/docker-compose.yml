@@ -4,6 +4,7 @@
 #   caddy     : HTTPS (certificat Let's Encrypt automatique), seul service ouvert sur internet
 #   rest      : l'API lue et écrite par les launchers (PostgREST, même API que Supabase)
 #   storage   : fichiers des propositions et de la galerie
+#   admin     : soirées et actus depuis le site (avec le jeton GitHub, jamais envoyé au navigateur)
 #   db        : la base PostgreSQL (jamais ouverte sur internet)
 #   ops       : ménage toutes les heures + sauvegarde chaque jour (7 jours gardés)
 #
@@ -70,10 +71,28 @@ services:
       - ./data/storage:/data
     <<: *logs
 
+  admin:
+    image: node:22-alpine
+    restart: unless-stopped
+    user: node
+    working_dir: /app
+    command: ['node', 'server.js']
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      CONTENT_REPO: ${CONTENT_REPO:-Pab-69/LKS-Launcher}
+      SITE_ORIGINS: ${SITE_ORIGINS:-}
+      ADMINS_FILE: /app/admins
+      TZ: Europe/Paris
+    volumes:
+      - ./admin/server.js:/app/server.js:ro
+      - ../src/main/telemetry/championship.js:/app/championship.js:ro
+      - ./admins:/app/admins:ro
+    <<: *logs
+
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
-    depends_on: [rest, storage]
+    depends_on: [rest, storage, admin]
     ports:
       - '${HTTP_PORT:-80}:80'
       - '${HTTPS_PORT:-443}:443'

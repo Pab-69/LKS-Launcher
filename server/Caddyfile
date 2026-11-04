@@ -18,6 +18,13 @@
 		reverse_proxy storage:8080
 	}
 
+	handle /admin/api/* {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy admin:8090
+	}
+
 	handle {
 		respond "Serveur LKS" 200
 	}

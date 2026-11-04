@@ -2,7 +2,8 @@
 
 Ce dossier installe sur **ton serveur** tout ce que le launcher utilisait chez Supabase :
 classement et records, battles, notes des runs, direct des soirées, qui est en ligne,
-parties hébergées, propositions de voitures et livrées, votes, galerie.
+parties hébergées, propositions de voitures et livrées, votes, galerie. Il sert aussi le site
+vitrine : soirées et actus à jour, classements, et une page admin pour publier.
 
 Les launchers ne changent rien : ils parlent à ton serveur exactement comme à Supabase.
 Tu colles juste une adresse et une clé dans Publication.
@@ -24,6 +25,7 @@ Tu colles juste une adresse et une clé dans Publication.
 | Propositions (nom de l'auteur, message, fichier) et votes | Propositions des membres | **180 jours** |
 | Photos de la galerie (nom de l'auteur, légende, image) | Galerie | Jusqu'à ce qu'un admin l'efface |
 | Sauvegardes de la base | En cas de panne | **7 jours** |
+| Comptes admin du site (nom + empreinte du mot de passe) | Page admin du site | Jusqu'à `./lks.sh remove-admin` (les connexions ne sont gardées qu'en mémoire, 8 h) |
 
 **Il ne garde pas :**
 
@@ -90,6 +92,47 @@ ne le partage jamais et ne le mets jamais sur GitHub.
 
 ---
 
+## 4 bis. Le site vitrine : soirées, actus et classements
+
+Le site vitrine gagne trois choses, toutes servies par ce serveur :
+
+- **accueil** : les prochaines soirées et les dernières actus, toujours à jour (plus besoin de
+  reconstruire le site) ;
+- **Classements** (`classement.html`) : drift, tandem et chrono par circuit, mode et voiture, et
+  le classement des championnats (même calcul que dans le launcher) ;
+- **Admin** (`admin.html`, lien en bas de page) : créer, modifier ou retirer une soirée (circuit,
+  voitures imposées, serveur, battle top 4/8/16), publier ou retirer une actu.
+  Ça arrive dans tous les launchers dans les 5 minutes, exactement comme depuis l'onglet
+  Publication. Les nouvelles soirées et actus sont annoncées sur Discord (case à décocher pour
+  une actu).
+
+### À faire une fois
+
+```bash
+cd LKS-Launcher/server
+./lks.sh update                                   # récupère cette version
+./lks.sh github-token                             # jeton GitHub pour publier (voir ci-dessous)
+./lks.sh add-admin Pab                            # un compte par admin (mot de passe demandé)
+./lks.sh site https://lks-syndicate.fr            # l'adresse de ton site vitrine
+./lks.sh site-build /var/www/lks-syndicate        # reconstruit le site dans son dossier
+```
+
+- **Jeton GitHub** : sur github.com → Settings → Developer settings → Personal access tokens →
+  Fine-grained tokens → Generate new token. Dépôt : seulement `LKS-Launcher`. Permission :
+  **Contents : Read and write** (rien d'autre). Il reste dans `.env` sur le serveur, il n'est
+  jamais envoyé au navigateur.
+- **Admins** : `./lks.sh add-admin <nom>` (aussi pour changer un mot de passe),
+  `./lks.sh remove-admin <nom>`, `./lks.sh admins` pour la liste. Les mots de passe ne sont gardés
+  que sous forme d'empreinte. Après 5 mauvais mots de passe, le compte est bloqué 15 minutes.
+  La connexion dure 8 heures.
+- **Le site** : `site-build` remplace le contenu du dossier donné par la nouvelle version du site
+  (garde le même dossier que celui que ton serveur web sert déjà). Relance-le après une mise à
+  jour du launcher ou un changement de logo/photos ; pour les soirées, actus et classements, ce
+  n'est pas nécessaire.
+
+Le site appelle ce serveur depuis le navigateur : seule l'adresse donnée à `./lks.sh site` peut
+utiliser la page admin.
+
 ## 5. Reprendre les données de Supabase (facultatif)
 
 Si le groupe utilisait Supabase avant :
@@ -120,6 +163,8 @@ Lance-les depuis le dossier `LKS-Launcher/server` (avec `sudo` si ton utilisateu
 | `./lks.sh restore backups/<fichier>` | remet une sauvegarde (remplace la base actuelle) |
 | `./lks.sh forget "Nom du pilote"` | efface **toutes** les données d'un pilote (records, runs, photos, propositions…) |
 | `./lks.sh delete-photo <id>` | efface une photo de la galerie (fichier compris) |
+| `./lks.sh add-admin <nom>` / `remove-admin <nom>` / `admins` | comptes admin du site |
+| `./lks.sh site-build <dossier>` | reconstruit le site vitrine |
 | `./lks.sh stop` / `start` / `restart` | arrêter / démarrer / redémarrer |
 
 **Après chaque nouvelle version du launcher** qui annonce « relancez le script du serveur » :

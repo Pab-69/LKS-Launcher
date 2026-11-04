@@ -40,7 +40,11 @@ async function download(url, file) {
   for (const f of ['grenze-gotisch-latin-600-normal.woff2', 'barlow-condensed-latin-700-normal.woff2', 'barlow-latin-400-normal.woff2', 'barlow-latin-600-normal.woff2']) {
     fs.copyFileSync(path.join(root, 'src', 'renderer', 'fonts', f), path.join(out, 'fonts', f));
   }
-  fs.copyFileSync(path.join(root, 'site', 'style.css'), path.join(out, 'style.css'));
+  for (const f of ['style.css', 'site.js', 'classement.js', 'admin.js']) fs.copyFileSync(path.join(root, 'site', f), path.join(out, f));
+  // the championship code of the launcher, for the site's standings (same results everywhere)
+  const mods = { './championship': 'championship.js', './judging': 'judging.js', './rounds': 'rounds.js' };
+  const bundle = Object.entries(mods).map(([name, file]) => `defs[${JSON.stringify(name)}] = function (module, exports, require) {\n${fs.readFileSync(path.join(root, 'src', 'main', 'telemetry', file), 'utf8')}\n};`).join('\n');
+  fs.writeFileSync(path.join(out, 'lks-shared.js'), `/* Code des championnats du launcher LKS (GPL-3.0) */\n(function () {\nvar defs = {}, cache = {};\nfunction req(n) { if (!cache[n]) { var m = { exports: {} }; cache[n] = m; defs[n](m, m.exports, req); } return cache[n].exports; }\n${bundle}\nwindow.LKSChamp = req('./championship');\nwindow.LKSRounds = req('./rounds');\n})();\n`);
 
   let manifest = {};
   try {
@@ -71,6 +75,10 @@ async function download(url, file) {
   const donateLinks = ((manifest.donate && manifest.donate.links) || []).filter((l) => safeHttps(l.url));
   const shop = manifest.shop && manifest.shop.open && safeHttps(manifest.shop.url);
   const news = (manifest.news || []).slice(0, 3);
+  // the group's server: live soirées, news, rankings and the admin page
+  const local = /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(process.env.LKS_SERVER_URL || '') ? process.env.LKS_SERVER_URL : null; // tests on one PC
+  const server = safeHttps(process.env.LKS_SERVER_URL) || local || (manifest.leaderboard && safeHttps(manifest.leaderboard.url)) || '';
+  fs.writeFileSync(path.join(out, 'config.js'), `window.LKS_SERVER = ${JSON.stringify(server.replace(/\/$/, ''))};\n`);
 
   const vars = {
     REPO: repo,
@@ -82,21 +90,24 @@ async function download(url, file) {
     HERO_BG: showcase[0] ? `<img class="hero-bg" src="${esc(brand[showcase[0].image])}" alt="" />` : '',
     LOGO_WIDE: brand['logo-wide.png'] ? '<img src="brand/logo-wide.png" alt="Lowkey Syndicate" />' : '<strong>Lowkey Syndicate</strong>',
     LOGO: brand['logo.png'] ? '<img class="logo" src="brand/logo.png" alt="Lowkey Syndicate" />' : '',
-    NAV_LINKS: [showcase.length ? '<a href="#garage">Garage</a>' : '', news.length ? '<a href="#actus">Actus</a>' : '', discordUrl ? `<a href="${esc(discordUrl)}">Discord</a>` : ''].join(''),
+    NAV_LINKS: [showcase.length ? '<a href="#garage">Garage</a>' : '', '<a href="#soirees" data-live hidden>Soirées</a>', news.length ? '<a href="#actus">Actus</a>' : '<a href="#actus" data-live hidden>Actus</a>', server ? '<a href="classement.html">Classements</a>' : '', discordUrl ? `<a href="${esc(discordUrl)}">Discord</a>` : ''].join(''),
+    ADMIN_LINK: server ? ' · <a href="admin.html">admin</a>' : '',
     DISCORD_BUTTON: discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Rejoindre le Discord</a>` : '',
     GARAGE: showcase.length
       ? `<section id="garage"><h2>Le Garage</h2><div class="garage">${showcase.map((s) => `<div class="car"><img src="${esc(brand[s.image])}" alt="${esc(s.title)}" style="object-position:${esc(s.position || 'center')}" loading="lazy" /><div><strong>${esc(s.title)}</strong><span>${esc(s.subtitle)}</span></div></div>`).join('')}</div></section>`
       : '',
     NEWS: news.length
-      ? `<section id="actus" class="news"><h2>Actus</h2>${news.map((n) => `<article><time>${esc(new Date(n.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))}</time><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p></article>`).join('')}</section>`
-      : '',
+      ? `<section id="actus" class="news" data-news><h2>Actus</h2>${news.map((n) => `<article><time>${esc(new Date(n.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }))}</time><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p></article>`).join('')}</section>`
+      : '<section id="actus" class="news" data-news hidden><h2>Actus</h2></section>',
     SUPPORT: donateLinks.length || shop || discordUrl
       ? `<section><h2>Soutenir</h2><div class="support">${donateLinks.map((l) => `<a class="btn" href="${esc(l.url)}">${esc(l.label || 'Faire un don')}</a>`).join('')}${shop ? `<a class="btn" href="${esc(shop)}">Boutique</a>` : ''}${discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Discord</a>` : ''}</div></section>`
       : '',
   };
-  let html = fs.readFileSync(path.join(root, 'site', 'index.html'), 'utf8');
-  html = html.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
-  fs.writeFileSync(path.join(out, 'index.html'), html);
+  for (const page of ['index.html', 'classement.html', 'admin.html']) {
+    let html = fs.readFileSync(path.join(root, 'site', page), 'utf8');
+    html = html.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
+    fs.writeFileSync(path.join(out, page), html);
+  }
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
   console.log(`Site généré dans ${out} : version ${version || '?'}, ${Object.keys(brand).length} visuel(s), ${showcase.length} voiture(s), ${news.length} actu(s)`);
 })().catch((err) => {
