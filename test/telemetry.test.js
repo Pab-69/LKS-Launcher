@@ -82,6 +82,33 @@ test('recorder: complete laps only, validity, drift score, live delta', () => {
   assert.strictEqual(timeAt([[0, 0], [0.5, 1000], [1, 3000]], 0.75), 2000);
 });
 
+test('recorder: track without an AI line (lap position frozen, e.g. Calmont)', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 5 });
+  const r = new TelemetryRecorder();
+  const laps = [];
+  r.on('lap', (l) => laps.push(l));
+  let flagged = 0;
+  r.on('noSpline', () => flagged++);
+  const freeze = (f) => { f.graphics.normalizedCarPosition = 0; };
+  for (let i = 0; i < 700; i++) sim.step(16); // starts mid-lap: that first part is not a lap
+  run(r, sim, 4200, freeze);
+  assert.strictEqual(flagged, 1);
+  assert.strictEqual(laps.length, 2, 'out-lap ignored, then whole laps');
+  for (const l of laps) {
+    assert.ok(l.samples.length > 500);
+    assert.strictEqual(l.samples[0][0], 0);
+    assert.strictEqual(l.samples[l.samples.length - 1][0], 1);
+    assert.ok(l.samples.every((row, i) => i === 0 || row[0] >= l.samples[i - 1][0]), 'distance only goes forward');
+    assert.ok(l.lapMs > 15000);
+  }
+  // the next lap has a live position and delta against the previous one
+  r.setReference(laps[0]);
+  run(r, sim, 300, freeze);
+  assert.ok(r.live.noSpline);
+  assert.ok(r.live.d > 0 && r.live.d < 1);
+  assert.strictEqual(typeof r.live.delta, 'number');
+});
+
 test('drift judging: angle, speed, line, clips and penalties (not the clock)', () => {
   const sim = new Simulator({ lapMs: 20000, seed: 4 });
   const r = new TelemetryRecorder({ getDriver: () => ({ name: 'Pab', steamId: '1' }) });
@@ -375,6 +402,12 @@ test('tandem runs from the in-game app are imported and judged', async () => {
   assert.strictEqual(lap.samples[0].length, 14);
   assert.strictEqual(lap.tandem.leadSamples.length, 400);
   assert.throws(() => runToLap({ v: 1, track: '../x', car: 'c', rows }), /invalide/);
+  // track without an AI line: d frozen, progress from the metres driven
+  const frozen = rows.map((r, k) => [...r.slice(0, 1), 0, ...r.slice(2), k * 0.67]);
+  const lapNoAi = runToLap({ ...run, rows: frozen }, { name: 'Pab' });
+  assert.strictEqual(lapNoAi.samples[0][0], 0);
+  assert.strictEqual(lapNoAi.samples[399][0], 1);
+  assert.ok(Math.abs(lapNoAi.samples[200][0] - 200 / 399) < 0.001);
 
   const dir = tmp();
   fs.writeFileSync(path.join(dir, 'a.json'), JSON.stringify(run));

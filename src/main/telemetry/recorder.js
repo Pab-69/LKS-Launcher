@@ -5,6 +5,10 @@
  *  - samples the lap by distance (speed, pedals, gear, rpm, steering, drift angle, x/z)
  *  - detects complete laps, validity (cuts, pit lane) and drift metrics
  *  - computes the live delta against a reference lap
+ *
+ * Tracks without an AI line (no ai/fast_lane.ai, e.g. some drift tracks) give
+ * no lap position: it stays still. The recorder then measures the distance
+ * driven since the line and spreads the lap over 0..1 when it ends.
  */
 
 const { EventEmitter } = require('events');
@@ -53,6 +57,10 @@ class TelemetryRecorder extends EventEmitter {
     this.reference = null; // { lapMs, samples }
     this.live = null;
     this.lastFrameAt = 0;
+    this.noSpline = false; // the track has no AI line: lap position from the distance driven
+    this.lapLength = 0; // metres of the last lap, in that case
+    this.stuckSince = 0;
+    this.prevD = null;
   }
 
   setReference(lap) {
@@ -64,9 +72,9 @@ class TelemetryRecorder extends EventEmitter {
     return { car: st.carModel, track: st.track, layout: st.trackConfiguration || '' };
   }
 
-  newLap(g, now) {
+  newLap(g, now, fromLine = false) {
     const course = this.combo ? this.getCourse(this.combo) : null;
-    this.lap = { completedLaps: g.completedLaps, samples: [], cutFrames: 0, pit: false, maxAngle: 0, topSpeed: 0, startedAt: now, lastSampleAt: 0, course, clips: new LiveClips(course) };
+    this.lap = { completedLaps: g.completedLaps, fromLine, meters: 0, marks: [], lastXZ: null, samples: [], cutFrames: 0, pit: false, maxAngle: 0, topSpeed: 0, startedAt: now, lastSampleAt: 0, course, clips: new LiveClips(course) };
   }
 
   /** frame = { physics, graphics, static } (parsed), now = ms timestamp */
@@ -77,24 +85,51 @@ class TelemetryRecorder extends EventEmitter {
     if (!this.combo || this.combo.key !== comboKey) {
       this.combo = { ...combo, key: comboKey };
       this.lap = null;
+      this.noSpline = false;
+      this.lapLength = 0;
+      this.stuckSince = 0;
+      this.prevD = null;
       this.emit('combo', combo);
     }
     this.lastFrameAt = now;
     const slip = slipAngle(p);
     const angle = Math.abs(slip);
-    const d = g.normalizedCarPosition;
+    let d = g.normalizedCarPosition;
 
     if (g.status === STATUS_LIVE) {
       if (!this.lap) this.newLap(g, now);
       else if (g.completedLaps !== this.lap.completedLaps) {
         this.finishLap(g, st);
-        this.newLap(g, now);
+        this.newLap(g, now, true);
       }
       const lap = this.lap;
+      const x = g.carCoordinates[0];
+      const z = g.carCoordinates[2];
+      if (lap.lastXZ) {
+        const step = Math.hypot(x - lap.lastXZ[0], z - lap.lastXZ[1]);
+        if (step < 30) lap.meters += step; // a bigger jump is a teleport (back to the pits)
+      }
+      lap.lastXZ = [x, z];
+      // lap position frozen while driving: no AI line on this track
+      if (!this.noSpline && p.speedKmh > 30) {
+        if (d !== this.prevD) this.stuckSince = now;
+        else if (now - this.stuckSince > 2000) {
+          this.noSpline = true;
+          this.emit('noSpline', combo);
+        }
+      }
+      this.prevD = d;
+      // no AI line: rows keep the metres driven until the lap ends (spread over 0..1 then)
+      if (this.noSpline) d = this.lapLength ? Math.min(1, lap.meters / this.lapLength) : null;
       const last = lap.samples[lap.samples.length - 1];
+      const lastMark = lap.marks[lap.marks.length - 1];
       // sample by distance (or time when stopped), never backwards
-      if (!last || (d > last[0] && (d - last[0] >= 0.0005 || now - lap.lastSampleAt >= 100))) {
-        lap.samples.push([round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1), p.numberOfTyresOut, round(slip, 1)]);
+      const ahead = last && (this.noSpline
+        ? lap.meters > lastMark && (lap.meters - lastMark >= 0.5 || now - lap.lastSampleAt >= 100)
+        : d > last[0] && (d - last[0] >= 0.0005 || now - lap.lastSampleAt >= 100));
+      if (!last || ahead) {
+        lap.marks.push(lap.meters);
+        lap.samples.push([this.noSpline ? round(lap.meters / 100000, 6) : round(d, 5), g.iCurrentTime, round(p.speedKmh, 1), round(p.gas, 2), round(p.brake, 2), p.gear, p.rpms, round(p.steerAngle, 3), round(angle, 1), round(g.carCoordinates[0], 1), round(g.carCoordinates[2], 1), p.numberOfTyresOut, round(slip, 1)]);
         lap.lastSampleAt = now;
       }
       if (p.numberOfTyresOut > 2) lap.cutFrames++;
@@ -106,7 +141,7 @@ class TelemetryRecorder extends EventEmitter {
 
     // live state for the dashboard
     const ref = this.reference;
-    const delta = ref && g.status === STATUS_LIVE && g.iCurrentTime > 0 ? g.iCurrentTime - timeAt(ref.samples, d) : null;
+    const delta = ref && g.status === STATUS_LIVE && g.iCurrentTime > 0 && d !== null ? g.iCurrentTime - timeAt(ref.samples, d) : null;
     this.live = {
       status: g.status,
       session: SESSION_NAMES[g.session] || 'unknown',
@@ -131,6 +166,7 @@ class TelemetryRecorder extends EventEmitter {
       delta: delta === null || Number.isNaN(delta) ? null : Math.round(delta),
       refMs: ref ? ref.lapMs : null,
       d,
+      noSpline: this.noSpline,
       x: g.carCoordinates[0],
       z: g.carCoordinates[2],
       laps: g.completedLaps,
@@ -142,6 +178,13 @@ class TelemetryRecorder extends EventEmitter {
   finishLap(g, st) {
     const lap = this.lap;
     const s = lap.samples;
+    if (this.noSpline) {
+      // from the line to the line, spread over 0..1 by the distance driven
+      if (!lap.fromLine || lap.meters < 100 || s.length < 20 || !(g.iLastTime > 0)) return;
+      s.forEach((row, i) => { row[0] = round(lap.marks[i] / lap.meters, 5); });
+      s[s.length - 1][0] = 1;
+      this.lapLength = lap.meters;
+    }
     // a lap counts only if it was recorded from the line to the line
     if (s.length < 20 || s[0][0] > 0.03 || s[s.length - 1][0] < 0.97 || !(g.iLastTime > 0)) return;
     const driver = this.getDriver() || {};

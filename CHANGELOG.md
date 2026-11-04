@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.11.1
+
+- Télémétrie sur les circuits **sans ligne IA** (pas de `ai/fast_lane.ai`, comme Calmont) : les tours n'étaient jamais enregistrés, le jeu ne donnant pas la position sur le tour. Le launcher mesure maintenant la distance parcourue depuis la ligne : tours, notes de drift, classement et tandems fonctionnent. L'écart en direct apparaît à partir du deuxième tour dans le launcher ; l'appli en jeu ne l'affiche pas sur ces circuits.
+
 ## 1.11.0
 
 - **Parties visibles dans le launcher** : une partie lancée depuis Héberger apparaît dans **Serveurs** pour tous les membres (« Partie LKS », avec le nom de l'hôte), et se rejoint en un clic : le launcher essaie toutes les adresses de l'hôte (internet, VPN, réseau local) et prend celle qui répond. Elle disparaît de la liste à l'arrêt du serveur.

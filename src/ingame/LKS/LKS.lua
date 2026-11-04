@@ -10,6 +10,8 @@ local best = nil        -- temps (ms) par portion du meilleur tour de la session
 local bestTime = nil
 local current = {}
 local lastLapCount = -1
+-- circuit sans ligne IA (pas de ai/fast_lane.ai) : splinePosition ne bouge pas
+local splineOk, lastSpline = false, nil
 
 -- LuaJIT (CSP) a math.atan2 ; Lua 5.3+ utilise math.atan(y, x)
 local atan2 = math.atan2 or math.atan
@@ -59,7 +61,7 @@ end
 --   derrière toi -> tu es le leader (role "lead"), la run du chaser est
 --                  enregistrée aussi : avec les deux runs inversées, le
 --                  launcher juge la battle.
-local tandem = { other = nil, role = nil, rows = {}, frames = 0, withFrames = 0, lastT = -1, lastD = -1, saved = nil, lost = 0 }
+local tandem = { other = nil, role = nil, rows = {}, frames = 0, withFrames = 0, lastT = -1, lastD = -1, saved = nil, lost = 0, m = 0, lastM = -1, lastPos = nil, firstD = nil, splineMoved = false }
 
 local function num(v) return string.format('%.2f', tonumber(v) or 0) end
 local function jstr(v) return '"' .. tostring(v or ''):gsub('[%c"\\]', ' ') .. '"' end
@@ -121,6 +123,7 @@ end
 
 local function resetTandem()
   tandem.other, tandem.role, tandem.rows, tandem.frames, tandem.withFrames, tandem.lastT, tandem.lastD, tandem.lost = nil, nil, {}, 0, 0, -1, -1, 0
+  tandem.m, tandem.lastM, tandem.lastPos, tandem.firstD, tandem.splineMoved = 0, -1, nil, nil, false
 end
 
 local function updateTandem(me)
@@ -143,15 +146,24 @@ local function updateTandem(me)
   -- un échantillon toutes les 50 ms, toujours en avançant
   local t = me.lapTimeMs
   local d = safe(function() return c.splinePosition end, me.splinePosition)
-  if t - tandem.lastT >= 50 and d > tandem.lastD then
-    tandem.lastT, tandem.lastD = t, d
+  -- distance parcourue par le chaser : sert d'avancement sur les circuits sans ligne IA
+  local cp = c.position
+  if tandem.lastPos then
+    local step = math.sqrt((cp.x - tandem.lastPos[1]) ^ 2 + (cp.z - tandem.lastPos[2]) ^ 2)
+    if step < 30 then tandem.m = (tandem.m or 0) + step end
+  end
+  tandem.lastPos = { cp.x, cp.z }
+  if tandem.firstD == nil then tandem.firstD = d elseif d ~= tandem.firstD then tandem.splineMoved = true end
+  local ahead = (tandem.splineMoved and d > tandem.lastD) or (not tandem.splineMoved and tandem.m > tandem.lastM + 0.3)
+  if t - tandem.lastT >= 50 and ahead then
+    tandem.lastT, tandem.lastD, tandem.lastM = t, d, tandem.m
     local cw = safe(function() return me.collidedWith end, -1)
     local contact = (cw == tandem.other) and 1 or 0
     local rows = tandem.rows
     if #rows < 20000 then
       rows[#rows + 1] = { tostring(t), string.format('%.5f', d), num(c.position.x), num(c.position.z), num(c.speedKmh), num(slipAngle(c)),
         num(safe(function() return c.gas end, 0)), num(safe(function() return c.brake end, 0)), tostring(safe(function() return c.gear end, 0) + 1), tostring(safe(function() return c.wheelsOutside end, 0)),
-        num(l.position.x), num(l.position.z), num(slipAngle(l)), num(l.speedKmh), tostring(contact) }
+        num(l.position.x), num(l.position.z), num(slipAngle(l)), num(l.speedKmh), tostring(contact), num(tandem.m) }
     end
   end
   return gap
@@ -323,6 +335,9 @@ function script.update(dt)
   recordGhost(car)
   updateGhost(car, dt)
 
+  if car.speedKmh > 30 and lastSpline ~= nil and car.splinePosition ~= lastSpline then splineOk = true end
+  lastSpline = car.splinePosition
+  if not splineOk then state.delta = nil return end -- pas de ligne IA : pas d'écart en direct
   local bucket = math.floor(car.splinePosition * BUCKETS)
   if current[bucket] == nil then current[bucket] = car.lapTimeMs end
   state.delta = (best and best[bucket]) and (car.lapTimeMs - best[bucket]) / 1000 or nil

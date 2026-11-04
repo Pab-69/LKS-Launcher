@@ -7,7 +7,9 @@
  * (lap.tandem.leadSamples) and is judged as a chase.
  *
  * Row from the app: [t, d, x, z, speed, slip, gas, brake, gear, wheelsOut,
- *                    leadX, leadZ, leadSlip, leadSpeed, contact]
+ *                    leadX, leadZ, leadSlip, leadSpeed, contact, metres]
+ * On a track without an AI line, d stays still: the metres driven by the
+ * chaser (16th value, newer apps) give the progress instead.
  */
 
 const fs = require('fs');
@@ -22,7 +24,11 @@ function runToLap(run, driver = {}) {
   const rows = run.rows.filter((r) => Array.isArray(r) && r.length >= 15 && r.every((v) => Number.isFinite(Number(v)))).map((r) => r.map(Number));
   if (rows.length < 20) throw new Error('Run tandem trop courte');
   const t0 = rows[0][0];
-  const samples = rows.map((r) => [r[1], r[0] - t0, r[4], r[6], r[7], r[8], 0, 0, fold(r[5]), r[2], r[3], r[9], r[5], r[14]]);
+  const ds = rows.map((r) => r[1]);
+  const m0 = rows[0][15];
+  const mSpan = rows.every((r) => r.length >= 16) ? rows[rows.length - 1][15] - m0 : 0;
+  if (Math.max(...ds) - Math.min(...ds) < 0.005 && mSpan > 50) rows.forEach((r, i) => { ds[i] = Math.round(((r[15] - m0) / mSpan) * 1e5) / 1e5; });
+  const samples = rows.map((r, i) => [ds[i], r[0] - t0, r[4], r[6], r[7], r[8], 0, 0, fold(r[5]), r[2], r[3], r[9], r[5], r[14]]);
   const leadSamples = rows.map((r) => [r[10], r[11], fold(r[12]), r[13], r[12]]);
   const lapMs = Number(run.lapMs) > 0 ? Number(run.lapMs) : samples[samples.length - 1][1];
   return {
