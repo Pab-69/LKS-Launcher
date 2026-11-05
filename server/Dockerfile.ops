@@ -1,0 +1,5 @@
+# Ménage horaire + sauvegarde quotidienne + mise à jour du schéma à chaque démarrage (donc à chaque déploiement).
+FROM postgres:16-alpine
+COPY server/db/ops.sh /ops.sh
+COPY docs/leaderboard.sql /leaderboard.sql
+ENTRYPOINT ["/bin/sh", "/ops.sh"]

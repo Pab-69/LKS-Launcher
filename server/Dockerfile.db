@@ -1,0 +1,5 @@
+# Base PostgreSQL du serveur LKS : rôles et schéma installés au premier démarrage (base vide).
+# Sur une base existante, c'est le service « ops » qui applique le schéma à chaque déploiement.
+FROM postgres:16-alpine
+COPY server/db/00-roles.sh /docker-entrypoint-initdb.d/00-roles.sh
+COPY docs/leaderboard.sql /docker-entrypoint-initdb.d/10-leaderboard.sql

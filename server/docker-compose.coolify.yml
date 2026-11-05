@@ -1,0 +1,114 @@
+# Version Coolify du serveur LKS : images construites depuis ce dépôt, redéployées à chaque push sur main.
+# Application Coolify « Docker Compose », dépôt Pab-69/LKS-Launcher, dossier de base /server,
+# fichier docker-compose.coolify.yml. Le HTTPS et le routage sont gérés par Traefik (pas de Caddy ici).
+# Variables à définir dans Coolify : POSTGRES_PASSWORD, AUTHENTICATOR_PASSWORD, JWT_SECRET, ANON_KEY,
+# GITHUB_TOKEN, SITE_ORIGINS, et en option CONTENT_REPO, STORAGE_MAX_GB, BACKUP_DAYS.
+# Données gardées sur le serveur (jamais dans l'image) : /opt/lks-server/{data,backups,admins}.
+
+x-logs: &logs
+  restart: unless-stopped
+  logging:
+    driver: local
+    options: {max-size: 2m, max-file: '2'}
+
+x-node: &node
+  <<: *logs
+  image: lks-node:${SOURCE_COMMIT:-latest}
+  build: {context: .., dockerfile: server/Dockerfile.node}
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+
+services:
+  db:
+    <<: *logs
+    build: {context: .., dockerfile: server/Dockerfile.db}
+    container_name: db-lks
+    mem_limit: 192m
+    cpus: 0.5
+    command: >
+      postgres -c shared_buffers=24MB -c max_connections=20 -c work_mem=2MB
+      -c maintenance_work_mem=16MB -c effective_cache_size=96MB -c wal_buffers=1MB
+      -c max_wal_size=128MB -c min_wal_size=32MB -c autovacuum_max_workers=2
+      -c max_worker_processes=4 -c max_parallel_workers=0 -c max_parallel_workers_per_gather=0
+      -c log_min_messages=error
+    environment:
+      POSTGRES_DB: lks
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD}
+    volumes:
+      - /opt/lks-server/data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d lks']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  rest:
+    <<: *logs
+    image: postgrest/postgrest:v12.2.3
+    container_name: rest-lks
+    mem_limit: 64m
+    cpus: 0.5
+    depends_on: {db: {condition: service_healthy}}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/lks
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_MAX_ROWS: '1000'
+      PGRST_DB_POOL: '4'
+      PGRST_OPENAPI_MODE: disabled
+      PGRST_LOG_LEVEL: error
+    networks: [default, coolify]
+
+  storage:
+    <<: *node
+    container_name: storage-lks
+    command: ['node', 'storage.js']
+    mem_limit: 80m
+    cpus: 0.5
+    environment:
+      NODE_OPTIONS: --max-old-space-size=48
+      ANON_KEY: ${ANON_KEY}
+      DATA_DIR: /data
+      MAX_TOTAL_GB: ${STORAGE_MAX_GB:-20}
+    volumes:
+      - /opt/lks-server/data/storage:/data
+    networks: [default, coolify]
+
+  admin:
+    <<: *node
+    container_name: admin-lks
+    command: ['node', 'admin.js']
+    mem_limit: 64m
+    cpus: 0.25
+    environment:
+      NODE_OPTIONS: --max-old-space-size=40
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      CONTENT_REPO: ${CONTENT_REPO:-Pab-69/LKS-Launcher}
+      SITE_ORIGINS: ${SITE_ORIGINS:-}
+      ADMINS_FILE: /app/admins
+      TZ: Europe/Paris
+    volumes:
+      - /opt/lks-server/admins:/app/admins:ro
+    networks: [default, coolify]
+
+  ops:
+    <<: *logs
+    build: {context: .., dockerfile: server/Dockerfile.ops}
+    container_name: ops-lks
+    mem_limit: 32m
+    cpus: 0.2
+    depends_on: {db: {condition: service_healthy}}
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      KEEP_DAYS: ${BACKUP_DAYS:-7}
+    volumes:
+      - /opt/lks-server/backups:/backups
+
+networks:
+  coolify:
+    external: true
