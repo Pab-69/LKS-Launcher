@@ -561,7 +561,9 @@ export default function telemetryView(root, params = {}) {
       const next = { debutant: 'Amateur', amateur: 'Pro', pro: null }[catInfo.mine];
       body.append(h('div.panel.category-panel',
         h('div.row', h('div', h('div.label', 'Ta catégorie'), h('div.category-name', CAT_LABEL[catInfo.mine])),
-          h('div.grow.s', me && me.runs >= 3
+          h('div.grow.s', catInfo.serverOutdated
+            ? 'Le serveur du groupe n’est pas encore à jour : les catégories n’y existent pas, tout le monde est affiché Débutant. Un admin doit lancer « ./lks.sh update » sur le serveur (ou relancer le script SQL sur Supabase) : chaque pilote reçoit alors sa catégorie d’après ses notes déjà enregistrées.'
+            : me && me.runs >= 3
             ? `Moyenne de tes 5 meilleures notes (notées ${CAT_LABEL[catInfo.mine]}) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
             : `Il faut au moins 3 runs partagées pour être classé. Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
     }

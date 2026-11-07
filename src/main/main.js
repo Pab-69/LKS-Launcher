@@ -954,9 +954,11 @@ async function refreshCategories(force) {
   if (!c || (!force && Date.now() - categories.at < 300000)) return categories.map;
   try {
     const rows = await c.categories();
-    categories = { at: Date.now(), map: Object.fromEntries(rows.map((r) => [String(r.name).trim().toLowerCase(), r])) };
+    categories = { at: Date.now(), map: Object.fromEntries(rows.map((r) => [String(r.name).trim().toLowerCase(), r])), outdated: false };
   } catch (err) {
     categories.at = Date.now();
+    // the group's server has not been updated since the categories exist (1.19)
+    categories.outdated = /does not exist|42P01|404|not find|introuvable/i.test(err.message || '');
     applog.log('categories', err.message);
   }
   return categories.map;
@@ -2174,7 +2176,7 @@ function setupIpc() {
   });
   handle('telemetry:categories', async () => {
     const map = await refreshCategories(false);
-    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35 };
+    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35, serverOutdated: Boolean(categories.outdated) };
   });
   handle('telemetry:settings', async (patch) => {
     settings.update({ telemetry: patch || {} });

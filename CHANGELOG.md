@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.24.1
+
+- Télémétrie → Profil : si le serveur du groupe n'a pas encore la mise à jour des catégories, le launcher le dit (« un admin doit lancer ./lks.sh update ») au lieu d'afficher tout le monde Débutant sans explication.
+
 ## 1.24.0
 
 - **Plus personne ne disparaît du classement quand un parcours change.** Quand un admin modifie un clip ou une règle, les notes changent de version. Avant, le classement ne montrait que les pilotes ayant roulé depuis la modification. Maintenant :
