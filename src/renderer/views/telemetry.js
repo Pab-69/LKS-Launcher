@@ -19,6 +19,7 @@ let compare = { a: null, b: null };
 let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
 let compareMode = 'time';
 let judgeMode = 'normal'; // debutant | normal | pro
+let boardWho = 'cat'; // ranking: drivers of the chosen category, or everybody
 let editor = null; // drift course editor state
 let battleQuery = { track: '', layout: '' };
 let champIndex = 0;
@@ -801,14 +802,20 @@ export default function telemetryView(root, params = {}) {
     if (judged) body.append(courseNotice(info, boardQuery.kind));
     const meName = String(store.settings.driverName || '').trim().toLowerCase();
     let rows = remote
-      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: String(r.driver).trim().toLowerCase() === meName }))
+      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: String(r.driver).trim().toLowerCase() === meName, old: Boolean(r.old) }))
       : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.result ? l.result.score : 0, d: l.result, lead: l.tandem && l.tandem.lead, ghost: Boolean(l.ghost), date: l.date, me: l.driver.steamId === store.settings.steamId }));
     // drift and tandem: the drivers of the chosen category, judged like that category
     if (judged && remote && catInfo && Object.keys(catInfo.map || {}).length) {
       const want = catOfMode(judgeMode);
-      rows = rows.filter((r) => catOf(r.driver) === want);
-      body.append(h('p.hint', `Pilotes ${CAT_LABEL[want]} seulement, notés comme leur catégorie. La catégorie change toute seule avec tes meilleures notes.`));
+      const others = rows.filter((r) => catOf(r.driver) !== want).length;
+      if (boardWho === 'cat') rows = rows.filter((r) => catOf(r.driver) === want);
+      body.append(h('div.row.mt',
+        h('p.hint', { style: { margin: 0 } }, boardWho === 'cat'
+          ? `Pilotes ${CAT_LABEL[want]} seulement, notés comme leur catégorie.${others ? ` ${others} autre${others > 1 ? 's' : ''} pilote${others > 1 ? 's' : ''} dans d’autres catégories.` : ''}`
+          : `Tous les pilotes, notés comme la catégorie ${CAT_LABEL[want]}.`),
+        h('div.right', seg([['cat', 'Ma catégorie'], ['all', 'Tous']], boardWho, (v) => { boardWho = v; render(); }))));
     }
+    if (rows.some((r) => r.old)) body.append(h('p.hint', 'Certains records datent d’une ancienne version du parcours (un admin a changé un clip ou une règle) : ils sont affichés en dessous, en gris, jusqu’à ce que le pilote ouvre son launcher (ses runs sont re-notées et renvoyées) ou roule à nouveau.'));
     if (!rows.length) {
       body.append(h('div.empty.mt', h('strong', 'Personne pour l’instant'), boardQuery.kind === 'tandem' ? 'Installe l’appli en jeu (Outils) et suis un pote : ton chase est noté.' : judged ? 'Sois le premier à poser une run.' : 'Sois le premier à poser un temps.'));
       return;
@@ -819,9 +826,9 @@ export default function telemetryView(root, params = {}) {
       const value = judged ? `${r.score.toFixed(1)}` : lapTime(r.lapMs);
       const gap = i === 0 ? '' : judged ? `−${(top - r.score).toFixed(1)}` : `+${((r.lapMs - top) / 1000).toFixed(3)}`;
       const sub = [carName(r.car), r.lead ? `derrière ${r.lead.name}` : null].filter(Boolean).join(' · ');
-      list.append(h('div.list-row.board-row.clickable', { class: `clickable${r.me ? ' me' : ''}`, title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(r.id); } } },
+      list.append(h('div.list-row.board-row.clickable', { class: `clickable${r.me ? ' me' : ''}${r.old ? ' old' : ''}`, title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(r.id); } } },
         h('span.board-pos', `${i + 1}`),
-        h('div', h('div.t', r.driver), h('div.s', sub), judged && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
+        h('div', h('div.t', r.driver, catInfo && Object.keys(catInfo.map || {}).length ? h(`span.cat-chip.cat-${catOf(r.driver)}`, CAT_LABEL[catOf(r.driver)]) : null, r.old ? h('span.cat-chip.old', 'ancien parcours') : null), h('div.s', sub), judged && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
         h('strong.board-v', value, judged ? h('small', ' /100') : null),
         h('span.s', gap),
         h('div.row', h('span.s', dateFr(r.date)),

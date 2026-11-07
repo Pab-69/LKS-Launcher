@@ -55,13 +55,21 @@
         var catOf = res[1];
         // la version actuelle du parcours, une ligne par pilote (sa meilleure)
         list = (list || []).filter(function (r) { return kind === 'time' || r.rules.indexOf('@') < 0; });
+        var all = list;
         if (kind !== 'time') list = window.LKSRounds.latestVersion(list);
         list = window.LKSRounds.bestPerDriver(list);
+        // pilotes dont le record date d'une ancienne version du parcours : affichés après, en gris
+        if (kind !== 'time') {
+          var have = {};
+          list.forEach(function (r) { have[String(r.driver).trim().toLowerCase()] = true; });
+          window.LKSRounds.bestPerDriver(all.filter(function (r) { return !have[String(r.driver).trim().toLowerCase()]; }))
+            .forEach(function (r) { list.push(Object.assign({}, r, { old: true })); });
+        }
         if (kind !== 'time' && who === 'cat') list = list.filter(function (r) { return catOf(r.driver).category === CAT_OF_MODE[mode]; });
         var body = L.clear($('board').querySelector('tbody'));
         $('board-col').textContent = kind === 'time' ? 'Temps' : 'Note';
         list.slice(0, 100).forEach(function (r, i) {
-          body.appendChild(h('tr', { class: (i < 3 ? 'top' + (i + 1) + ' ' : '') + 'clickable', onclick: function (e) { if (e.target.tagName !== 'A') location.href = 'passage.html?id=' + r.id; } },
+          body.appendChild(h('tr', { class: (i < 3 && !r.old ? 'top' + (i + 1) + ' ' : '') + 'clickable' + (r.old ? ' old' : ''), title: r.old ? 'Record d’une ancienne version du parcours' : null, onclick: function (e) { if (e.target.tagName !== 'A') location.href = 'passage.html?id=' + r.id; } },
             h('td', String(i + 1)), h('td', h('a', { href: 'pilotes.html#p=' + encodeURIComponent(r.driver) }, r.driver), ' ', L.catBadge(catOf(r.driver).category)), h('td', L.carName(g, r.car)),
             h('td.num', kind === 'time' ? fmtMs(r.lap_ms) : Number(r.score).toFixed(1)),
             h('td.muted.col-date', new Date(r.created_at).toLocaleDateString('fr-FR'))));

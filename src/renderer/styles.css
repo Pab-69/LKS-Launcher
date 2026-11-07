@@ -750,3 +750,9 @@ select.input.board-select { width: auto; min-width: 240px; }
 .course-readout:empty { display: none; }
 .course-line-tools { display: grid; gap: 8px; margin-top: 10px; }
 .course-line-tools:empty { display: none; }
+
+.board-row.old { opacity: 0.55; }
+.cat-chip { display: inline-block; margin-left: 8px; padding: 0 6px; font: 700 10px var(--display); letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--line-2); color: var(--text-2); vertical-align: middle; }
+.cat-chip.cat-pro { background: var(--accent); border-color: var(--accent-2); color: #fff; }
+.cat-chip.cat-amateur { color: var(--text); }
+.cat-chip.old { border-style: dashed; color: var(--text-3); }

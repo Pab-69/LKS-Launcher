@@ -169,3 +169,4 @@ input[type="search"] { min-width: 240px; }
   .part { grid-template-columns: 90px minmax(0, 1fr) 60px; }
   input[type="search"] { min-width: 0; width: 100%; }
 }
+.board tr.old td { opacity: 0.5; }

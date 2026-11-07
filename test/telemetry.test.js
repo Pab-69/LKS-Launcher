@@ -725,3 +725,22 @@ test('road edges from the AI line (room on each side)', () => {
   assert.ok(Math.abs(Math.hypot(r.left[mid][0] - r.line[mid][0], r.left[mid][1] - r.line[mid][1]) - 4) < 0.05);
   assert.strictEqual(roadEdges(pts.map((p) => ({ ...p, sideLeft: 0, sideRight: 0 }))), null, 'old files without sides');
 });
+
+test('shared ranking: drivers with a record of an older course version stay, flagged old', async () => {
+  const { Leaderboard } = require('../src/main/telemetry/leaderboard');
+  const b = new Leaderboard({ url: 'https://x.test', anonKey: 'k', player: 'p-0123456789abcdef' });
+  const rows = [
+    { id: 1, driver: 'Pab', rules: 'new-normal', score: 82 },
+    { id: 2, driver: 'Vakew', rules: 'old-normal', score: 85 },
+    { id: 3, driver: 'Pab', rules: 'old-normal', score: 90 },
+    { id: 4, driver: 'Alex', rules: 'old-normal@r1', score: 99 },
+  ];
+  b.request = async (u) => {
+    const q = new URL(u, 'https://x.test').searchParams;
+    const rules = q.get('rules');
+    return rules.startsWith('eq.') ? rows.filter((r) => r.rules === rules.slice(3)) : rows.filter((r) => r.rules.endsWith('-normal'));
+  };
+  const list = await b.list({ track: 't', kind: 'drift', rules: 'new-normal', withOlder: true });
+  assert.deepStrictEqual(list.map((r) => [r.driver, Boolean(r.old)]), [['Pab', false], ['Vakew', true]]);
+  assert.strictEqual((await b.list({ track: 't', kind: 'drift', rules: 'new-normal' })).length, 1, 'rounds and championships: current version only');
+});

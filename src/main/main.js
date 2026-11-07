@@ -821,6 +821,7 @@ function applyDriftCourses() {
   driftSignature = sig;
   try {
     if (telemetry.rescoreAll()) send('telemetry:lap', null);
+    telemetry.syncAllBests().catch(() => {}); // records judged with the new course go to the shared ranking now
     if (acRoot()) ingame.writeCourses(acRoot(), allDriftCourses());
   } catch (err) {
     console.warn('[drift]', err.message);
@@ -2346,7 +2347,7 @@ function setupIpc() {
     const board = telemetry.board();
     if (!board) return { local, remote: null };
     try {
-      return { local, remote: await board.list(q) };
+      return { local, remote: await board.list({ ...q, withOlder: true }) };
     } catch (err) {
       return { local, remote: null, error: err.message };
     }

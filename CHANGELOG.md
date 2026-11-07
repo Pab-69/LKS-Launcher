@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.24.0
+
+- **Plus personne ne disparaît du classement quand un parcours change.** Quand un admin modifie un clip ou une règle, les notes changent de version. Avant, le classement ne montrait que les pilotes ayant roulé depuis la modification. Maintenant :
+  - les records d'avant restent affichés, en gris, avec la mention « ancien parcours » ;
+  - dès qu'un pilote ouvre son launcher, ses runs gardées sur son PC sont re-notées avec le nouveau parcours et renvoyées : il revient dans le classement normal, même sans rouler.
+  - Pareil sur le site.
+- **Classement : « Ma catégorie » ou « Tous »** : un bouton pour voir tous les pilotes, avec la catégorie de chacun à côté du nom.
+
 ## 1.23.0
 
 - **Launcher sécurisé : seuls les vrais admins voient et utilisent l'admin.** Avant, enregistrer n'importe quel texte comme token suffisait pour voir les pages admin (Parcours, Juge, création de championnats, Publication). Maintenant le launcher demande à GitHub si le token peut vraiment écrire sur le dépôt du groupe : sinon les pages admin restent cachées, et toute action admin est refusée par le launcher lui-même, même appelée en contournant l'interface. Un token d'un autre dépôt ne donne aucun droit. Réglages → Accès admin indique si l'accès est vérifié ou refusé, et pourquoi.

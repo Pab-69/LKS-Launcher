@@ -188,6 +188,22 @@ class TelemetryManager extends EventEmitter {
     }
   }
 
+  /**
+   * After the admins changed a course: the bests of this PC's driver, judged
+   * again, are sent for every car and track at once (not only when driving
+   * there), so the shared ranking never loses them.
+   */
+  async syncAllBests() {
+    const { steamId } = this.recorder.getDriver() || {};
+    const combos = new Map();
+    for (const l of this.store.index) {
+      if (l.imported || (l.driver.steamId || '') !== (steamId || '')) continue;
+      combos.set(`${l.car}|${l.track}|${l.layout || ''}`, { car: l.car, track: l.track, layout: l.layout || '' });
+    }
+    for (const combo of combos.values()) await this.syncBests(combo);
+    return combos.size;
+  }
+
   /** Modes in which this lap beats the driver's record (drift or tandem). */
   newRecords(lap, kind) {
     const out = [];
