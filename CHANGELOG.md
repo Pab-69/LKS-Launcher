@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.20.0
+
+- **Nouvelle appli en jeu (3.0), au style du launcher** : fond sombre, rouge LKS, peu de texte. En haut, quatre onglets : Run, Battle, Fantôme, réglages.
+  - **Run** : l'angle en grand avec une barre, le chrono de la run, l'écart avec le fantôme ou le leader, une pastille par clip (verte quand il est touché).
+  - **Note plus discrète** : après la run, la note et trois petites barres (angle, vitesse, ligne) pendant 25 s, puis une seule ligne « Dernière note ». Le détail des clips et des zones s'ouvre avec « Détails ». Ta catégorie s'affiche à côté du logo.
+- **Battle avec bouton « Prêt »** : après le défi accepté, chaque pilote se place sur la ligne de start et clique **Prêt**. Les feux partent seulement quand les deux sont prêts (pastilles « Toi » et l'adversaire). Si tu bouges après avoir cliqué, tu n'es plus prêt jusqu'à te replacer. Même chose avant la deuxième run (rôles inversés).
+- La carte de la battle reste en haut de l'appli tant qu'elle dure, quel que soit l'onglet.
+
 ## 1.19.0
 
 - **Vraies catégories : Débutant, Amateur, Pro.** Chaque pilote a sa catégorie, attribuée automatiquement selon ses notes (moyenne de ses 5 meilleures runs, au moins 3 runs) : 75 et plus → catégorie au-dessus, moins de 35 → catégorie en dessous. Un nouveau pilote commence Débutant.
