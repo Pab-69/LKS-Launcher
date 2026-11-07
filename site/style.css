@@ -118,3 +118,54 @@ button.btn { cursor: pointer; }
 .round-n { color: var(--accent-2); font: 700 15px 'Barlow Condensed', sans-serif; letter-spacing: 0.14em; }
 .season-label { margin: 18px 0 4px; color: var(--accent-2); }
 .season-pick { margin-bottom: 14px; max-width: 260px; }
+/* catégories, pilotes, passage, battles */
+.cat { display: inline-block; padding: 1px 8px; font: 700 12px 'Barlow Condensed', sans-serif; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--line); vertical-align: middle; color: var(--text-2); }
+.cat-pro { color: #fff; background: var(--accent); border-color: var(--accent-2); }
+.cat-amateur { color: var(--text); border-color: #3a2d33; background: #1e181c; }
+.cat-debutant { color: var(--text-2); }
+.board tr.clickable { cursor: pointer; }
+.board tr.clickable:hover td { background: #151114; }
+.board a { color: inherit; text-decoration: none; }
+.board a:hover { color: var(--accent-2); }
+.cat-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.cat-col h3 { margin: 0; }
+.pilot-list { display: grid; gap: 2px; }
+.pilot { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; color: var(--text); text-decoration: none; border-left: 2px solid transparent; }
+.pilot:hover { background: #151114; border-left-color: var(--accent); }
+.detail-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 8px; }
+.detail-head h2 { margin: 0 0 6px; }
+.detail-score { font: 700 64px/1 'Barlow Condensed', sans-serif; color: var(--accent-2); }
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.detail-left, .detail-right { display: grid; gap: 0; min-width: 0; }
+.card h3 { margin: 0; }
+.parts { gap: 10px; }
+.part { display: grid; grid-template-columns: 120px minmax(0, 1fr) 70px; gap: 10px; align-items: center; }
+.part strong { text-align: right; font-variant-numeric: tabular-nums; }
+.part-bar { height: 6px; background: var(--line); }
+.part-bar i { display: block; height: 100%; background: linear-gradient(90deg, #7a0817, var(--accent-2)); }
+.ok { color: #3fcf86; }
+.bad { color: var(--accent-2); }
+.warn { color: #e3a33a; }
+.map { display: block; width: 100%; background: #0a080a; border: 1px solid var(--line); }
+.curves { gap: 4px; }
+.chart-head { display: flex; justify-content: space-between; margin-top: 6px; }
+.chart-value { font-variant-numeric: tabular-nums; color: var(--text); }
+.chart canvas { display: block; width: 100%; background: #0a080a; }
+.battle-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.battle { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid #3a2d33; padding: 14px 16px; display: grid; gap: 8px; }
+.battle.won { border-left-color: #3fcf86; }
+.battle.lost { border-left-color: var(--accent); }
+.battle.omt { border-left-color: #e3a33a; }
+.battle-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.battle-scores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.battle-scores > div { display: grid; gap: 2px; padding: 8px; background: #0a080a; }
+.battle-scores > div strong { font: 700 26px 'Barlow Condensed', sans-serif; }
+.battle-scores > .win strong { color: #3fcf86; }
+.battle p { margin: 0; }
+input[type="search"] { min-width: 240px; }
+@media (max-width: 760px) {
+  .detail-layout { grid-template-columns: 1fr; }
+  .detail-score { font-size: 48px; }
+  .part { grid-template-columns: 90px minmax(0, 1fr) 60px; }
+  input[type="search"] { min-width: 0; width: 100%; }
+}

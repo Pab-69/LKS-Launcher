@@ -40,7 +40,7 @@ async function download(url, file) {
   for (const f of ['grenze-gotisch-latin-600-normal.woff2', 'barlow-condensed-latin-700-normal.woff2', 'barlow-latin-400-normal.woff2', 'barlow-latin-600-normal.woff2']) {
     fs.copyFileSync(path.join(root, 'src', 'renderer', 'fonts', f), path.join(out, 'fonts', f));
   }
-  for (const f of ['style.css', 'site.js', 'classement.js', 'admin.js']) fs.copyFileSync(path.join(root, 'site', f), path.join(out, f));
+  for (const f of ['style.css', 'site.js', 'classement.js', 'admin.js', 'charts.js', 'passage.js', 'pilotes.js']) fs.copyFileSync(path.join(root, 'site', f), path.join(out, f));
   // the championship code of the launcher, for the site's standings (same results everywhere)
   const mods = { './championship': 'championship.js', './judging': 'judging.js', './rounds': 'rounds.js' };
   const bundle = Object.entries(mods).map(([name, file]) => `defs[${JSON.stringify(name)}] = function (module, exports, require) {\n${fs.readFileSync(path.join(root, 'src', 'main', 'telemetry', file), 'utf8')}\n};`).join('\n');
@@ -90,7 +90,7 @@ async function download(url, file) {
     HERO_BG: showcase[0] ? `<img class="hero-bg" src="${esc(brand[showcase[0].image])}" alt="" />` : '',
     LOGO_WIDE: brand['logo-wide.png'] ? '<img src="brand/logo-wide.png" alt="Lowkey Syndicate" />' : '<strong>Lowkey Syndicate</strong>',
     LOGO: brand['logo.png'] ? '<img class="logo" src="brand/logo.png" alt="Lowkey Syndicate" />' : '',
-    NAV_LINKS: [showcase.length ? '<a href="#garage">Garage</a>' : '', '<a href="#soirees" data-live hidden>Soirées</a>', news.length ? '<a href="#actus">Actus</a>' : '<a href="#actus" data-live hidden>Actus</a>', server ? '<a href="classement.html">Classements</a>' : '', discordUrl ? `<a href="${esc(discordUrl)}">Discord</a>` : ''].join(''),
+    NAV_LINKS: [showcase.length ? '<a href="#garage">Garage</a>' : '', '<a href="#soirees" data-live hidden>Soirées</a>', news.length ? '<a href="#actus">Actus</a>' : '<a href="#actus" data-live hidden>Actus</a>', server ? '<a href="classement.html">Classements</a><a href="pilotes.html">Pilotes</a>' : '', discordUrl ? `<a href="${esc(discordUrl)}">Discord</a>` : ''].join(''),
     ADMIN_LINK: server ? ' · <a href="admin.html">admin</a>' : '',
     DISCORD_BUTTON: discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Rejoindre le Discord</a>` : '',
     GARAGE: showcase.length
@@ -103,7 +103,7 @@ async function download(url, file) {
       ? `<section><h2>Soutenir</h2><div class="support">${donateLinks.map((l) => `<a class="btn" href="${esc(l.url)}">${esc(l.label || 'Faire un don')}</a>`).join('')}${shop ? `<a class="btn" href="${esc(shop)}">Boutique</a>` : ''}${discordUrl ? `<a class="btn" href="${esc(discordUrl)}">Discord</a>` : ''}</div></section>`
       : '',
   };
-  for (const page of ['index.html', 'classement.html', 'admin.html']) {
+  for (const page of ['index.html', 'classement.html', 'admin.html', 'passage.html', 'pilotes.html']) {
     let html = fs.readFileSync(path.join(root, 'site', page), 'utf8');
     html = html.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in vars ? vars[k] : m));
     fs.writeFileSync(path.join(out, page), html);

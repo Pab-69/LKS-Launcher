@@ -77,7 +77,52 @@
     return c ? c.name : id;
   }
 
-  window.LKS = { SERVER: SERVER, h: h, clear: clear, dateFr: dateFr, getJson: getJson, group: group, trackName: trackName, carName: carName };
+  /** Lecture du serveur du groupe (PostgREST, clé publique, lecture seule). */
+  function db(g) {
+    if (!g.leaderboard) throw new Error('Le classement n’est pas encore activé par les admins');
+    var api = g.leaderboard.url.replace(/\/$/, '') + '/rest/v1/';
+    var key = { apikey: g.leaderboard.anonKey, Authorization: 'Bearer ' + g.leaderboard.anonKey };
+    return function (table, q) { return getJson(api + table + '?' + q, key); };
+  }
+
+  var CATEGORY = { debutant: 'Débutant', amateur: 'Amateur', pro: 'Pro' };
+  var catCache = null;
+  /** Catégorie de chaque pilote : fonction nom -> { category, avg, runs } (Débutant par défaut). */
+  function categories(g) {
+    if (!catCache) {
+      catCache = db(g)('lks_categories_list', 'select=name,category,avg,runs,updated_at').then(function (list) {
+        var map = {};
+        (list || []).forEach(function (r) { map[String(r.name).trim().toLowerCase()] = r; });
+        var of = function (name) { return map[String(name || '').trim().toLowerCase()] || { name: name, category: 'debutant', avg: null, runs: 0 }; };
+        of.all = list || [];
+        return of;
+      }).catch(function () {
+        var of = function (name) { return { name: name, category: 'debutant', avg: null, runs: 0 }; };
+        of.all = [];
+        return of;
+      });
+    }
+    return catCache;
+  }
+  function catBadge(category) {
+    return h('span.cat.cat-' + (CATEGORY[category] ? category : 'debutant'), CATEGORY[category] || 'Débutant');
+  }
+
+  /** Courbes d'un passage : base64 → gzip → JSON (même format que le launcher). */
+  function unpack(b64) {
+    if (!b64) return Promise.resolve({ samples: [] });
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (typeof DecompressionStream === 'undefined') return Promise.reject(new Error('Navigateur trop ancien pour afficher les courbes'));
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).text().then(function (text) {
+      var data = JSON.parse(text);
+      return Array.isArray(data) ? { samples: data } : { samples: data.s || [] };
+    });
+  }
+
+  window.LKS = { SERVER: SERVER, h: h, clear: clear, dateFr: dateFr, getJson: getJson, group: group, trackName: trackName, carName: carName, db: db, CATEGORY: CATEGORY, categories: categories, catBadge: catBadge, unpack: unpack };
 
   // ------------------------------------------------------------ page d'accueil
   var soirees = document.getElementById('soirees');

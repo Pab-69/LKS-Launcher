@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 1.21.0
+
+- **Site : page Pilotes** : tous les pilotes rangés par catégorie (Pro, Amateur, Débutant) avec leur moyenne, et une recherche. Clique un pilote : sa catégorie et ce qu'il faut pour monter, ses records par circuit, ses dernières runs (avec les runs à 0) et ses battles.
+- **Site : détail d'un passage** : clique une ligne d'un classement ou un record. La note détaillée (angle, vitesse, ligne et clips, pénalités), chaque clip avec sa couverture et sa note de zone, le tracé coloré selon l'angle, et les courbes (angle, vitesse, gaz, frein, volant, rapport). Survole une courbe : la valeur s'affiche et le point apparaît sur le tracé.
+- **Site : classements par catégorie** : chaque pilote a son badge de catégorie ; le choix « Pilotes » montre ceux de la catégorie choisie, ou tous.
+- **Site : battles** : les dernières battles du circuit choisi (scores lead / chase, vainqueur, one more time).
+- **Admins** : serveur du groupe → `./lks.sh update` puis `./lks.sh site-build` pour mettre le site à jour.
+
 ## 1.20.0
 
 - **Nouvelle appli en jeu (3.0), au style du launcher** : fond sombre, rouge LKS, peu de texte. En haut, quatre onglets : Run, Battle, Fantôme, réglages.
