@@ -1,8 +1,10 @@
 import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox, modal } from '../ui.js';
 import { store } from '../store.js';
 
-// state kept while switching tabs
-let tab = 'live';
+// state kept while switching tabs (one tab per section: Télémétrie / Compétition)
+const tabsBySection = { telemetry: 'live', competition: 'champ' };
+const COMPETITION_TABS = ['champ', 'battles', 'judge'];
+let detailId = null; // passage shown in « Détail »
 let compare = { a: null, b: null };
 let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
 let compareMode = 'time';
@@ -302,11 +304,24 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
 
 // ---------------------------------------------------------------- view
 export default function telemetryView(root, params = {}) {
-  if (params.tab) tab = params.tab;
+  // « Compétition » (championnats, battles, juge) is its own menu, with the same code
+  const section = params.section === 'competition' || COMPETITION_TABS.includes(params.tab) ? 'competition' : 'telemetry';
+  if (params.tab) tabsBySection[section] = params.tab;
+  if (params.lap) {
+    detailId = params.lap;
+    tabsBySection.telemetry = 'detail';
+  }
+  let tab = tabsBySection[section];
+  const setTab = (v) => {
+    tab = v;
+    tabsBySection[section] = v;
+  };
   const body = h('div');
   const tabsEl = h('div.toolbar');
   root.append(
-    h('div.view-head', h('div', h('h1', 'Télémétrie'), h('p', 'Tes tours, ton classement et la comparaison entre pilotes.'))),
+    section === 'competition'
+      ? h('div.view-head', h('div', h('h1', 'Compétition'), h('p', 'Championnats, saisons, manches et battles du groupe.')))
+      : h('div.view-head', h('div', h('h1', 'Télémétrie'), h('p', 'Tes passages en détail, les classements et la comparaison entre pilotes.'))),
     tabsEl,
     body,
   );
@@ -314,11 +329,25 @@ export default function telemetryView(root, params = {}) {
 
   function renderTabs() {
     clear(tabsEl);
-    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat'], ['profile', 'Profil']];
-    if (isAdmin()) tabs.push(['judge', 'Juge'], ['course', 'Parcours drift']);
-    tabs.push(['tools', 'Outils']);
-    if (!tabs.some(([k]) => k === tab)) tab = 'live';
-    tabsEl.append(seg(tabs, tab, (v) => { tab = v; render(); }));
+    let tabs;
+    if (section === 'competition') {
+      tabs = [['champ', 'Championnats'], ['battles', 'Battles']];
+      if (isAdmin()) tabs.push(['judge', 'Juge']);
+    } else {
+      tabs = [['live', 'En direct'], ['laps', 'Passages'], ['board', 'Classements'], ['compare', 'Comparer'], ['profile', 'Profil']];
+      if (tab === 'detail') tabs.splice(2, 0, ['detail', 'Détail']);
+      if (isAdmin()) tabs.push(['course', 'Parcours']);
+      tabs.push(['tools', 'Outils']);
+    }
+    if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]);
+    tabsEl.append(seg(tabs, tab, (v) => { setTab(v); render(); }));
+  }
+
+  /** Open a passage (local or from the shared leaderboard) with all its curves. */
+  function openDetail(id) {
+    detailId = id;
+    setTab('detail');
+    render();
   }
 
   function render() {
@@ -329,14 +358,14 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, detail: renderDetail, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
   async function renderLive() {
     const st = await guard(() => api.call('telemetry:status'));
     if (st && st.enabled === false) {
-      body.append(h('div.notice', h('span.grow', 'La télémétrie est désactivée.'), h('button.btn.btn-sm', { on: { click: () => { tab = 'tools'; render(); } } }, 'Réglages')));
+      body.append(h('div.notice', h('span.grow', 'La télémétrie est désactivée.'), h('button.btn.btn-sm', { on: { click: () => { setTab('tools'); render(); } } }, 'Réglages')));
       return;
     }
     if (st && st.error) body.append(h('div.notice', st.error));
@@ -356,9 +385,10 @@ export default function telemetryView(root, params = {}) {
         h('div.live-tile.wide', h('div.label', 'Pilotes autour'), (el.others = h('div.live-others')), (el.battle = h('div.hint.mt'))),
         h('div.live-tile.wide', h('div.label', 'Pneus (°C)'), (el.tyres = h('div.live-tyres')), h('div.hint.mt', (el.session = h('span', '—')))),
       ),
-      (el.mapWrap = h('div.panel.mt')),
     );
-    body.append(waiting, panel, h('div.row.mt', h('button.btn.btn-sm.btn-ghost.right', { on: { click: async () => {
+    el.mapWrap = h('div.panel.live-map', { hidden: true });
+    el.lastWrap = h('div.panel.mt.live-last', { hidden: true });
+    body.append(h('div.live-layout', h('div.live-left', waiting, panel, el.lastWrap), el.mapWrap), h('div.row.mt', h('button.btn.btn-sm.btn-ghost.right', { on: { click: async () => {
       const text = await guard(() => api.call('telemetry:diagnostic'));
       if (text) { await api.call('clipboard:write', text); toast('Diagnostic copié : colle-le à un admin', 'success'); }
     } } }, 'Copier le diagnostic')));
@@ -366,6 +396,7 @@ export default function telemetryView(root, params = {}) {
       const on = s && s.status === 2;
       waiting.hidden = on;
       panel.hidden = !on;
+      el.mapWrap.hidden = !on;
       if (!on) return;
       el.speed.textContent = Math.round(s.speed);
       el.gear.textContent = s.gear;
@@ -404,18 +435,40 @@ export default function telemetryView(root, params = {}) {
         const ref = laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || laps[0];
         if (ref || (course && course.refLine && course.refLine.length)) {
           const full = ref ? await api.call('telemetry:lap', ref.id) : null;
-          map = trackMap(full ? [full] : [], { height: 240, live: true, course });
+          map = trackMap(full ? [full] : [], { height: Math.max(420, Math.min(720, Math.round(window.innerHeight * 0.68))), live: true, course });
           el.mapWrap.append(h('h3', 'Carte'), map);
         } else el.mapWrap.append(h('p.muted', { style: { margin: 0 } }, 'La carte apparaît après ton premier tour complet.'));
       }
       if (map) map.redraw({ x: s.x, z: s.z, others: s.others || [] });
     };
+    // the last passage, with its detailed note
+    let lastKey = null;
+    const showLast = async () => {
+      const laps = (await api.call('telemetry:laps', {}).catch(() => [])) || [];
+      const s = st && st.live;
+      const pickFrom = s && s.track ? laps.filter((l) => l.track === s.track && (l.layout || '') === (s.layout || '')) : laps;
+      const last = [...(pickFrom.length ? pickFrom : laps)].sort((a, b) => Date.parse(b.date) - Date.parse(a.date))[0];
+      if (!last || (lastKey === last.id && el.lastWrap.childNodes.length)) return;
+      lastKey = last.id;
+      const lap = await api.call('telemetry:lap', last.id).catch(() => null);
+      if (!lap) return;
+      const tandem = Boolean(lap.tandem && lap.tandem.leadSamples);
+      const d = resultOf(lap, tandem ? 'tandem' : 'drift');
+      el.lastWrap.hidden = false;
+      clear(el.lastWrap).append(
+        h('div.row', h('h3', { style: { margin: 0 } }, `Dernier passage · ${dateFr(lap.date)}`), h('span.s', ` ${comboLabel(lap)}${tandem ? ` · derrière ${lap.tandem.lead.name}` : ''}`),
+          h('div.right.row', seg(MODES, judgeMode, (v) => { judgeMode = v; lastKey = null; showLast(); }), h('button.btn.btn-sm', { on: { click: () => openDetail(lap.id) } }, 'Toutes les courbes'))),
+        h('div.live-last-grid.mt-s', scorePanel(d, tandem), clipsPanelOf(tandem ? null : d)));
+    };
+    showLast();
+    const offLastLap = window.lks.on('telemetry:lap', () => showLast());
     update(st && st.live);
     const offLive = window.lks.on('telemetry:live', update);
     const offReset = window.lks.on('telemetry:reset', (r) => toast(r && r.why === 'pits' ? 'Retour aux stands : run remise à zéro' : 'Voiture replacée : run remise à zéro', 'info'));
     liveOff = () => {
       offLive();
       offReset();
+      offLastLap();
     };
   }
 
@@ -510,7 +563,7 @@ export default function telemetryView(root, params = {}) {
   async function renderLaps() {
     const laps = (await guard(() => api.call('telemetry:laps', {}))) || [];
     body.append(h('div.row.wrap',
-      h('p.muted', { style: { margin: 0 } }, `${laps.length} tour(s) enregistré(s). Choisis A et B pour les comparer.`),
+      h('p.muted', { style: { margin: 0 } }, `${laps.length} passage(s). Clique sur un passage pour tout voir, ou choisis A et B pour les comparer.`),
       h('div.right', seg(MODES, judgeMode, (v) => { judgeMode = v; render(); })),
       h('button.btn.btn-sm', { on: { click: async () => { const r = await guard(() => api.call('telemetry:import')); if (r && r.length) { toast(`${r.length} tour(s) importé(s)`, 'success'); render(); } } } }, icon('download'), 'Importer')));
     if (!laps.length) {
@@ -522,7 +575,7 @@ export default function telemetryView(root, params = {}) {
     for (const l of laps.slice(0, 300)) {
       const d = resultOf(l, 'drift');
       const t = l.tandem ? resultOf(l, 'tandem') : null;
-      list.append(h('div.list-row.lap-row',
+      list.append(h('div.list-row.lap-row.clickable', { title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(l.id); } } },
         h('span.s', dateFr(l.date)),
         h('div', h('div.t', `${l.driver.name}${l.imported ? ' (importé)' : ''}`), h('div.s', comboLabel(l))),
         h('div', h('strong', lapTime(l.lapMs)), ' ', l.valid ? null : h('span.tag.warn', 'invalide')),
@@ -530,7 +583,7 @@ export default function telemetryView(root, params = {}) {
           ? h('div', h('strong', note(t, '—')), h('div.s', `Tandem derrière ${l.tandem.lead.name}`))
           : h('div', h('strong', note(d)), h('div.s', d && d.zeroed ? `Run à 0 : ${d.zeroed}` : d && d.score > 0 ? `${Math.round(d.avgAngle)}° moy. · ${Math.round(d.maxAngle)}° max` : '')),
         h('div.row',
-          l.tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(l.id) } }, 'Voir') : null,
+          h('button.btn.btn-sm', { on: { click: () => openDetail(l.id) } }, 'Détail'),
           l.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce tour en fantôme', on: { click: () => useGhost(l.id) } }, 'Fantôme') : null,
           h('button.btn.btn-sm', { title: 'Tour A', on: { click: () => pick('a', l.id) } }, 'A'),
           h('button.btn.btn-sm', { title: 'Tour B', on: { click: () => pick('b', l.id) } }, 'B'),
@@ -540,6 +593,105 @@ export default function telemetryView(root, params = {}) {
     body.append(list);
   }
 
+  // ------------------------------------------------------------ one passage, in detail
+  /** Note of one passage, bar by bar (drift or tandem). */
+  function scorePanel(d, tandem) {
+    const panel = h('div.panel.judge', h('h3', `Note · ${MODE_LABEL[judgeMode]}`));
+    if (!d) {
+      panel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de note pour ce passage.'));
+      return panel;
+    }
+    const row = (label, v, max) => panel.append(h('div.judge-row',
+      h('span.label', label),
+      h('div.judge-bars', h('div.judge-bar.a', h('i', { style: { width: `${max ? Math.max(0, Math.min(100, ((v || 0) / max) * 100)) : 0}%` } }), h('b', v == null ? '—' : String(Math.round(v * 10) / 10)))),
+      h('span.s', max ? `/ ${max}` : '')));
+    if (tandem) {
+      row('Proximité', d.proximity, 35);
+      row('Angle copié', d.angleMatch, 25);
+      row('Ligne du leader', d.line, 20);
+      row('Drift', d.drift, 20);
+    } else {
+      row('Angle', d.angle, 35);
+      row('Vitesse', d.speed, 30);
+      if (d.line != null) row('Ligne et clips', d.line, 35);
+    }
+    if (d.penalty) row('Pénalités', -d.penalty, 0);
+    row('Note', d.score, 100);
+    if (d.zeroed) panel.append(h('div.notice.mt', `Run à 0 : ${d.zeroed}`));
+    return panel;
+  }
+
+  function clipsPanelOf(d) {
+    const panel = h('div.panel', h('h3', 'Clips et zones'));
+    const clips = (d && d.clips) || [];
+    if (!clips.length) panel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de clips sur ce circuit.'));
+    else {
+      const zoneOf = (name) => (d.zones || []).find((z) => z.name === name);
+      panel.append(h('div.clip-table.detail',
+        h('span.label', 'Clip'), h('span.label', 'Résultat'), h('span.label', 'Zone'),
+        ...clips.flatMap((c, i) => {
+          const z = zoneOf(c.name);
+          const what = c.cover !== undefined ? `${c.cover} % parcouru` : c.dist == null ? '' : `${c.dist} m`;
+          return [h('span', `${i + 1}. ${c.name}`), h('span', h(`span.clip-chip${c.hit ? '.hit' : ''}`, c.hit ? '✓' : '✗'), ` ${what}`), h('strong', z ? `${z.score}/100` : '—')];
+        })));
+    }
+    const pens = ((d && d.penalties) || []).map((p) => `${p.label} ${p.zero ? '(run à 0)' : `(−${p.points})`} à ${Math.round((p.d || 0) * 100)} %`);
+    panel.append(h('div.label.mt', 'Pénalités'), h('p.s', { style: { margin: '4px 0 0' } }, pens.length ? pens.join(' · ') : 'Aucune.'));
+    return panel;
+  }
+
+  async function renderDetail() {
+    const lap = detailId ? await guard(() => api.call('telemetry:lap', detailId)) : null;
+    if (!lap) {
+      body.append(h('div.empty', h('strong', 'Passage introuvable'), 'Choisis un passage dans « Passages » ou « Classements ».'));
+      return;
+    }
+    const course = await getCourse(lap.track, lap.layout);
+    const tandem = Boolean(lap.tandem && lap.tandem.leadSamples);
+    const d = resultOf(lap, tandem ? 'tandem' : 'drift');
+    const judged = Boolean(course || tandem || (d && d.score > 0));
+    body.append(h('div.toolbar',
+      h('button.btn.btn-sm.btn-ghost', { on: { click: () => { setTab('laps'); render(); } } }, '← Passages'),
+      judged ? seg(MODES, judgeMode, (v) => { judgeMode = v; render(); }) : null,
+      h('div.right.row',
+        lap.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce passage en fantôme', on: { click: () => useGhost(lap.id) } }, 'Fantôme') : null,
+        tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(lap.id) } }, 'Avec le leader') : null,
+        h('button.btn.btn-sm', { on: { click: () => pick('a', lap.id) } }, 'Comparer (A)'),
+        h('button.btn.btn-sm', { on: { click: () => pick('b', lap.id) } }, 'Comparer (B)'))));
+    const ang = lap.samples.map((x) => Math.min(90, x[COL.angle]));
+    const avgAngle = Math.round(ang.reduce((p, v) => p + v, 0) / (ang.length || 1));
+    body.append(h('div.detail-head.panel',
+      h('div.detail-score', judged && d ? [h('strong', d.score > 0 ? d.score.toFixed(1) : '0'), h('small', ' /100')] : h('strong', lapTime(lap.lapMs))),
+      h('div.grow',
+        h('div.t', `${lap.driver.name}${tandem ? ` · chase derrière ${lap.tandem.lead.name}` : ''}`),
+        h('div.s', `${comboLabel(lap)} · ${dateFr(lap.date)}`),
+        h('div.s', [judged ? `Temps ${lapTime(lap.lapMs)}` : null, `${Math.round(lap.topSpeed || 0)} km/h max`, `${avgAngle}° moy. · ${Math.round(Math.max(0, ...ang))}° max`, lap.valid === false ? 'invalide' : null].filter(Boolean).join(' · ')))));
+    if (judged) body.append(h('div.grid.grid-2.mt', scorePanel(d, tandem), clipsPanelOf(tandem ? null : d)));
+    const pts = (col, f = (v) => v) => lap.samples.map((x) => [x[COL.d], f(x[col])]);
+    const at = (col, unit = '', digits = 0, f = (v) => v) => (dd) => {
+      const v = valueAt(lap.samples, dd, col);
+      return v == null ? '' : `${Number(f(v)).toFixed(digits)}${unit}`;
+    };
+    const one = (name, col, unit, digits, f) => [{ name, color: COLORS.a, points: pts(col, f), at: at(col, unit, digits, f) }];
+    const maxSpeed = Math.max(20, ...lap.samples.map((x) => x[COL.speed]));
+    const steerMax = Math.max(0.1, ...lap.samples.map((x) => Math.abs(x[COL.steer] || 0)));
+    const curves = [
+      chart({ label: 'Angle (°)', height: 130, yMin: 0, yMax: Math.ceil(Math.max(10, ...ang) / 10) * 10, series: one('', COL.angle, '°', 0, (v) => Math.min(90, v)) }),
+      chart({ label: 'Vitesse (km/h)', height: 120, yMin: 0, yMax: Math.ceil(maxSpeed / 20) * 20, series: one('', COL.speed, ' km/h') }),
+      chart({ label: 'Gaz', height: 70, yMin: 0, yMax: 1, series: one('', COL.gas, '', 2) }),
+      chart({ label: 'Frein', height: 70, yMin: 0, yMax: 1, series: one('', COL.brake, '', 2) }),
+      chart({ label: 'Volant', height: 80, yMin: -steerMax, yMax: steerMax, zero: true, series: one('', COL.steer, '', 2) }),
+      chart({ label: 'Rapport', height: 60, yMin: 0, yMax: 8, series: [{ name: '', color: COLORS.a, points: pts(COL.gear, (g) => g - 1), at: (dd) => String((valueAt(lap.samples, dd, COL.gear) || 1) - 1) }] }),
+    ];
+    if (tandem) {
+      const gap = lap.samples.map((x, i) => { const l = lap.tandem.leadSamples[i]; return [x[0], l ? Math.hypot(x[COL.x] - l[0], x[COL.z] - l[1]) : 0]; });
+      curves.unshift(chart({ label: 'Écart avec le leader (m)', height: 110, yMin: 0, yMax: Math.ceil(Math.max(10, ...gap.map((g) => g[1])) / 5) * 5, series: [{ name: '', color: '#e3a33a', points: gap, at: (dd) => { const g = gap.find((x) => x[0] >= dd) || gap[gap.length - 1]; return `${g[1].toFixed(1)} m`; } }] }));
+    }
+    body.append(
+      h('p.hint.mt', 'Survole une courbe : le point correspondant s’affiche sur la carte.'),
+      h('div.cmp-layout.detail', h('div.cmp-charts', ...curves), h('div.panel.cmp-map', h('h3', 'Carte'), trackMap([lap], { height: 420, course }))));
+  }
+
   async function pick(slot, id) {
     const lap = await guard(() => api.call('telemetry:lap', id));
     if (!lap) return;
@@ -547,7 +699,7 @@ export default function telemetryView(root, params = {}) {
     if (compareMode === 'tandem') compareMode = 'drift';
     toast(`Tour ${slot.toUpperCase()} : ${lap.driver.name}`, 'info');
     if (compare.a && compare.b) {
-      tab = 'compare';
+      setTab('compare');
       render();
     }
   }
@@ -562,7 +714,7 @@ export default function telemetryView(root, params = {}) {
     if (!lap || !lap.tandem) return;
     compare = { a: lap, b: leadLap(lap) };
     compareMode = 'tandem';
-    tab = 'compare';
+    setTab('compare');
     render();
   }
 
@@ -584,7 +736,7 @@ export default function telemetryView(root, params = {}) {
     else parts.push('Pas de clips sur ce circuit : seuls l’angle et la vitesse comptent.');
     return h('div.notice.info.mt-s',
       h('span.grow', parts.join(' ')),
-      isAdmin() ? h('button.btn.btn-sm', { on: { click: () => { editor = null; tab = 'course'; render(); } } }, course && info.source === 'published' ? 'Modifier' : 'Placer les clips') : null);
+      isAdmin() ? h('button.btn.btn-sm', { on: { click: () => { editor = null; setTab('course'); render(); } } }, course && info.source === 'published' ? 'Modifier' : 'Placer les clips') : null);
   }
 
   async function renderBoard() {
@@ -624,7 +776,7 @@ export default function telemetryView(root, params = {}) {
       const value = judged ? `${r.score.toFixed(1)}` : lapTime(r.lapMs);
       const gap = i === 0 ? '' : judged ? `−${(top - r.score).toFixed(1)}` : `+${((r.lapMs - top) / 1000).toFixed(3)}`;
       const sub = [carName(r.car), r.lead ? `derrière ${r.lead.name}` : null].filter(Boolean).join(' · ');
-      list.append(h('div.list-row.board-row', { class: r.me ? 'me' : '' },
+      list.append(h('div.list-row.board-row.clickable', { class: `clickable${r.me ? ' me' : ''}`, title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(r.id); } } },
         h('span.board-pos', `${i + 1}`),
         h('div', h('div.t', r.driver), h('div.s', sub), judged && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
         h('strong.board-v', value, judged ? h('small', ' /100') : null),
@@ -645,7 +797,7 @@ export default function telemetryView(root, params = {}) {
       const [mine, theirs] = await Promise.all([guard(() => api.call('telemetry:lap', row.id)), guard(() => api.call('telemetry:lap', rival.id))]);
       if (!mine || !theirs) return;
       compare = { a: mine, b: theirs };
-      tab = 'compare';
+      setTab('compare');
       render();
       return;
     }
@@ -657,7 +809,7 @@ export default function telemetryView(root, params = {}) {
     mine.sort((a, b) => otherCar(a) - otherCar(b) || (drift ? resultOf(b).score - resultOf(a).score : a.lapMs - b.lapMs));
     compare = { a: mine[0] ? await api.call('telemetry:lap', mine[0].id) : null, b: other };
     if (!compare.a) toast('Tu n’as pas encore de tour sur ce circuit : choisis un tour A dans « Tours »', 'info', 6000);
-    tab = 'compare';
+    setTab('compare');
     render();
   }
 
@@ -1156,6 +1308,7 @@ export default function telemetryView(root, params = {}) {
       h('div.grid.grid-2',
         h('div.panel', h('h3', 'Réglages'),
           toggle('Enregistrer mes tours', st.enabled !== false, (v) => setT({ enabled: v })),
+          toggle('Garder tous mes passages', st.keepAll === true, (v) => setT({ keepAll: v }), 'Sinon, à la fermeture du jeu, seul ton meilleur passage par voiture et circuit reste (et les battles).'),
           toggle('Partager mes runs avec le groupe', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Ta note de chaque run (visible par les juges) et tes records (classement).' : 'Classement partagé pas encore configuré par les admins.')),
         h('div.panel', h('h3', 'Appli en jeu'),
           h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips sur la piste et écart pendant que tu roules. Boutons : « Feux » pour un vrai départ arrêté, « Fantôme » pour choisir qui suivre, « Battle » pour défier un pilote du serveur. Elle enregistre aussi tes tandems et montre les autres pilotes ici. Custom Shaders Patch requis.'),

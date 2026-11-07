@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.18.0
+
+- **Nouveau menu « Compétition »** : championnats (saisons, manches, tableaux), battles et juge ont leur propre page. La télémétrie garde : En direct, Passages, Classements, Comparer, Profil, Outils.
+- **Clique sur un passage** (dans Passages ou Classements) : toutes ses infos s'affichent avec les courbes (angle, vitesse, gaz, frein, volant, rapport, écart avec le leader en tandem), la note détaillée, chaque clip avec sa note de zone, les pénalités et la carte. Survole une courbe : le point s'affiche sur la carte.
+- **En direct** : grande carte à droite, et la note détaillée de ton dernier passage (barres, clips, zones, pénalités) avec un bouton vers toutes ses courbes.
+- **Fin de session** : à la fermeture du jeu, seul ton meilleur passage par voiture et circuit reste sur ton PC (meilleur temps et meilleure note dans chaque mode), plus les runs des battles. Désactivable : Télémétrie → Outils → « Garder tous mes passages ».
+
 ## 1.17.5
 
 - **Télémétrie en multi sur Calmont** (et tout circuit avec un tracé) : en ligne, le jeu donne le nom du tracé en minuscules (« calmont » au lieu de « Calmont »). Le launcher ne trouvait plus le parcours officiel : aucune run enregistrée, rien en direct, alors qu'en solo tout marchait. Le tracé est maintenant reconnu quelle que soit la casse, et les runs faites en ligne sont rangées avec celles du solo (mêmes records, même classement).

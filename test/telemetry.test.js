@@ -632,3 +632,22 @@ test('shared memory: copied into our own buffer, never viewed (Electron kills th
   game[0] = 0x5a;
   assert.strictEqual(out[0], 0x41, 'a copy, not a view');
 });
+
+test('end of session: only the best passages stay (and the battles)', () => {
+  const { LapStore } = require('../src/main/telemetry/store');
+  const store = new LapStore(tmp());
+  const mk = (id, driver, lapMs, score, extra = {}) => ({
+    version: 1, id, driver: { name: driver, steamId: driver }, car: 'c', track: 't', layout: 'l', session: 'practice', lapMs, valid: true,
+    topSpeed: 150, drift: { score, modes: { debutant: { score: score + 5 }, normal: { score }, pro: { score: score - 5 } } }, date: new Date(Date.now() - lapMs).toISOString(),
+    samples: Array.from({ length: 30 }, (_, i) => [i / 29, i * 100, 100, 1, 0, 4, 5000, 0, 10, i, i]), ...extra,
+  });
+  store.save(mk('lap-a1', 'pab', 61000, 70));
+  store.save(mk('lap-a2', 'pab', 60500, 60)); // best time
+  store.save(mk('lap-a3', 'pab', 62000, 80)); // best note
+  store.save(mk('lap-a4', 'pab', 63000, 50));
+  store.save(mk('lap-a5', 'pab', 64000, 40, { battleId: 'b1' })); // battle run
+  store.save(mk('lap-k1', 'kaze', 65000, 30)); // other driver: his best stays
+  const removed = store.purge();
+  assert.strictEqual(removed, 2);
+  assert.deepStrictEqual(store.list().map((l) => l.id).sort(), ['lap-a2', 'lap-a3', 'lap-a5', 'lap-k1']);
+});

@@ -274,6 +274,15 @@ class TelemetryManager extends EventEmitter {
     return n;
   }
 
+  /**
+   * End of a game session: once the in-game runs are imported and the battles
+   * judged, only the best passages stay on this PC (see LapStore.purge).
+   */
+  async purgeSession() {
+    await this.battleJobs;
+    return this.store.purge(new Set(this.pendingLaps || []));
+  }
+
   /** Two runs with the roles swapped = a battle. */
   async detectBattle(lap) {
     const candidates = this.store.list({ track: lap.track, layout: lap.layout || '' }).filter((l) => l.tandem);

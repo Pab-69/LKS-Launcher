@@ -709,3 +709,25 @@ select.input.board-select { width: auto; min-width: 240px; }
 .list-row.judge-run { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
 .judge-run .clip-chips { margin: 4px 0; flex-wrap: wrap; }
 .judge-score { font: 700 28px var(--display); }
+
+/* télémétrie : détail d'un passage */
+.list-row.clickable { cursor: pointer; }
+.list-row.clickable:hover { background: rgba(224, 27, 58, 0.06); }
+.detail-head { display: flex; gap: 20px; align-items: center; margin-top: 12px; }
+.detail-score strong { font: 700 44px/1 'Barlow Condensed', sans-serif; color: var(--text); }
+.detail-score small { color: var(--text-3, #6c615c); font-size: 15px; }
+.cmp-layout.detail { grid-template-columns: minmax(0, 1fr) minmax(340px, 44%); }
+.cmp-layout.detail .cmp-map { position: sticky; top: 10px; }
+.clip-table.detail { grid-template-columns: minmax(0, 1fr) auto auto; }
+.live-map canvas { width: 100%; }
+@media (max-width: 1100px) { .cmp-layout.detail { grid-template-columns: 1fr; } .cmp-layout.detail .cmp-map { position: static; } }
+
+/* en direct : infos et dernier passage à gauche, grande carte à droite */
+.live-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 46%); gap: 14px; align-items: start; }
+.live-layout .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.live-layout .live-map { position: sticky; top: 10px; }
+.live-layout .live-map[hidden] + * { grid-column: 1 / -1; }
+.live-left { min-width: 0; }
+.live-last-grid { display: grid; gap: 12px; }
+.live-last .row { flex-wrap: wrap; gap: 8px; }
+@media (max-width: 1150px) { .live-layout { grid-template-columns: 1fr; } .live-layout .live-map { position: static; } }

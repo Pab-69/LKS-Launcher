@@ -1354,6 +1354,21 @@ function setupGame() {
       win.focus();
     }
     refreshManifest({ autoSync: true }).catch(() => {});
+    // end of the session: only the best passages stay (after the last in-game runs are imported)
+    if (telemetry && settings.data.telemetry.keepAll !== true) {
+      setTimeout(async () => {
+        try {
+          await importTandemRuns();
+          const n = await telemetry.purgeSession();
+          if (n) {
+            applog.log('telemetry purge', { removed: n });
+            send('telemetry:lap', null);
+          }
+        } catch (err) {
+          console.warn('[purge]', err.message);
+        }
+      }, 120000);
+    }
   });
 }
 
