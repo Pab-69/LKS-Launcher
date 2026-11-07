@@ -41,7 +41,8 @@ const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
 const { Leaderboard } = require('./telemetry/leaderboard');
 const { courseVersion, referenceFrom, driftOf, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
-const { autoCourse } = require('./telemetry/ailine');
+const ailine = require('./telemetry/ailine');
+const { autoCourse } = ailine;
 const { bundledCourse, bundledCourses } = require('./telemetry/courses');
 const { hasGates } = require('./telemetry/geo');
 const { lineFromRuns } = require('./telemetry/reference');
@@ -820,6 +821,7 @@ function applyDriftCourses() {
   driftSignature = sig;
   try {
     if (telemetry.rescoreAll()) send('telemetry:lap', null);
+    telemetry.syncAllBests().catch(() => {}); // records judged with the new course go to the shared ranking now
     if (acRoot()) ingame.writeCourses(acRoot(), allDriftCourses());
   } catch (err) {
     console.warn('[drift]', err.message);
@@ -827,6 +829,14 @@ function applyDriftCourses() {
 }
 
 /** Keep only known rule fields with sane values (admins' custom rules). */
+/** Per-zone targets of a clip (for Amateur): angle 0-80°, speed 0-250 km/h. */
+function clipTarget(t) {
+  if (!t || typeof t !== 'object') return {};
+  const angle = Math.round(Math.min(80, Math.max(0, Number(t.angle) || 0)));
+  const speed = Math.round(Math.min(250, Math.max(0, Number(t.speed) || 0)));
+  return angle || speed ? { target: { angle, speed } } : {};
+}
+
 function cleanRules(rules) {
   const out = {};
   const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
@@ -858,6 +868,7 @@ async function importTandemRuns() {
   if (!telemetry || !acRoot() || settings.data.telemetry.enabled === false) return;
   const appDir = ingame.appDir(acRoot());
   try {
+    if (telemetry.attachMeasures(path.join(appDir, 'measures'))) send('telemetry:lap', null);
     if (telemetry.attachGhosts(path.join(appDir, 'ghosts'))) {
       send('telemetry:lap', null);
       if (telemetry.recorder.combo) refreshGhostLibrary(telemetry.recorder.combo, true).catch((err) => console.warn('[ghost]', err.message));
@@ -933,6 +944,31 @@ async function refreshGhostLibrary(combo, force = false) {
   ghosts.writeLibrary(appDir, picks);
 }
 
+// ---------------------------------------------------------------- driver categories (Débutant / Amateur / Pro)
+// Set by the group's server from each driver's best notes (docs/leaderboard.sql,
+// lks_update_category). Each category has its own judging (drift modes).
+const CATEGORY_MODE = { debutant: 'debutant', amateur: 'normal', pro: 'pro' };
+let categories = { at: 0, map: {} }; // driver name (lower case) -> { category, avg, runs }
+async function refreshCategories(force) {
+  const c = community();
+  if (!c || (!force && Date.now() - categories.at < 300000)) return categories.map;
+  try {
+    const rows = await c.categories();
+    categories = { at: Date.now(), map: Object.fromEntries(rows.map((r) => [String(r.name).trim().toLowerCase(), r])), outdated: false };
+  } catch (err) {
+    categories.at = Date.now();
+    // the group's server has not been updated since the categories exist (1.19)
+    categories.outdated = /does not exist|42P01|404|not find|introuvable/i.test(err.message || '');
+    applog.log('categories', err.message);
+  }
+  return categories.map;
+}
+function categoryOf(name) {
+  const r = categories.map[String(name || '').trim().toLowerCase()];
+  return r && CATEGORY_MODE[r.category] ? r.category : 'debutant';
+}
+const myMode = () => CATEGORY_MODE[categoryOf(settings.data.driverName)];
+
 /**
  * Note of the run just finished, for the in-game app (apps/lua/LKS/score.json):
  * the app shows it right after the run, with each clip and each zone.
@@ -941,18 +977,20 @@ function writeScoreForGame(lap, pbDrift = [], pbTandem = []) {
   if (!acRoot() || !lap) return;
   const dir = ingame.appDir(acRoot());
   if (!fs.existsSync(dir)) return;
-  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
-  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  const mode = myMode();
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes[mode] || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes[mode] || lap.drift : lap.drift;
   if (!tandem && !(d && d.score !== undefined)) return;
   const base = tandem || d;
   const data = {
+    category: categoryOf(settings.data.driverName),
     id: lap.id,
     track: lap.track,
     layout: lap.layout || '',
     kind: tandem ? 'tandem' : 'drift',
     driver: lap.driver && lap.driver.name,
     score: base.score,
-    record: (tandem ? pbTandem : pbDrift).includes('normal'),
+    record: (tandem ? pbTandem : pbDrift).includes(mode),
     ...(tandem
       ? { tandem: { proximity: tandem.proximity, angleMatch: tandem.angleMatch, line: tandem.line, avgGap: tandem.avgGap, lead: lap.tandem.lead && lap.tandem.lead.name } }
       : { angle: d.angle, speed: d.speed, line: d.line, penalty: d.penalty, zeroed: d.zeroed || null }),
@@ -976,11 +1014,16 @@ function shareRun(lap) {
   const c = community();
   if (!c || !lap || settings.data.telemetry.shareLaps === false) return;
   if (((lap.driver && lap.driver.steamId) || '') !== (settings.data.steamId || '')) return; // a run where you led: the chaser's launcher sends it
-  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
-  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  // the note of the driver's category; the three notes go along (they decide the category)
+  const mode = myMode();
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes[mode] || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes[mode] || lap.drift : lap.drift;
   const base = tandem || d;
   if (!base || !(base.score >= 0)) return;
+  const all = (tandem ? lap.tandem : lap.drift) || {};
   const detail = {
+    category: categoryOf(settings.data.driverName),
+    modes: all.modes ? Object.fromEntries(Object.entries(all.modes).map(([m, r]) => [m, r && Number.isFinite(r.score) ? r.score : 0])) : undefined,
     angle: d && d.angle,
     speed: d && d.speed,
     line: d && d.line,
@@ -996,7 +1039,9 @@ function shareRun(lap) {
   // same id for the same run, whoever sends it again
   const hash = require('crypto').createHash('sha1').update(`${playerId()}|${lap.id}`).digest('hex');
   const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-  c.addRun({ id, driver: lap.driver.name, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail }).catch((err) => applog.log('run share', err.message));
+  c.addRun({ id, driver: lap.driver.name, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail })
+    .then(() => refreshCategories(true)) // the server may have moved the driver up or down
+    .catch((err) => applog.log('run share', err.message));
 }
 
 /** Evening going on (from 30 min before to the end): live sharing for the judges. */
@@ -1072,6 +1117,10 @@ async function championshipsNow() {
       }
       if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
       if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+      if (round.category) {
+        await refreshCategories();
+        entries = champ.forCategory(round, entries, categoryOf);
+      }
       const decisions = (sync.manifest && sync.manifest.judging) || [];
       const ruled = ruledBattles(round, battles, decisions);
       rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: ruled, points: c.points }), error });
@@ -1159,6 +1208,8 @@ function setupTelemetry() {
     canonical: canonicalCombo,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
     getObs: obsData,
+    // the in-game app's exact clip distances (real car shape, every frame)
+    getMeasureDir: () => (acRoot() ? path.join(ingame.appDir(acRoot()), 'measures') : null),
   });
   telemetry.on('battle', (b) => {
     const res = b.modes.normal;
@@ -1354,6 +1405,21 @@ function setupGame() {
       win.focus();
     }
     refreshManifest({ autoSync: true }).catch(() => {});
+    // end of the session: only the best passages stay (after the last in-game runs are imported)
+    if (telemetry && settings.data.telemetry.keepAll !== true) {
+      setTimeout(async () => {
+        try {
+          await importTandemRuns();
+          const n = await telemetry.purgeSession();
+          if (n) {
+            applog.log('telemetry purge', { removed: n });
+            send('telemetry:lap', null);
+          }
+        } catch (err) {
+          console.warn('[purge]', err.message);
+        }
+      }, 120000);
+    }
   });
 }
 
@@ -1599,7 +1665,53 @@ async function cachedHash(kind, id) {
   return hash;
 }
 
+// ---------------------------------------------------------------- admin access
+// Being an admin is not « having a token saved »: the token must really be
+// allowed to write on the group's repository (GitHub says so). Until then the
+// admin pages stay hidden and every admin action is refused here, in the main
+// process (the renderer is never trusted for this).
+let adminAccess = { ok: false, checked: false, error: '', login: '' };
+const OFFICIAL_REPO = String(appConfig.contentRepo || '').toLowerCase();
+
+function publicSettings() {
+  const p = settings.public();
+  p.admin = { ...p.admin, verified: adminAccess.ok, checking: !adminAccess.checked && p.admin.hasToken, error: adminAccess.error };
+  return p;
+}
+
+async function verifyAdmin() {
+  const token = settings.getToken();
+  const was = adminAccess.ok;
+  if (!token) adminAccess = { ok: false, checked: true, error: '', login: '' };
+  else {
+    try {
+      // only the group's own repository makes someone an admin (tests and the demo use a local fake GitHub)
+      if (!process.env.LKS_GITHUB_API && String(settings.data.admin.repo || '').toLowerCase() !== OFFICIAL_REPO) {
+        throw new Error(`Seul le dépôt du groupe (${appConfig.contentRepo}) donne l'accès admin`);
+      }
+      const gh = newGitHub();
+      const repo = await gh.api('GET', `/repos/${settings.data.admin.repo}`);
+      if (!repo) throw new Error('Dépôt introuvable avec ce token : accès admin refusé');
+      const perms = repo.permissions || {};
+      if (!(perms.push || perms.admin || perms.maintain)) throw new Error("Ce token n'a pas le droit d'écrire sur le dépôt du groupe : accès admin refusé");
+      const me = await gh.api('GET', '/user').catch(() => null);
+      adminAccess = { ok: true, checked: true, error: '', login: (me && me.login) || '' };
+    } catch (err) {
+      const network = /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|network/i.test(err.message || '');
+      // no connection: an admin already checked in this session stays one
+      adminAccess = { ok: network ? was : false, checked: true, error: network ? 'GitHub injoignable : droits admin non vérifiés' : err.message, login: network ? adminAccess.login : '' };
+    }
+  }
+  if (win) send('settings:changed', publicSettings());
+  return adminAccess;
+}
+
+function assertAdmin() {
+  if (!adminAccess.ok) throw new Error(adminAccess.error && settings.getToken() ? `Réservé aux admins du groupe : ${adminAccess.error}` : 'Réservé aux admins du groupe');
+}
+
 async function withAdmin(fn) {
+  assertAdmin();
   if (adminBusy) throw new Error('Une publication est déjà en cours');
   adminBusy = true;
   send('admin:busy', true);
@@ -1613,9 +1725,12 @@ async function withAdmin(fn) {
 }
 
 // ---------------------------------------------------------------- IPC
+// admin channels open before the access is checked (they check it themselves)
+const ADMIN_OPEN = new Set(['admin:test']);
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
+      if (channel.startsWith('admin:') && !ADMIN_OPEN.has(channel)) assertAdmin();
       return { ok: true, data: await fn(...args) };
     } catch (err) {
       return { ok: false, error: err.message || String(err) };
@@ -1632,11 +1747,16 @@ function setupIpc() {
     if (action === 'close') win.close();
   });
 
-  handle('settings:get', () => settings.public());
+  handle('settings:get', () => publicSettings());
   handle('settings:update', (patch) => {
     const before = settings.data.acRoot;
     const beforeUrl = settings.data.manifestUrl;
     const out = settings.update(patch || {});
+    if (patch && patch.admin) {
+      // new token or repository: admin again only once GitHub confirms it
+      adminAccess = { ok: false, checked: false, error: '', login: '' };
+      verifyAdmin().catch(() => {});
+    }
     if (before !== settings.data.acRoot) {
       contentCache = null;
       sync.cleanup();
@@ -1646,7 +1766,7 @@ function setupIpc() {
     else send('sync:changed', sync.summary());
     configurePresence();
     if (patch && 'showOnline' in patch) updatePresence();
-    return out;
+    return { ...out, admin: publicSettings().admin };
   });
   handle('settings:detect', async () => {
     const [root, user] = await Promise.all([detectAcRoot(), detectSteamUser()]);
@@ -1882,6 +2002,8 @@ function setupIpc() {
 
   // Admin / publishing
   handle('admin:test', async () => {
+    const access = await verifyAdmin();
+    if (!access.ok) throw new Error(access.error || 'Accès admin refusé');
     const gh = newGitHub();
     const info = await gh.checkAccess();
     const pub = getPublisher();
@@ -2052,6 +2174,10 @@ function setupIpc() {
       `Tours enregistrés sur ce circuit : ${combo ? telemetry.store.list({ track: combo.track, layout: combo.layout || '' }).length : '—'}`,
     ].filter(Boolean).join('\n');
   });
+  handle('telemetry:categories', async () => {
+    const map = await refreshCategories(false);
+    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35, serverOutdated: Boolean(categories.outdated) };
+  });
   handle('telemetry:settings', async (patch) => {
     settings.update({ telemetry: patch || {} });
     await applyDash();
@@ -2075,6 +2201,14 @@ function setupIpc() {
     const course = autoDriftCourse(track, layout || '');
     if (!course) throw new Error('Pas de ligne IA (ai/fast_lane.ai) pour ce circuit : place les clips à la main.');
     return course;
+  });
+  // edges of the road (AI line of the installed track), for the course editor
+  handle('drift:road', ({ track, layout }) => {
+    try {
+      return ailine.trackRoad(acRoot(), track, layout || '');
+    } catch {
+      return null;
+    }
   });
   handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
   handle('ghost:status', () => (acRoot() ? ghosts.currentGhost(ingame.appDir(acRoot())) : null));
@@ -2215,7 +2349,7 @@ function setupIpc() {
     const board = telemetry.board();
     if (!board) return { local, remote: null };
     try {
-      return { local, remote: await board.list(q) };
+      return { local, remote: await board.list({ ...q, withOlder: true }) };
     } catch (err) {
       return { local, remote: null, error: err.message };
     }
@@ -2282,7 +2416,7 @@ function setupIpc() {
       return r;
     }),
   );
-  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, refDriver, remove }) =>
+  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, refDriver, remove, lineEdited }) =>
     withAdmin(async () => {
       const pub = getPublisher();
       if (!pub.manifest) await pub.open();
@@ -2292,14 +2426,20 @@ function setupIpc() {
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
-        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}) })), refLine: [], refSpeed: 0 };
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(0.5, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Math.round((Number(q[0]) || 0) * 100) / 100, Math.round((Number(q[1]) || 0) * 100) / 100]) } : {}), ...clipTarget(c.target) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
         const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
         if (gated) for (const k of ['progress', 'staging', 'start', 'finish', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
+        const cleanLine = (pts) => pts.slice(0, 4000).map((p) => [Math.round((Number(p[0]) || 0) * 100) / 100, Math.round((Number(p[1]) || 0) * 100) / 100]);
         if (lapId) {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
           Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
+          // the line adjusted by hand on top of this run (its speed stays the reference)
+          if (lineEdited && Array.isArray(refLine) && refLine.length > 1) Object.assign(course, { refLine: cleanLine(refLine), refDriver: `${lap.driver.name}, ajustée à la main` });
+        } else if (lineEdited && Array.isArray(refLine) && refLine.length > 1) {
+          // line adjusted by hand: the reference speed of the current course stays
+          Object.assign(course, { refLine: cleanLine(refLine), refSpeed: (all[key] && all[key].refSpeed) || 0, refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : 'ligne ajustée à la main', ...(all[key] && all[key].slipSign ? { slipSign: all[key].slipSign } : {}) });
         } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : gated ? 'ligne officielle' : 'ligne IA' });
         else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
         if (rules) course.rules = cleanRules(rules);
@@ -2550,7 +2690,8 @@ app.whenReady().then(async () => {
   win.once('ready-to-show', applyBrandIcon);
   await firstRunDetection();
   computeWhatsNew();
-  send('settings:changed', settings.public());
+  send('settings:changed', publicSettings());
+  verifyAdmin().catch(() => {});
   refreshManifest({ autoSync: true }).catch(() => {}).finally(startPresence);
   setupUpdater();
 });

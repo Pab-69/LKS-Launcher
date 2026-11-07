@@ -135,7 +135,35 @@ class Leaderboard {
     });
   }
 
-  async list({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
+  /**
+   * Ranking of the current course version, plus (withOlder) the drivers who
+   * only have a record from an older version of the course (admins moved a
+   * clip or a rule since): their best older one, flagged `old`, after the others.
+   */
+  async list({ track, layout = '', car, kind = 'time', rules = '', limit = 50, withOlder = false }) {
+    const current = await this.listVersion({ track, layout, car, kind, rules, limit });
+    const mode = /-(debutant|normal|pro)$/.exec(rules || '');
+    if (!withOlder || kind === 'time' || kind === 'battle' || !mode) return current;
+    const q = new URLSearchParams({ select: COLUMNS, track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `like.*-${mode[1]}`, order: 'score.desc', limit: '300' });
+    if (car) q.set('car', `eq.${car}`);
+    let older = [];
+    try {
+      older = ((await this.request(`/rest/v1/lks_laps?${q}`)) || []).filter((r) => r.rules !== rules && !String(r.rules).includes('@'));
+    } catch {
+      return current;
+    }
+    const seen = new Set(current.map((r) => String(r.driver || '').trim().toLowerCase()));
+    const extra = [];
+    for (const r of older) {
+      const k = String(r.driver || '').trim().toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      extra.push({ ...r, old: true });
+    }
+    return [...current, ...extra];
+  }
+
+  async listVersion({ track, layout = '', car, kind = 'time', rules = '', limit = 50 }) {
     const q = new URLSearchParams({ select: COLUMNS, track: `eq.${track}`, layout: `eq.${layout}`, kind: `eq.${kind}`, rules: `eq.${kind === 'time' ? '' : rules}`, order: kind === 'time' ? 'lap_ms.asc' : 'score.desc', limit: String(limit) });
     if (car) q.set('car', `eq.${car}`);
     const rows = (await this.request(`/rest/v1/lks_laps?${q}`)) || [];

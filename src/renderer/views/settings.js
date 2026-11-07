@@ -99,9 +99,13 @@ export default function settings(root, params) {
         h('button.btn', { on: { click: async () => { if (!token) return; await saveSettings({ admin: { token } }); toast('Token enregistré (chiffré)', 'success'); render(); } } }, 'Enregistrer'),
         s.admin.hasToken ? h('button.btn.btn-ghost', { on: { click: async () => { await saveSettings({ admin: { token: '' } }); render(); } } }, 'Supprimer') : null,
       ))),
+      s.admin.hasToken ? h(`div.notice.mt${s.admin.verified ? '.success' : s.admin.checking ? '.info' : ''}`,
+        s.admin.verified ? 'Accès admin vérifié : ce token peut écrire sur le dépôt du groupe.'
+          : s.admin.checking ? 'Vérification des droits admin auprès de GitHub…'
+            : `Accès admin refusé : ${s.admin.error || 'droits non vérifiés'}. Les pages admin restent cachées.`) : null,
       s.admin.hasToken ? h('div.row.mt',
         h('button.btn.btn-sm', { on: { click: testAdmin } }, icon('shield'), 'Tester l’accès'),
-        h('button.btn.btn-sm.btn-primary', { on: { click: () => window.lksGo('admin') } }, 'Ouvrir la publication'),
+        s.admin.verified ? h('button.btn.btn-sm.btn-primary', { on: { click: () => window.lksGo('admin') } }, 'Ouvrir la publication') : null,
       ) : null,
     );
 
@@ -133,9 +137,14 @@ export default function settings(root, params) {
     if (r) toast(`Accès OK à ${r.name} — ${r.cars} voiture(s), ${r.tracks} circuit(s) publiés`, 'success', 6000);
   }
 
+  const adminKey = () => { const a = (store.settings && store.settings.admin) || {}; return `${a.hasToken}|${a.verified}|${a.checking}|${a.error}`; };
+  let lastAdmin = adminKey();
   render();
   return subscribe((patch) => {
-    if ('settings' in patch && !root.contains(document.activeElement)) render();
+    // the admin check answers a moment after « Enregistrer »: show it even while a field has the focus
+    const adminChanged = 'settings' in patch && adminKey() !== lastAdmin;
+    if (adminChanged) lastAdmin = adminKey();
+    if ('settings' in patch && (adminChanged || !root.contains(document.activeElement))) render();
     if ('updater' in patch) render();
   });
 }

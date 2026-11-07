@@ -313,7 +313,7 @@ function cleanChampionship(id, c, m, existing) {
       const end = Date.parse(r.end);
       if (!Number.isFinite(start) || !Number.isFinite(end)) throw Object.assign(new Error(`${label} : dates invalides`), { status: 400 });
       if (end <= start) throw Object.assign(new Error(`${label} : la fin doit être après le début`), { status: 400 });
-      return { id: rid, name: clean(r.name, 60) || label, track, layout: clean(r.layout, 80), kind: r.kind, mode: r.mode, start: new Date(start).toISOString(), end: new Date(end).toISOString(), bracket: Number(r.bracket) || 8 };
+      return { id: rid, name: clean(r.name, 60) || label, track, layout: clean(r.layout, 80), kind: r.kind, category: r.category, mode: r.mode, start: new Date(start).toISOString(), end: new Date(end).toISOString(), bracket: Number(r.bracket) || 8 };
     });
   }
   return champ.cleanChampionships([{ id, name, season: clean(c.season, 40), points, rounds }])[0];

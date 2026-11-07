@@ -19,7 +19,9 @@ function startMockGithub() {
       req.on('end', () => resolve(Buffer.concat(chunks)));
     });
     if (req.method === 'GET' && p === '/user') return json(200, { login: 'pab' });
-    if (req.method === 'GET' && p === '/repos/o/r') return json(200, { full_name: 'o/r', private: false, html_url: 'x', permissions: { push: true } });
+    // a member's token (read only): GitHub answers, but without the right to write
+    const readOnly = /readonly/.test(req.headers.authorization || '');
+    if (req.method === 'GET' && p === '/repos/o/r') return json(200, { full_name: 'o/r', private: false, html_url: 'x', permissions: { push: !readOnly, pull: true } });
     if (req.method === 'GET' && p === '/repos/o/r/releases/tags/content') return state.release ? json(200, state.release) : json(404, { message: 'Not Found' });
     if (req.method === 'POST' && p === '/repos/o/r/releases') {
       state.release = { id: 1, tag_name: 'content', upload_url: `${base}/upload/releases/1/assets{?name,label}` };

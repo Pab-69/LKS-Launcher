@@ -268,6 +268,32 @@ function autoCourse(acRoot, track, layout = '') {
   return courseFromAiLine(parseAiLine(fs.readFileSync(file)).points);
 }
 
+/**
+ * Edges of the road from the AI line's room on each side (recent files),
+ * every 2 m: { left: [[x, z]], right: [[x, z]], line: [[x, z]] } or null.
+ * Sides wider than 30 m (open pads) are capped.
+ */
+function roadEdges(points) {
+  const { line } = resample(points, 2);
+  if (line.length < 4 || !line.some((p) => p.sideLeft > 0 || p.sideRight > 0)) return null;
+  const nrm = normals(line);
+  const cap = (v) => Math.max(0, Math.min(30, Number(v) || 0));
+  const r2 = (v) => Math.round(v * 100) / 100;
+  return {
+    line: line.map((p) => [r2(p.x), r2(p.z)]),
+    right: line.map((p, i) => [r2(p.x + nrm[i][0] * cap(p.sideRight)), r2(p.z + nrm[i][1] * cap(p.sideRight))]),
+    left: line.map((p, i) => [r2(p.x - nrm[i][0] * cap(p.sideLeft)), r2(p.z - nrm[i][1] * cap(p.sideLeft))]),
+  };
+}
+
+/** Road edges of an installed track, or null (no AI line, or no sides in it). */
+function trackRoad(acRoot, track, layout = '') {
+  if (!acRoot || !/^[\w.-]+$/.test(track) || (layout && !/^[\w.-]+$/.test(layout))) return null;
+  const file = aiLineFile(acRoot, track, layout);
+  if (!file) return null;
+  return roadEdges(parseAiLine(fs.readFileSync(file)).points);
+}
+
 /** Writer used by the tests and the demo (inverse of parseAiLine). */
 function encodeAiLine(points) {
   const buf = Buffer.alloc(16 + points.length * 20 + 4 + points.length * 72);
@@ -297,4 +323,4 @@ function encodeAiLine(points) {
   return buf;
 }
 
-module.exports = { parseAiLine, courseFromAiLine, autoCourse, aiLineFile, encodeAiLine, minCurvature, findCorners };
+module.exports = { parseAiLine, courseFromAiLine, autoCourse, aiLineFile, encodeAiLine, minCurvature, findCorners, roadEdges, trackRoad };

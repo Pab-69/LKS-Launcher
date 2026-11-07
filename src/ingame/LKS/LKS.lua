@@ -219,62 +219,124 @@ local function resetClips()
 end
 resetClips()
 
--- distance au clip : à son centre, ou à sa bande pour une zone longue peinte au sol
-local function clipDist(c, x, z)
-  local path = c.path
-  if not path or #path < 2 then return math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2) end
-  local best = math.huge
-  for i = 1, #path - 1 do
-    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
-    local vx, vz = bx - ax, bz - az
-    local l2 = vx * vx + vz * vz
-    if l2 <= 0 then l2 = 1 end
-    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / l2))
-    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
-    if d < best then best = d end
-  end
-  return best
+-- Forme réelle de la voiture : boîte englobante du modèle (CSP), sinon 4,4 m × 1,8 m.
+-- Pour une corde (clip intérieur) on mesure le pare-chocs avant, pour une zone
+-- extérieure le pare-chocs arrière : la distance exacte entre ce bord et le clip.
+local shape = nil
+local function carShape(car)
+  if shape and shape.at and clock - shape.at < 10000 then return shape end
+  local sh = { front = 2.2, rear = 2.2, half = 0.9, source = 'défaut', at = clock }
+  safe(function()
+    local c, sz = car.aabbCenter, car.aabbSize
+    if c and sz and sz.z > 1 and sz.x > 0.5 then
+      -- aabbSize donne la taille complète (ou la demi-taille selon la version du CSP)
+      local len, wid = sz.z, sz.x
+      if len < 3 then len, wid = len * 2, wid * 2 end
+      if len > 2.5 and len < 7 and wid > 1.2 and wid < 3 then
+        sh.front, sh.rear, sh.half, sh.source = len / 2 + c.z, len / 2 - c.z, wid / 2, 'voiture'
+      end
+    end
+  end)
+  shape = sh
+  return sh
 end
 
--- position le long d'une zone (m depuis son début) et distance à elle
-local function alongPath(path, x, z)
-  local bestD, bestAt, acc = math.huge, 0, 0
+-- bord avant ou arrière de la voiture : deux coins (x, z)
+local function bumper(c, car)
+  local sh = carShape(car)
+  local p, l = car.position, car.look
+  local ll = math.sqrt(l.x * l.x + l.z * l.z)
+  if ll <= 0 then return p.x, p.z, p.x, p.z end
+  local fx, fz = l.x / ll, l.z / ll
+  local sx, sz = fz, -fx
+  local k = (c.kind == 'outer') and -sh.rear or sh.front
+  local cx, cz = p.x + fx * k, p.z + fz * k
+  return cx - sx * sh.half, cz - sz * sh.half, cx + sx * sh.half, cz + sz * sh.half
+end
+
+-- distance d'un point au segment [a, b]
+local function pointSeg(px, pz, ax, az, bx, bz)
+  local vx, vz = bx - ax, bz - az
+  local l2 = vx * vx + vz * vz
+  local k = l2 > 0 and math.max(0, math.min(1, ((px - ax) * vx + (pz - az) * vz) / l2)) or 0
+  return math.sqrt((px - ax - vx * k) ^ 2 + (pz - az - vz * k) ^ 2)
+end
+-- distance entre deux segments (plan x/z)
+local function segSeg(ax, az, bx, bz, cx, cz, dx, dz)
+  local function side(px, pz, qx, qz, rx, rz) return (qx - px) * (rz - pz) - (qz - pz) * (rx - px) end
+  local d1, d2 = side(ax, az, bx, bz, cx, cz), side(ax, az, bx, bz, dx, dz)
+  local d3, d4 = side(cx, cz, dx, dz, ax, az), side(cx, cz, dx, dz, bx, bz)
+  if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)) then return 0 end
+  return math.min(pointSeg(ax, az, cx, cz, dx, dz), pointSeg(bx, bz, cx, cz, dx, dz), pointSeg(cx, cz, ax, az, bx, bz), pointSeg(dx, dz, ax, az, bx, bz))
+end
+
+-- distance exacte du bord jugé au clip ; pour une zone, aussi la position le long d'elle
+local function clipMeasure(c, car)
+  local ax, az, bx, bz = bumper(c, car)
+  local path = c.path
+  if not path or #path < 2 then return pointSeg(c.x, c.z, ax, az, bx, bz), nil end
+  local best, at = math.huge, 0
+  local mx, mz = (ax + bx) / 2, (az + bz) / 2
+  local acc = 0
   for i = 1, #path - 1 do
-    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
-    local vx, vz = bx - ax, bz - az
+    local px, pz, qx, qz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
+    local d = segSeg(ax, az, bx, bz, px, pz, qx, qz)
+    local vx, vz = qx - px, qz - pz
     local len = math.sqrt(vx * vx + vz * vz)
-    if len <= 0 then len = 1e-6 end
-    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / (len * len)))
-    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
-    if d < bestD then bestD, bestAt = d, acc + k * len end
+    if d < best then
+      best = d
+      local k = len > 0 and math.max(0, math.min(1, ((mx - px) * vx + (mz - pz) * vz) / (len * len))) or 0
+      at = acc + k * len
+    end
     acc = acc + len
   end
-  return bestD, bestAt
-end
-
--- point jugé : l'avant de la voiture pour une corde, l'arrière pour une zone extérieure
-local HALF_LENGTH = 2.0
-local function judgedPoint(c, car)
-  local p, l = car.position, car.look
-  local k = (c.kind == 'outer') and -HALF_LENGTH or HALF_LENGTH
-  local ll = math.sqrt(l.x * l.x + l.z * l.z)
-  if ll <= 0 then return p.x, p.z end
-  return p.x + l.x / ll * k, p.z + l.z / ll * k
+  return best, at
 end
 
 local ZONE_HIT = 0.2 -- part d'une zone longue à couvrir pour qu'elle compte
 
-local function updateClips(car, angle, gap)
-  local drifting = angle >= 12 and car.speedKmh >= 25
+-- mesures de la run pour le launcher : au plus près de chaque clip, à chaque image
+local measure = { clips = {}, frames = 0 }
+local function resetMeasure()
+  measure = { clips = {}, frames = 0 }
   for i, c in ipairs(clips) do
-    local x, z = judgedPoint(c, car)
+    local m = { min = nil, drift = nil, d = nil }
+    if clipState[i] and clipState[i].slices then m.slices = {} end
+    measure.clips[i] = m
+  end
+end
+
+local function updateClips(car, angle, gap, d)
+  local drifting = angle >= 12 and car.speedKmh >= 25
+  measure.frames = measure.frames + 1
+  for i, c in ipairs(clips) do
+    local dist, at = clipMeasure(c, car)
     local st = clipState[i]
+    local m = measure.clips[i]
+    if m then
+      if m.min == nil or dist < m.min then m.min = dist end
+      if drifting and (m.drift == nil or dist < m.drift) then m.drift, m.d = dist, d end
+      if m.slices and drifting and at then
+        local k = math.min(st.n, math.floor(at) + 1)
+        if m.slices[k] == nil or dist < m.slices[k] then m.slices[k] = dist end
+        -- peu d'images par seconde : les tranches sautées entre deux images prennent la pire des deux distances
+        if m.lastK and math.abs(k - m.lastK) > 1 and math.abs(k - m.lastK) <= 4 then
+          local worst = math.max(dist, m.lastDist)
+          local step = k > m.lastK and 1 or -1
+          for j = m.lastK + step, k - step, step do
+            if m.slices[j] == nil or worst < m.slices[j] then m.slices[j] = worst end
+          end
+        end
+        m.lastK, m.lastDist = k, dist
+      elseif m.slices then
+        m.lastK = nil
+      end
+    end
     if st.slices then
-      local dist, at = alongPath(c.path, x, z)
       if dist < c.r * 4 then
         if st.best == nil or dist < st.best then st.best = dist end
         if dist <= c.r and drifting then
-          local k = math.min(st.n, math.floor(at) + 1)
+          local k = math.min(st.n, math.floor(at or 0) + 1)
           if not st.slices[k] then
             st.slices[k] = true
             st.covered = st.covered + 1
@@ -286,17 +348,44 @@ local function updateClips(car, angle, gap)
         end
       end
     else
-      local dist = math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2)
       if dist < c.r * 4 then
         if st.best == nil or dist < st.best then st.best = dist end
         if not st.hit and dist <= c.r and drifting then
           st.hit = true
           st.gap = gap
-          lastClip = string.format('%s ✓ %.1f m', c.name, dist)
+          lastClip = string.format('%s ✓ %.2f m', c.name, dist)
         end
       end
     end
   end
+end
+
+-- fichier lu par le launcher : la note de la run utilise ces distances exactes
+local function saveMeasure(lapMs)
+  if #clips == 0 or measure.frames < 20 or (lapMs or 0) <= 0 then return end
+  local car = ac.getCar(0)
+  local sh = car and carShape(car) or { front = 2.2, rear = 2.2, half = 0.9, source = 'défaut' }
+  local f = function(v) return v == nil and 'null' or string.format('%.2f', v) end
+  local out = {}
+  for i, c in ipairs(clips) do
+    local m = measure.clips[i] or {}
+    local parts = { '"x":' .. f(c.x), '"z":' .. f(c.z), '"kind":' .. jstr(c.kind or 'inner'), '"min":' .. f(m.min), '"drift":' .. f(m.drift), '"d":' .. (m.d and string.format('%.4f', m.d) or 'null') }
+    if m.slices then
+      local st = clipState[i]
+      local sl = {}
+      for k = 1, (st and st.n or 0) do sl[k] = f(m.slices[k]) end
+      parts[#parts + 1] = '"slices":[' .. table.concat(sl, ',') .. ']'
+    end
+    out[i] = '{' .. table.concat(parts, ',') .. '}'
+  end
+  local json = '{"v":1,"track":' .. jstr(trackId) .. ',"layout":' .. jstr(layoutId) ..
+    ',"car":' .. jstr(safe(function() return ac.getCarID(0) end, '')) ..
+    ',"time":' .. tostring(safe(function() return os.time() end, 0)) ..
+    ',"lapMs":' .. tostring(math.floor(lapMs)) ..
+    ',"frames":' .. tostring(measure.frames) ..
+    ',"shape":{"front":' .. f(sh.front) .. ',"rear":' .. f(sh.rear) .. ',"half":' .. f(sh.half) .. ',"source":' .. jstr(sh.source) .. '}' ..
+    ',"clips":[' .. table.concat(out, ',') .. ']}'
+  writeFile('measures/' .. stamp() .. '.json', json)
 end
 
 -- ------------------------------------------------------------- run
@@ -426,7 +515,6 @@ end
 local rec = { rows = {}, lastT = -1, pre = {} }
 local ghost = { data = nil, t = 0, running = false, lead = 0, wait = true, visible = true, gap = nil, note = nil, source = 'launcher', id = nil }
 local library = { items = {}, checkedAt = -1e9 }
-local panel = nil
 
 local function ghostRow(car, t)
   local p, l, u = car.position, car.look, car.up
@@ -593,7 +681,7 @@ local online = safe(function() return ac.getSim().isOnlineRace end, false)
 local mySid = function() return safe(function() return ac.getCar(0).sessionID end, -1) end
 local battleEvent = nil
 safe(function() math.randomseed(os.time() + mySid() * 7919 + math.floor(os.clock() * 1000)) end)
-local KIND = { challenge = 1, accept = 2, cancel = 3, ready = 4, lights = 5, done = 6 }
+local KIND = { challenge = 1, accept = 2, cancel = 3, ready = 4, lights = 5, done = 6, unready = 7 }
 
 -- Sur un serveur AC original, le CSP passe les messages par le chat : 200 ms au
 -- moins entre deux envois, sinon le message est refusé. Tout passe donc par une
@@ -604,6 +692,13 @@ local msgStats = { sent = 0, received = 0 }
 local function send(kind, to, tag, runN)
   if not battleEvent then return false end
   runN = runN or 0
+  if kind == KIND.ready or kind == KIND.unready then
+    -- seul le dernier état compte : on retire le « prêt » / « pas prêt » encore en attente
+    for i = #outbox, 1, -1 do
+      local m = outbox[i]
+      if (m.kind == KIND.ready or m.kind == KIND.unready) and m.kind ~= kind and m.tag == tag and m.run == runN then table.remove(outbox, i) end
+    end
+  end
   for _, m in ipairs(outbox) do
     if m.kind == kind and m.to == to and m.tag == tag and m.run == runN then return true end
   end
@@ -647,8 +742,9 @@ end
 
 local function stageRun(n)
   battle.run, battle.phase, battle.meReady, battle.otherReady, battle.sentAt, battle.lightsSent = n, 'staging', false, false, -1e9, false
+  battle.clicked = false -- « Prêt » cliqué (les deux pilotes cliquent avant les feux)
   battle.meDone, battle.otherDone = false, false
-  say(string.format('Battle run %d : tu es %s', n, battleRole() == 'lead' and 'devant (lead)' or 'derrière (chase)'), 6000)
+  say(string.format('Run %d : tu es %s. Place-toi puis clique « Prêt »', n, battleRole() == 'lead' and 'devant (lead)' or 'derrière (chase)'), 6000)
 end
 
 local function onMessage(sender, data)
@@ -673,6 +769,8 @@ local function onMessage(sender, data)
     battle = nil
   elseif kind == KIND.ready and data.run == battle.run then
     battle.otherReady = true
+  elseif kind == KIND.unready and data.run == battle.run then
+    battle.otherReady = false
   elseif kind == KIND.lights and data.run == battle.run and battle.phase == 'staging' then
     battleLights()
   elseif kind == KIND.done and data.run == battle.run then
@@ -708,6 +806,12 @@ local function acceptInvite(inv)
   stageRun(1)
 end
 
+local function toggleReady()
+  if not battle or battle.phase ~= 'staging' then return end
+  battle.clicked = not battle.clicked
+  if battle.clicked and not battle.canStage then say(battle.why or 'Place-toi sur la ligne de start', 3000) end
+end
+
 local function cancelBattle()
   if battle then send(KIND.cancel, battle.sid, battle.tag) end
   battle = nil
@@ -730,11 +834,17 @@ local function updateBattle(car)
     return
   end
   if battle.phase == 'staging' then
-    local ok = canStage(car)
-    battle.meReady = ok
-    if ok and clock - battle.sentAt > 3000 then
+    local ok, why = canStage(car)
+    local was = battle.meReady
+    battle.canStage, battle.why = ok, why
+    -- prêt = bien placé ET « Prêt » cliqué ; si la voiture bouge, il faut se replacer
+    battle.meReady = ok and battle.clicked
+    if battle.meReady and clock - battle.sentAt > 3000 then
       send(KIND.ready, battle.sid, battle.tag, battle.run)
       battle.sentAt = clock
+    elseif was and not battle.meReady then
+      send(KIND.unready, battle.sid, battle.tag, battle.run)
+      battle.sentAt = -1e9
     end
     -- le leader donne le départ quand les deux sont prêts
     if battleRole() == 'lead' and battle.meReady and battle.otherReady and not battle.lightsSent then
@@ -798,6 +908,7 @@ local function onRunStart(car)
   if battle and (battle.phase == 'staging' or battle.phase == 'lights') then battle.phase = 'running' end
   run.lights = lights.greenAt ~= nil and clock - lights.greenAt < 30000
   resetClips()
+  resetMeasure()
   if not tandem.closing then resetTandem() end
   -- fantôme : les secondes d'avant le départ font partie de l'enregistrement
   rec.rows, rec.lastT = {}, -1
@@ -844,6 +955,7 @@ local function onRunEnd(car, ms)
   if ms and ms > 0 then
     if run.bestMs == nil or ms < run.bestMs then run.best, run.bestMs = run.current, ms end
     run.lastMs = ms
+    saveMeasure(ms)
     local offset = gated and run.t0 or 0
     saveGhost(ms, offset, rec.green and (rec.green - offset) or nil)
     if battle and battle.phase == 'running' and tandem.battle then
@@ -902,7 +1014,7 @@ function script.update(dt)
   prevPos = { x = x, z = z, inPit = inPit }
 
   local angle = driftAngle(car)
-  if run.active then updateClips(car, angle, state.gap) end
+  if run.active then updateClips(car, angle, state.gap, gated and run.d or safe(function() return car.splinePosition end, nil)) end
   state.angle = angle
 
   -- tandem : pendant la run (et quelques secondes après en battle)
@@ -1019,69 +1131,293 @@ render.on('main.track.transparent', function()
 end)
 
 -- ------------------------------------------------------------- fenêtres
+-- Style du launcher : fond sombre, rouge sang, texte blanc os, peu de texte.
+local C = {
+  panel = rgbm(0.082, 0.067, 0.078, 0.96),
+  panel2 = rgbm(0.118, 0.094, 0.11, 1),
+  line = rgbm(0.149, 0.118, 0.133, 1),
+  line2 = rgbm(0.227, 0.176, 0.2, 1),
+  text = rgbm(0.925, 0.898, 0.855, 1),
+  text2 = rgbm(0.659, 0.612, 0.58, 1),
+  text3 = rgbm(0.424, 0.38, 0.36, 1),
+  accent = rgbm(0.702, 0.071, 0.165, 1),
+  accent2 = rgbm(0.878, 0.106, 0.227, 1),
+  ok = rgbm(0.247, 0.812, 0.525, 1),
+  okDeep = rgbm(0.11, 0.36, 0.23, 1),
+  warn = rgbm(0.89, 0.64, 0.227, 1),
+}
+local CATEGORY = { debutant = 'Débutant', amateur = 'Amateur', pro = 'Pro' }
+local tab = 'run' -- run | battle | ghost | options
+local details = false
+
 local function fmtMs(ms)
   if not ms then return '—' end
   local s = ms / 1000
   return string.format('%d:%04.1f', math.floor(s / 60), s % 60)
 end
 
+local function cursor() return safe(function() return ui.getCursor() end, nil) end
+local function width() return safe(function() return ui.availableSpaceX() end, 280) or 280 end
+local function rect(x1, y1, x2, y2, col, r)
+  if ui.drawRectFilled then pcall(ui.drawRectFilled, vec2(x1, y1), vec2(x2, y2), col, r or 0) end
+end
+local function space(h) pcall(ui.dummy, vec2(1, h or 4)) end
+local function font(f, fn)
+  local ok = f ~= nil and pcall(ui.pushFont, f)
+  fn()
+  if ok then pcall(ui.popFont) end
+end
+local function txt(t, col) ui.textColored(t, col or C.text) end
+local function same(spacing) pcall(ui.sameLine, 0, spacing or 8) end
+
+-- bouton aux couleurs du launcher : 'primary' (rouge), 'ok' (vert), 'on' (onglet actif), sinon discret
+local function button(label, kind, size)
+  local n = 0
+  if ui.pushStyleColor and ui.StyleColor then
+    local base = kind == 'primary' and C.accent or kind == 'ok' and C.okDeep or kind == 'on' and C.line2 or C.panel2
+    local hover = kind == 'primary' and C.accent2 or kind == 'ok' and C.ok or C.line2
+    for _, pair in ipairs({ { ui.StyleColor.Button, base }, { ui.StyleColor.ButtonHovered, hover }, { ui.StyleColor.ButtonActive, hover }, { ui.StyleColor.Text, kind == 'ghost' and C.text2 or C.text } }) do
+      if pcall(ui.pushStyleColor, pair[1], pair[2]) then n = n + 1 end
+    end
+  end
+  local rounded = ui.pushStyleVar and ui.StyleVar and pcall(ui.pushStyleVar, ui.StyleVar.FrameRounding, 2)
+  local clicked = ui.button(label, size)
+  if rounded then pcall(ui.popStyleVar, 1) end
+  if n > 0 then pcall(ui.popStyleColor, n) end
+  return clicked
+end
+
+-- barre fine (angle, note) ; mark : repère (objectif)
+local function bar(value, max, col, w, h, mark)
+  local p = cursor()
+  if not p then return end
+  w, h = w or width(), h or 4
+  rect(p.x, p.y, p.x + w, p.y + h, C.line, 1)
+  local f = math.max(0, math.min(1, (tonumber(value) or 0) / max))
+  if f > 0 then rect(p.x, p.y, p.x + w * f, p.y + h, col, 1) end
+  if mark then
+    local m = math.max(0, math.min(1, mark / max))
+    rect(p.x + w * m - 1, p.y - 2, p.x + w * m + 1, p.y + h + 2, C.text2)
+  end
+  pcall(ui.dummy, vec2(w, h))
+end
+
+-- carte : fond légèrement plus clair, liseré rouge à gauche
+local function card(fn, accent)
+  local p = cursor()
+  local w = width()
+  pcall(ui.beginGroup)
+  space(4)
+  pcall(ui.indent, 8)
+  fn()
+  pcall(ui.unindent, 8)
+  space(4)
+  pcall(ui.endGroup)
+  local q = cursor()
+  if p and q and ui.drawRectFilled then
+    -- dessiné après le contenu : on le met derrière avec un canal, sinon un simple liseré
+    if ui.drawRectFilled and ui.beginGroup then rect(p.x, p.y, p.x + 3, q.y - 4, accent or C.accent) end
+  end
+  space(2)
+end
+
 local function drawLights(size)
-  local p = safe(function() return ui.getCursor() end, nil)
+  local p = cursor()
   if p and ui.drawCircleFilled then
     for k = 1, 4 do
-      local col = DARK
-      if k <= 3 and lights.state == 'count' and lights.lit >= k then col = RED end
-      if lights.state == 'green' then col = GREEN end
-      if lights.state == 'false' and k <= 3 then col = AMBER end
+      local col = C.line2
+      if k <= 3 and lights.state == 'count' and lights.lit >= k then col = C.accent2 end
+      if lights.state == 'green' then col = C.ok end
+      if lights.state == 'false' and k <= 3 then col = C.warn end
       pcall(ui.drawCircleFilled, vec2(p.x + size * (k - 0.5) * 1.2, p.y + size * 0.6), size / 2, col, 24)
     end
     pcall(ui.dummy, vec2(size * 4.8, size * 1.2))
   end
-  if lights.state == 'count' then ui.textColored(tostring(3 - lights.lit) == '0' and '...' or tostring(3 - lights.lit), RED)
-  elseif lights.state == 'green' then ui.textColored('GO !', GREEN)
-  elseif lights.state == 'false' then ui.textColored('Faux départ', AMBER) end
+  if lights.state == 'count' then txt(tostring(3 - lights.lit) == '0' and '...' or tostring(3 - lights.lit), C.accent2)
+  elseif lights.state == 'green' then txt('GO !', C.ok)
+  elseif lights.state == 'false' then txt('Faux départ', C.warn) end
 end
 
 function script.windowLights(dt)
   drawLights(46)
 end
 
-local function ghostPanel()
-  ui.textColored('Fantôme à suivre', GREY)
-  if ui.button((ghost.source == 'launcher' and '● ' or '') .. 'Choisi dans le launcher') then pickGhost('launcher') end
-  for _, it in ipairs(library.items) do
-    local label = string.format('%s%s · %s', ghost.id == it.file and '● ' or '', tostring(it.driver or '?'), it.score and (tostring(it.score) .. '/100') or fmtMs(it.lapMs))
-    if ui.button(label) then pickGhost(it) end
+-- clips : une pastille par clip (vert touché, gris à venir)
+local function clipDots()
+  local p = cursor()
+  local hit = 0
+  for i = 1, #clipState do if clipState[i].hit then hit = hit + 1 end end
+  if p and ui.drawCircleFilled then
+    local step = math.min(16, (width() - 60) / math.max(1, #clips))
+    for i = 1, #clips do
+      local st = clipState[i]
+      pcall(ui.drawCircleFilled, vec2(p.x + 5 + (i - 1) * step, p.y + 7), 4, st and st.hit and C.ok or C.line2, 12)
+    end
+    pcall(ui.dummy, vec2(math.max(10, #clips * step), 14))
+    same(6)
   end
-  if ui.button('Aucun fantôme') then pickGhost(nil) end
-  if #library.items == 0 then ui.textColored('Les meilleures runs avec fantôme arrivent ici depuis le launcher.', GREY) end
+  txt(string.format('%d/%d', hit, #clips), hit > 0 and C.ok or C.text3)
 end
 
-local function battlePanel()
+local function header()
+  font(ui.Font.Title, function() txt('LKS', C.accent2) end)
+  local sc = scoreView.data
+  if sc and CATEGORY[sc.category] then
+    same(6)
+    txt(CATEGORY[sc.category], C.text3)
+  end
+  same(14)
+  for _, t in ipairs({ { 'run', 'Run' }, { 'battle', battle and 'Battle •' or (#invites > 0 and 'Battle !' or 'Battle') }, { 'ghost', 'Fantôme' }, { 'options', '⋯' } }) do
+    if button(t[2], tab == t[1] and 'on' or 'ghost') then tab = t[1] end
+    same(3)
+  end
+  space(1)
+end
+
+-- note de la dernière run, discrète : un chiffre et trois barres, le détail sur demande
+local function scoreCard()
+  local sc = scoreView.data
+  if not sc then return end
+  local fresh = clock - scoreView.at < 25000
+  if not fresh and not details then
+    txt(string.format('Dernière note %s', tostring(sc.score or 0)), C.text3)
+    same()
+    if button('Détails', 'ghost') then details = true end
+    return
+  end
+  card(function()
+    font(ui.Font.Title, function() txt(tostring(sc.score or 0), sc.zeroed and C.accent2 or C.text) end)
+    same(4)
+    txt(sc.kind == 'tandem' and ('chase de ' .. tostring(sc.driver or '?')) or (sc.record and 'record !' or '/ 100'), sc.record and C.ok or C.text3)
+    same(10)
+    if button(details and 'Moins' or 'Détails', 'ghost') then details = not details end
+    if sc.zeroed then txt('Run à 0 : ' .. tostring(sc.zeroed), C.accent2) end
+    local w = width() - 70
+    local parts = sc.kind == 'tandem' and sc.tandem and { { 'Proximité', sc.tandem.proximity, 35 }, { 'Angle', sc.tandem.angleMatch, 25 }, { 'Ligne', sc.tandem.line, 20 } }
+      or { { 'Angle', sc.angle, 35 }, { 'Vitesse', sc.speed, 30 }, { 'Ligne', sc.line, 35 } }
+    for _, part in ipairs(parts) do
+      txt(part[1], C.text3)
+      same(0)
+      local p = cursor()
+      if p then pcall(ui.setCursor, vec2(math.max(p.x, 64), p.y + 6)) end
+      bar(part[2], part[3], C.accent, w, 3)
+    end
+    if (sc.penalty or 0) > 0 then txt(string.format('Pénalités −%s', tostring(sc.penalty)), C.warn) end
+    if details then
+      if sc.kind == 'tandem' and sc.tandem and sc.tandem.avgGap then txt(string.format('Écart moyen %s m', tostring(sc.tandem.avgGap)), C.text2) end
+      if type(sc.clips) == 'table' then
+        for _, c in ipairs(sc.clips) do
+          local line = (c.hit and '● ' or '○ ') .. tostring(c.name) .. (c.cover and string.format('  %s %%', tostring(c.cover)) or '')
+          if type(sc.zones) == 'table' then
+            for _, z in ipairs(sc.zones) do if z.name == c.name then line = line .. string.format('  · zone %s', tostring(z.score)) end end
+          end
+          txt(line, c.hit and C.text2 or C.text3)
+        end
+      end
+      if summary and summary.clips then txt(summary.clips, C.text3) end
+    end
+  end, sc.zeroed and C.accent2 or (sc.record and C.ok or C.accent))
+end
+
+-- battle en cours : toujours en haut, avec le bouton « Prêt »
+local function battleCard()
+  if not battle then return end
+  if battle.phase == 'invited' then
+    card(function()
+      txt('Défi envoyé à ' .. tostring(battle.name), C.text)
+      txt('En attente de sa réponse…', C.text3)
+      if button('Annuler la battle', 'ghost') then cancelBattle() end
+    end, C.text3)
+    return
+  end
+  card(function()
+    local lead = battleRole() == 'lead'
+    txt(string.format('Battle contre %s', tostring(battle.name)), C.text)
+    txt(string.format('Run %d/2 · %s', battle.run, lead and 'tu es devant (lead)' or 'tu es derrière (chase)'), C.text2)
+    if battle.phase == 'staging' then
+      txt((battle.meReady and '● ' or '○ ') .. 'Toi', battle.meReady and C.ok or C.text3)
+      same(18)
+      txt((battle.otherReady and '● ' or '○ ') .. tostring(battle.name), battle.otherReady and C.ok or C.text3)
+      if not battle.canStage then txt(battle.why or 'Place-toi sur la ligne de start', C.warn)
+      elseif battle.meReady and battle.otherReady then txt('Départ…', C.ok)
+      elseif battle.meReady then txt('Attends que ' .. tostring(battle.name) .. ' soit prêt', C.text3) end
+      if battle.clicked then
+        if button('Annuler prêt', 'ghost', vec2(width(), 0)) then toggleReady() end
+      elseif button('Prêt', 'primary', vec2(width(), 30)) then toggleReady() end
+    elseif battle.phase == 'lights' or battle.phase == 'running' then
+      txt(battle.phase == 'lights' and 'Feux…' or 'En piste', C.ok)
+    elseif battle.phase == 'done' then
+      txt('Battle finie : résultat dans un instant', C.text2)
+    end
+    if #outbox > 0 and clock - outbox[1].at > 4000 then txt('Envoi en cours… (le serveur ralentit les messages)', C.text3) end
+    if battle.phase ~= 'done' and tab == 'battle' and button('Abandonner', 'ghost') then cancelBattle() end
+  end, C.accent)
+end
+
+local function runView()
+  -- angle en grand, la run à côté
+  local angle = state.angle or 0
+  font(ui.Font.Huge, function() txt(string.format('%2.0f°', angle), angle >= 15 and C.text or C.text3) end)
+  same(14)
+  pcall(ui.beginGroup)
+  if gated then
+    if run.active then txt('Run ' .. fmtMs(clock - run.t0), C.ok)
+    elseif run.lastMs then txt('Dernière ' .. fmtMs(run.lastMs), C.text2)
+    else txt(staging and 'Ligne de start, feux, départ' or 'Passe la ligne de départ', C.text3) end
+  end
+  if state.delta then txt(string.format('%+.2f s', state.delta), state.delta <= 0 and C.ok or C.accent2) end
+  if state.gap then txt(string.format(tandem.role == 'lead' and 'Chaser à %.1f m' or 'Leader à %.1f m', state.gap), state.gap < 5 and C.ok or C.text2)
+  elseif ghost.data and ghost.running and ghost.gap then txt(string.format('Fantôme à %.0f m', ghost.gap), ghost.gap < 8 and C.ok or C.text2) end
+  pcall(ui.endGroup)
+  bar(angle, 60, angle >= 15 and C.accent or C.line2, nil, 3, 40)
+  space(3)
+  if #clips > 0 then clipDots() end
+  if lastClip then txt(lastClip, C.ok) end
+  if not state.gap and tandem.saved then txt(tandem.saved, C.text3) end
+  if lights.state ~= 'off' then drawLights(20) end
+  space(2)
+  scoreCard()
+  if button('Feux', 'ghost') then
+    local car = ac.getCar(0)
+    local ok, why = canStage(car)
+    if not ok then say(why, 3000)
+    else
+      startLights(car, function()
+        if ghost.data and ghost.data.green then startGhost(ghost.data.green) end
+      end)
+    end
+  end
+  if ghost.data then
+    same()
+    txt('Fantôme : ' .. tostring(ghost.data.driver or '?'), C.text3)
+  end
+end
+
+local function battleView()
   if not online then
-    ui.textColored('Les battles se lancent sur un serveur.', GREY)
+    txt('Les battles se lancent sur un serveur.', C.text3)
     return
   end
   if not battleEvent then
-    ui.textColored('Messages entre pilotes indisponibles : mets à jour le CSP (0.1.79 ou plus récent).', RED)
+    txt('Messages entre pilotes indisponibles : mets à jour le CSP (0.1.79 ou plus récent).', C.accent2)
     return
   end
   if battle then
-    ui.textColored(string.format('Battle contre %s', tostring(battle.name)), GREEN)
-    if #outbox > 0 and clock - outbox[1].at > 4000 then ui.textColored('Envoi en cours… (le serveur ralentit les messages)', GREY) end
-    if ui.button('Annuler la battle') then cancelBattle() end
+    if battle.phase ~= 'invited' then txt('Les deux pilotes cliquent « Prêt » sur la ligne de start : les feux partent ensemble. Deux runs, les rôles s’inversent.', C.text3) end
     return
   end
   for _, inv in ipairs(invites) do
-    ui.textColored(tostring(inv.name) .. ' te défie', AMBER)
-    if ui.button('Accepter') then acceptInvite(inv) end
-    ui.sameLine()
-    if ui.button('Refuser') then
-      send(KIND.cancel, inv.sid, inv.tag)
-      invites = {}
-    end
+    card(function()
+      txt(tostring(inv.name) .. ' te défie en battle', C.text)
+      if button('Accepter', 'primary') then acceptInvite(inv) end
+      same(4)
+      if button('Refuser', 'ghost') then
+        send(KIND.cancel, inv.sid, inv.tag)
+        invites = {}
+      end
+    end, C.warn)
   end
-  ui.textColored('Défier un pilote :', GREY)
+  txt('Défier un pilote', C.text3)
   local count = safe(function() return ac.getSim().carsCount end, 1)
   local me = ac.getCar(0)
   local n = 0
@@ -1090,126 +1426,46 @@ local function battlePanel()
     if c and safe(function() return c.isConnected end, true) and me then
       n = n + 1
       local dist = math.sqrt((c.position.x - me.position.x) ^ 2 + (c.position.z - me.position.z) ^ 2)
-      if ui.button(string.format('%s (%.0f m)', safe(function() return ac.getDriverName(i) end, '?'), dist)) then challenge(i) end
+      if button(string.format('%s  ·  %.0f m', safe(function() return ac.getDriverName(i) end, '?'), dist), 'ghost', vec2(width(), 0)) then challenge(i) end
     end
   end
-  if n == 0 then ui.textColored('Personne d’autre sur le serveur.', GREY) end
+  if n == 0 then txt('Personne d’autre sur le serveur.', C.text3) end
+end
+
+local function ghostView()
+  txt('Fantôme à suivre', C.text3)
+  if button((ghost.source == 'launcher' and '● ' or '') .. 'Choisi dans le launcher', ghost.source == 'launcher' and 'on' or 'ghost', vec2(width(), 0)) then pickGhost('launcher') end
+  for _, it in ipairs(library.items) do
+    local label = string.format('%s%s  ·  %s', ghost.id == it.file and '● ' or '', tostring(it.driver or '?'), it.score and tostring(it.score) or fmtMs(it.lapMs))
+    if button(label, ghost.id == it.file and 'on' or 'ghost', vec2(width(), 0)) then pickGhost(it) end
+  end
+  if button('Aucun fantôme', ghost.source == nil and 'on' or 'ghost', vec2(width(), 0)) then pickGhost(nil) end
+  if #library.items == 0 then txt('Les meilleures runs avec fantôme arrivent ici depuis le launcher.', C.text3) end
+  if ghost.data then
+    txt(ghost.running and 'Fantôme en piste' or (gated and 'Il part à la ligne de départ, ou au vert des feux' or 'Il part au prochain passage de la ligne'), C.text3)
+  elseif ghost.note then
+    txt(ghost.note, C.text3)
+  end
+end
+
+local function optionsView()
+  local toggle = function(on, label) return button((on and '● ' or '○ ') .. label, on and 'on' or 'ghost', vec2(width(), 0)) end
+  if toggle(ghost.visible, 'Fantôme visible') then ghost.visible = not ghost.visible end
+  if toggle(ghost.wait, 'Le fantôme t’attend') then ghost.wait = not ghost.wait end
+  if button(string.format('Avance du fantôme : %.1f s', ghost.lead / 1000), 'ghost', vec2(width(), 0)) then ghost.lead = (ghost.lead + 500) % 2500 end
+  if toggle(show3d, 'Clips sur la piste') then show3d = not show3d end
+  if course.official then txt('Parcours officiel : ' .. tostring(course.official), C.text3) end
 end
 
 function script.windowMain(dt)
-  ui.pushFont(ui.Font.Huge)
-  ui.text(string.format('%2.0f°', state.angle))
-  ui.popFont()
-
-  if note.text and clock < note.untilT then ui.textColored(note.text, AMBER) end
-  if result and clock - result.at < 20000 then ui.textColored(result.text, GREEN) end
-
-  -- note de la dernière run (écrite par le launcher)
-  local sc = scoreView.data
-  if sc and (scoreView.open or clock - scoreView.at < 30000) then
-    if sc.kind == 'tandem' then
-      ui.textColored(string.format('Chase de %s : %s/100', tostring(sc.driver or '?'), tostring(sc.score or 0)), GREEN)
-      if sc.tandem then ui.textColored(string.format('Proximité %s · angle %s · ligne %s · écart moyen %s m', tostring(sc.tandem.proximity or '-'), tostring(sc.tandem.angleMatch or '-'), tostring(sc.tandem.line or '-'), tostring(sc.tandem.avgGap or '-')), GREY) end
-    else
-      ui.textColored(string.format('Note %s/100%s', tostring(sc.score or 0), sc.record and '  · record !' or ''), GREEN)
-      ui.textColored(string.format('Angle %s · Vitesse %s · Ligne %s%s', tostring(sc.angle or '-'), tostring(sc.speed or '-'), tostring(sc.line or '-'), (sc.penalty or 0) > 0 and string.format(' · pénalités -%s', tostring(sc.penalty)) or ''), GREY)
-      if sc.zeroed then ui.textColored('Run à 0 : ' .. tostring(sc.zeroed), RED) end
-    end
-    if type(sc.clips) == 'table' then
-      for _, c in ipairs(sc.clips) do
-        local txt = (c.hit and '✓ ' or '✗ ') .. tostring(c.name) .. (c.cover and string.format(' (%s %%)', tostring(c.cover)) or '')
-        if type(sc.zones) == 'table' then
-          for _, z in ipairs(sc.zones) do if z.name == c.name then txt = txt .. string.format(' · zone %s/100', tostring(z.score)) end end
-        end
-        ui.textColored(txt, c.hit and GREEN or RED)
-      end
-    end
-  elseif sc then
-    ui.textColored(string.format('Dernière note : %s/100', tostring(sc.score or 0)), GREY)
+  header()
+  if note.text and clock < note.untilT then txt(note.text, C.warn) end
+  if result and clock - result.at < 20000 then
+    card(function() txt(result.text, C.text) end, C.ok)
   end
-  if summary and clock - summary.at < 30000 then
-    ui.textColored(summary.head, GREY)
-    if summary.clips then ui.textColored(summary.clips, GREY) end
-  end
-
-  -- run
-  if gated then
-    if run.active then ui.textColored('Run ' .. fmtMs(clock - run.t0), GREEN)
-    else ui.textColored(run.lastMs and ('Dernière run ' .. fmtMs(run.lastMs)) or (staging and 'Ligne de start, feux, puis ligne de départ' or 'Passe la ligne de départ'), GREY) end
-  end
-
-  if #clips > 0 then
-    local hit = 0
-    for i = 1, #clipState do if clipState[i].hit then hit = hit + 1 end end
-    ui.textColored(string.format('Clips %d / %d', hit, #clips), hit > 0 and GREEN or GREY)
-    if lastClip then ui.textColored(lastClip, GREEN) end
-  end
-
-  if battle and battle.phase ~= 'invited' then
-    local role = battleRole() == 'lead' and 'devant' or 'derrière'
-    local txt = string.format('Battle %d/2 contre %s : %s', battle.run, tostring(battle.name), role)
-    if battle.phase == 'staging' then txt = txt .. (battle.meReady and (battle.otherReady and ' · départ…' or ' · attends l’autre') or (staging and ' · arrête-toi sur la ligne de start' or ' · arrête-toi avant le départ')) end
-    if battle.phase == 'done' then txt = 'Battle finie : résultat dans un instant' end
-    ui.textColored(txt, AMBER)
-  elseif battle then
-    ui.textColored('Défi envoyé à ' .. tostring(battle.name) .. '…', GREY)
-  end
-
-  local gap = state.gap
-  if gap then
-    ui.textColored(string.format(tandem.role == 'lead' and 'Lead : chaser à %.1f m' or 'Chase : %.1f m', gap), gap < 5 and GREEN or GREY)
-  elseif tandem.saved then
-    ui.textColored(tandem.saved, GREY)
-  end
-
-  if state.delta then
-    ui.pushFont(ui.Font.Title)
-    ui.textColored(string.format('%+.2f s', state.delta), state.delta <= 0 and GREEN or RED)
-    ui.popFont()
-  end
-
-  if lights.state ~= 'off' then drawLights(22) end
-
-  -- fantôme
-  if ghost.data then
-    ui.textColored(string.format('Fantôme : %s', tostring(ghost.data.driver or '?')), GREY)
-    if ghost.running and ghost.gap then ui.textColored(string.format('à %.0f m', ghost.gap), ghost.gap < 8 and GREEN or GREY)
-    elseif not ghost.running then ui.textColored(gated and 'Il part à la ligne de départ, ou au vert des feux' or 'Il part au prochain passage de la ligne', GREY) end
-  elseif ghost.note then
-    ui.textColored(ghost.note, GREY)
-  end
-
-  -- boutons
-  if ui.button('Feux') then
-    local car = ac.getCar(0)
-    local ok, why = canStage(car)
-    if not ok then say(why, 3000)
-    else
-      startLights(car, function()
-        if ghost.data then
-          if ghost.data.green then startGhost(ghost.data.green) end
-        end
-      end)
-    end
-  end
-  ui.sameLine()
-  if ui.button(panel == 'ghost' and 'Fantôme ▴' or 'Fantôme ▾') then panel = panel == 'ghost' and nil or 'ghost' end
-  ui.sameLine()
-  if ui.button(panel == 'battle' and 'Battle ▴' or 'Battle ▾') then panel = panel == 'battle' and nil or 'battle' end
-  ui.sameLine()
-  if ui.button(panel == 'options' and '⋯' or '⋯ ') then panel = panel == 'options' and nil or 'options' end
-  if scoreView.data then
-    ui.sameLine()
-    if ui.button(scoreView.open and 'Note ▴' or 'Note ▾') then scoreView.open = not scoreView.open end
-  end
-
-  if panel == 'ghost' then ghostPanel()
-  elseif panel == 'battle' then battlePanel()
-  elseif panel == 'options' then
-    if ui.button(ghost.visible and 'Fantôme : visible' or 'Fantôme : caché') then ghost.visible = not ghost.visible end
-    if ui.button(ghost.wait and 'Fantôme t’attend : oui' or 'Fantôme t’attend : non') then ghost.wait = not ghost.wait end
-    if ui.button(string.format('Avance du fantôme : %.1f s', ghost.lead / 1000)) then ghost.lead = (ghost.lead + 500) % 2500 end
-    if ui.button(show3d and 'Clips sur la piste : oui' or 'Clips sur la piste : non') then show3d = not show3d end
-    if course.official then ui.textColored('Parcours officiel : ' .. tostring(course.official), GREY) end
-  end
+  if battle then battleCard() end
+  if tab == 'battle' then battleView()
+  elseif tab == 'ghost' then ghostView()
+  elseif tab == 'options' then optionsView()
+  else runView() end
 end

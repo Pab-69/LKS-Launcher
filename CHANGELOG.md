@@ -1,5 +1,69 @@
 # Journal des versions
 
+## 1.24.1
+
+- Télémétrie → Profil : si le serveur du groupe n'a pas encore la mise à jour des catégories, le launcher le dit (« un admin doit lancer ./lks.sh update ») au lieu d'afficher tout le monde Débutant sans explication.
+
+## 1.24.0
+
+- **Plus personne ne disparaît du classement quand un parcours change.** Quand un admin modifie un clip ou une règle, les notes changent de version. Avant, le classement ne montrait que les pilotes ayant roulé depuis la modification. Maintenant :
+  - les records d'avant restent affichés, en gris, avec la mention « ancien parcours » ;
+  - dès qu'un pilote ouvre son launcher, ses runs gardées sur son PC sont re-notées avec le nouveau parcours et renvoyées : il revient dans le classement normal, même sans rouler.
+  - Pareil sur le site.
+- **Classement : « Ma catégorie » ou « Tous »** : un bouton pour voir tous les pilotes, avec la catégorie de chacun à côté du nom.
+
+## 1.23.0
+
+- **Launcher sécurisé : seuls les vrais admins voient et utilisent l'admin.** Avant, enregistrer n'importe quel texte comme token suffisait pour voir les pages admin (Parcours, Juge, création de championnats, Publication). Maintenant le launcher demande à GitHub si le token peut vraiment écrire sur le dépôt du groupe : sinon les pages admin restent cachées, et toute action admin est refusée par le launcher lui-même, même appelée en contournant l'interface. Un token d'un autre dépôt ne donne aucun droit. Réglages → Accès admin indique si l'accès est vérifié ou refusé, et pourquoi.
+- **Catégories calculées avec toutes les données déjà sur le serveur** : à la mise à jour du serveur, chaque pilote reçoit sa catégorie d'après ses runs et ses records déjà enregistrés (moyenne de ses 5 meilleures notes, au moins 3), au lieu de repartir de Débutant. Ensuite, la catégorie évolue à chaque run comme avant.
+- **Admins** : serveur du groupe → `./lks.sh update` (le calcul se fait une fois, tout seul). `./lks.sh categories` le relance quand vous voulez. Sur Supabase → relancez le script.
+
+## 1.22.0
+
+- **Clips mesurés au centimètre par l'appli en jeu (3.1)** : à chaque image, l'appli mesure la distance exacte entre le clip et le vrai pare-chocs de ta voiture (avant pour une corde, arrière pour une zone extérieure), avec les dimensions réelles de la voiture. Le launcher note les clips avec ces mesures au lieu de les estimer depuis le centre de la voiture. Les zones longues sont mesurées mètre par mètre, même à faible nombre d'images par seconde. Le détail d'un passage indique si ses clips ont été mesurés en jeu.
+- **Éditeur de parcours précis** (admins, Télémétrie → Parcours) :
+  - carte zoomable à la molette (jusqu'au centimètre), on se déplace en glissant, échelle et position du pointeur (distance au bord de route et à la ligne) ;
+  - **bords de la route** dessinés depuis la ligne IA du circuit ;
+  - chaque clip est un **point** ou une **zone** (début → fin, points ajoutables pour suivre une courbe), à sa vraie taille ; on le déplace à la souris, Maj pour le coller au bord de route, bouton « Au bord », Suppr pour le retirer ; clic sur son numéro pour zoomer dessus ;
+  - **ligne à suivre ajustée à la main** : onglet « Ligne », attrape la ligne et tire, les points autour suivent selon la taille du pinceau ; Lisser, Annuler (Ctrl+Z), Repartir de la ligne d'origine. Partie d'une run, la vitesse de référence de cette run est gardée.
+
+## 1.21.0
+
+- **Site : page Pilotes** : tous les pilotes rangés par catégorie (Pro, Amateur, Débutant) avec leur moyenne, et une recherche. Clique un pilote : sa catégorie et ce qu'il faut pour monter, ses records par circuit, ses dernières runs (avec les runs à 0) et ses battles.
+- **Site : détail d'un passage** : clique une ligne d'un classement ou un record. La note détaillée (angle, vitesse, ligne et clips, pénalités), chaque clip avec sa couverture et sa note de zone, le tracé coloré selon l'angle, et les courbes (angle, vitesse, gaz, frein, volant, rapport). Survole une courbe : la valeur s'affiche et le point apparaît sur le tracé.
+- **Site : classements par catégorie** : chaque pilote a son badge de catégorie ; le choix « Pilotes » montre ceux de la catégorie choisie, ou tous.
+- **Site : battles** : les dernières battles du circuit choisi (scores lead / chase, vainqueur, one more time).
+- **Admins** : serveur du groupe → `./lks.sh update` puis `./lks.sh site-build` pour mettre le site à jour.
+
+## 1.20.0
+
+- **Nouvelle appli en jeu (3.0), au style du launcher** : fond sombre, rouge LKS, peu de texte. En haut, quatre onglets : Run, Battle, Fantôme, réglages.
+  - **Run** : l'angle en grand avec une barre, le chrono de la run, l'écart avec le fantôme ou le leader, une pastille par clip (verte quand il est touché).
+  - **Note plus discrète** : après la run, la note et trois petites barres (angle, vitesse, ligne) pendant 25 s, puis une seule ligne « Dernière note ». Le détail des clips et des zones s'ouvre avec « Détails ». Ta catégorie s'affiche à côté du logo.
+- **Battle avec bouton « Prêt »** : après le défi accepté, chaque pilote se place sur la ligne de start et clique **Prêt**. Les feux partent seulement quand les deux sont prêts (pastilles « Toi » et l'adversaire). Si tu bouges après avoir cliqué, tu n'es plus prêt jusqu'à te replacer. Même chose avant la deuxième run (rôles inversés).
+- La carte de la battle reste en haut de l'appli tant qu'elle dure, quel que soit l'onglet.
+
+## 1.19.0
+
+- **Vraies catégories : Débutant, Amateur, Pro.** Chaque pilote a sa catégorie, attribuée automatiquement selon ses notes (moyenne de ses 5 meilleures runs, au moins 3 runs) : 75 et plus → catégorie au-dessus, moins de 35 → catégorie en dessous. Un nouveau pilote commence Débutant.
+- **Notation selon la catégorie** : tes runs sont notées avec les règles de ta catégorie (dans le jeu, sur le serveur et dans le launcher). Télémétrie → Profil montre ta catégorie, ta moyenne et ce qu'il faut pour monter.
+- **Classements par catégorie** : le choix « Catégorie » montre les pilotes de cette catégorie, notés comme elle.
+- **Réglages par circuit** (admins, Télémétrie → Parcours) :
+  - poids de la note par catégorie (angle, vitesse, ligne et clips) ;
+  - objectifs par zone : angle et vitesse visés à chaque clip (pour Amateur, adaptés pour Débutant et Pro). Sans objectif, la zone garde l'objectif général ;
+  - pénalités par catégorie (comme avant).
+- **Manches par catégorie** : une manche peut être ouverte à tous (avec la notation choisie) ou réservée à une catégorie (seuls ses pilotes comptent, notés comme elle). Dans le launcher et sur le site.
+- **Purge sur le serveur** : après un jour, seule la meilleure run de chaque pilote par circuit et par type reste ; tout est effacé après un an. Les battles et leurs runs restent.
+- Site : catégories Débutant / Amateur / Pro dans les classements et les championnats.
+- **Admins** : serveur du groupe → `./lks.sh update` ; sur Supabase → relancez le script (Publication → Classement → Copier le script).
+
+## 1.18.0
+
+- **Nouveau menu « Compétition »** : championnats (saisons, manches, tableaux), battles et juge ont leur propre page. La télémétrie garde : En direct, Passages, Classements, Comparer, Profil, Outils.
+- **Clique sur un passage** (dans Passages ou Classements) : toutes ses infos s'affichent avec les courbes (angle, vitesse, gaz, frein, volant, rapport, écart avec le leader en tandem), la note détaillée, chaque clip avec sa note de zone, les pénalités et la carte. Survole une courbe : le point s'affiche sur la carte.
+- **En direct** : grande carte à droite, et la note détaillée de ton dernier passage (barres, clips, zones, pénalités) avec un bouton vers toutes ses courbes.
+- **Fin de session** : à la fermeture du jeu, seul ton meilleur passage par voiture et circuit reste sur ton PC (meilleur temps et meilleure note dans chaque mode), plus les runs des battles. Désactivable : Télémétrie → Outils → « Garder tous mes passages ».
+
 ## 1.17.5
 
 - **Télémétrie en multi sur Calmont** (et tout circuit avec un tracé) : en ligne, le jeu donne le nom du tracé en minuscules (« calmont » au lieu de « Calmont »). Le launcher ne trouvait plus le parcours officiel : aucune run enregistrée, rien en direct, alors qu'en solo tout marchait. Le tracé est maintenant reconnu quelle que soit la casse, et les runs faites en ligne sont rangées avec celles du solo (mêmes records, même classement).

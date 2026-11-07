@@ -17,6 +17,7 @@
 #   ./lks.sh github-token        règle le jeton GitHub (publier soirées et actus depuis le site)
 #   ./lks.sh site <adresse>      adresse du site vitrine autorisée (ex. https://lks-syndicate.fr)
 #   ./lks.sh site-build <dossier>  reconstruit le site vitrine dans ce dossier (ex. /var/www/lks)
+#   ./lks.sh categories          recalcule la catégorie de chaque pilote avec toutes ses notes
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -282,5 +283,6 @@ case "$cmd" in
   github-token) github_token ;;
   site) site_origin "$@" ;;
   site-build) site_build "$@" ;;
-  *) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//' ;;
+  categories) n=$(psql_lks -c 'select public.lks_recompute_categories()'); say "Catégories recalculées pour $n pilote(s)." ;;
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac

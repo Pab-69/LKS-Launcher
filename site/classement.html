@@ -11,7 +11,7 @@
   <body class="page">
     <nav class="top">
       <a href="index.html">{{LOGO_WIDE}}</a>
-      <div class="top-links"><a href="index.html">Accueil</a><a href="#championnats">Championnats</a></div>
+      <div class="top-links"><a href="index.html">Accueil</a><a href="pilotes.html">Pilotes</a><a href="#battles">Battles</a><a href="#championnats">Championnats</a></div>
     </nav>
     <main>
       <section>
@@ -23,10 +23,14 @@
             <option value="tandem">Tandem</option>
             <option value="time">Chrono</option>
           </select></label>
-          <label>Mode <select id="f-mode">
-            <option value="normal">Normal</option>
+          <label>Catégorie <select id="f-mode">
+            <option value="normal">Amateur</option>
             <option value="debutant">Débutant</option>
-            <option value="pro">Compétition</option>
+            <option value="pro">Pro</option>
+          </select></label>
+          <label>Pilotes <select id="f-who">
+            <option value="cat">De cette catégorie</option>
+            <option value="all">Tous</option>
           </select></label>
           <label>Voiture <select id="f-car"><option value="">Toutes</option></select></label>
         </div>
@@ -35,6 +39,11 @@
           <thead><tr><th>#</th><th>Pilote</th><th>Voiture</th><th class="num" id="board-col">Note</th><th class="col-date">Date</th></tr></thead>
           <tbody></tbody>
         </table></div>
+      </section>
+      <section id="battles">
+        <h2>Battles</h2>
+        <p class="muted" id="battles-track"></p>
+        <div id="battle-list" class="battle-list"><p class="status">Chargement…</p></div>
       </section>
       <section id="championnats">
         <h2>Championnats</h2>
@@ -45,6 +54,7 @@
     <script src="config.js"></script>
     <script src="lks-shared.js"></script>
     <script src="site.js"></script>
+    <script src="pilotes.js"></script>
     <script src="classement.js"></script>
   </body>
 </html>

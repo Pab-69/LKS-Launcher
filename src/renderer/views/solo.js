@@ -21,7 +21,7 @@ export default function solo(root, params) {
   root.append(
     h('div.view-head', h('div', h('h1', 'Solo'), h('p', 'Entraînement, course contre l’IA ou hotlap. Les réglages sont mémorisés.'))),
     h('div.solo', left, right),
-    h('div.launch-bar', summaryLine, store.settings.admin && store.settings.admin.hasToken ? h('button.btn', { title: 'Publier cette session pour tout le monde', on: { click: sharePreset } }, 'Partager') : null, h('button.btn.btn-primary.btn-lg', { on: { click: launch } }, icon('play'), 'Lancer')),
+    h('div.launch-bar', summaryLine, store.settings.admin && store.settings.admin.verified ? h('button.btn', { title: 'Publier cette session pour tout le monde', on: { click: sharePreset } }, 'Partager') : null, h('button.btn.btn-primary.btn-lg', { on: { click: launch } }, icon('play'), 'Lancer')),
   );
 
   const car = () => content && content.cars.find((c) => c.id === o.car);

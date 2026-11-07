@@ -12,10 +12,11 @@ import donate from './views/donate.js';
 import shop from './views/shop.js';
 import host from './views/host.js';
 import telemetry from './views/telemetry.js';
+import competition from './views/competition.js';
 import gallery from './views/gallery.js';
 import { showTour } from './tour.js';
 
-const routes = { home, content, solo, servers, host, telemetry, gallery, graphics, donate, shop, settings, admin };
+const routes = { home, content, solo, servers, host, telemetry, competition, gallery, graphics, donate, shop, settings, admin };
 const viewEl = document.getElementById('view');
 let current = null;
 let cleanup = null;
@@ -41,7 +42,7 @@ document.querySelectorAll('[data-win]').forEach((b) => b.addEventListener('click
 function renderChrome() {
   const s = store.settings;
   if (s) {
-    document.getElementById('nav-admin').hidden = !s.admin.hasToken;
+    document.getElementById('nav-admin').hidden = !s.admin.verified;
     const chip = clear(document.getElementById('driver-chip'));
     chip.append(h('span.flag', s.nationality || '—'), h('span', s.driverName || 'Pilote sans nom'));
   }

@@ -14,7 +14,8 @@ const { driftOf, MODE_IDS } = require('./drift');
 const MAX_PER_COMBO = 40; // keep the bests + the most recent laps
 
 function summary(lap) {
-  const { samples, columns, ...rest } = lap;
+  const { samples, columns, measure, ...rest } = lap;
+  if (measure) rest.measured = true; // clips judged from the in-game app's exact distances
   if (rest.tandem) {
     const { leadSamples, ...tandem } = rest.tandem;
     rest.tandem = tandem;
@@ -108,6 +109,40 @@ class LapStore {
       fs.rmSync(this.file(l.id), { force: true });
       this.index = this.index.filter((x) => x.id !== l.id);
     }
+  }
+
+  /**
+   * End of a game session: keep only what counts — for each driver and
+   * car / track / layout, the best valid time and the best drift and tandem
+   * note in each mode, plus the runs of a battle and those in `keep`.
+   * Returns how many passages were removed.
+   */
+  purge(keep = new Set()) {
+    const best = new Set();
+    const groups = {};
+    for (const l of this.index) {
+      const k = `${comboKey(l)}|${String(l.driver.steamId || l.driver.name).toLowerCase()}`;
+      (groups[k] = groups[k] || []).push(l);
+    }
+    for (const list of Object.values(groups)) {
+      const bestTime = list.filter((l) => l.valid && !l.tandem).sort((a, b) => a.lapMs - b.lapMs)[0];
+      if (bestTime) best.add(bestTime.id);
+      for (const kind of ['drift', 'tandem']) {
+        for (const mode of MODE_IDS) {
+          const top = list.filter((l) => resultOf(l, kind, mode) && resultOf(l, kind, mode).score > 0).sort((a, b) => resultOf(b, kind, mode).score - resultOf(a, kind, mode).score)[0];
+          if (top) best.add(top.id);
+        }
+      }
+    }
+    let n = 0;
+    for (const l of [...this.index]) {
+      if (best.has(l.id) || keep.has(l.id) || l.battleId) continue;
+      fs.rmSync(this.file(l.id), { force: true });
+      this.index = this.index.filter((x) => x.id !== l.id);
+      n++;
+    }
+    if (n) this.saveIndex();
+    return n;
   }
 
   load(id) {

@@ -1,12 +1,25 @@
 import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox, modal } from '../ui.js';
 import { store } from '../store.js';
+import { courseMap, resampleLine, smoothLine, snapToEdge, roadDirection, zoneCentre } from './course-editor.js';
 
-// state kept while switching tabs
-let tab = 'live';
+// state kept while switching tabs (one tab per section: Télémétrie / Compétition)
+const tabsBySection = { telemetry: 'live', competition: 'champ' };
+const COMPETITION_TABS = ['champ', 'battles', 'judge'];
+let detailId = null; // passage shown in « Détail »
+// driver categories (from the group's server): { mine, me, map: { name: { category, avg, runs } }, modes, up, down }
+let catInfo = null;
+let judgeModeChosen = false;
+const CAT_LABEL = { debutant: 'Débutant', amateur: 'Amateur', pro: 'Pro' };
+const catOf = (name) => {
+  const r = catInfo && catInfo.map && catInfo.map[String(name || '').trim().toLowerCase()];
+  return r ? r.category : 'debutant';
+};
+const catOfMode = (m) => (catInfo ? Object.keys(catInfo.modes).find((k) => catInfo.modes[k] === m) : null) || ({ debutant: 'debutant', normal: 'amateur', pro: 'pro' })[m];
 let compare = { a: null, b: null };
 let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
 let compareMode = 'time';
 let judgeMode = 'normal'; // debutant | normal | pro
+let boardWho = 'cat'; // ranking: drivers of the chosen category, or everybody
 let editor = null; // drift course editor state
 let battleQuery = { track: '', layout: '' };
 let champIndex = 0;
@@ -14,12 +27,12 @@ let champEditor = null; // admins: championships being edited
 
 const COLORS = { a: '#e01b3a', b: '#ece5da', grid: '#261e22', text: '#6c615c' };
 const COL = { d: 0, t: 1, speed: 2, gas: 3, brake: 4, gear: 5, rpm: 6, steer: 7, angle: 8, x: 9, z: 10 };
-const MODES = [['debutant', 'Débutant'], ['normal', 'Normal'], ['pro', 'Compétition']];
+const MODES = [['debutant', 'Débutant'], ['normal', 'Amateur'], ['pro', 'Pro']]; // catégories de pilote : chacune sa notation
 const MODE_LABEL = Object.fromEntries(MODES);
 
 const fmtDelta = (ms) => (ms == null ? '—' : `${ms > 0 ? '+' : ''}${(ms / 1000).toFixed(2)}`);
 const comboLabel = (l) => [trackName(l.track, l.layout), carName(l.car)].join(' · ');
-const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.hasToken);
+const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.verified);
 const getCourseInfo = (track, layout) => api.call('drift:course', { track, layout: layout || '' }).catch(() => ({ course: null, source: null }));
 const getCourse = (track, layout) => getCourseInfo(track, layout).then((r) => r.course);
 
@@ -302,23 +315,61 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
 
 // ---------------------------------------------------------------- view
 export default function telemetryView(root, params = {}) {
-  if (params.tab) tab = params.tab;
+  // « Compétition » (championnats, battles, juge) is its own menu, with the same code
+  const section = params.section === 'competition' || COMPETITION_TABS.includes(params.tab) ? 'competition' : 'telemetry';
+  if (params.tab) tabsBySection[section] = params.tab;
+  if (params.lap) {
+    detailId = params.lap;
+    tabsBySection.telemetry = 'detail';
+  }
+  let tab = tabsBySection[section];
+  const setTab = (v) => {
+    tab = v;
+    tabsBySection[section] = v;
+  };
   const body = h('div');
   const tabsEl = h('div.toolbar');
   root.append(
-    h('div.view-head', h('div', h('h1', 'Télémétrie'), h('p', 'Tes tours, ton classement et la comparaison entre pilotes.'))),
+    section === 'competition'
+      ? h('div.view-head', h('div', h('h1', 'Compétition'), h('p', 'Championnats, saisons, manches et battles du groupe.')))
+      : h('div.view-head', h('div', h('h1', 'Télémétrie'), h('p', 'Tes passages en détail, les classements et la comparaison entre pilotes.'))),
     tabsEl,
     body,
   );
   let liveOff = null;
+  // the notes shown by default: the driver's own category
+  api.call('telemetry:categories').then((c) => {
+    catInfo = c;
+    if (!judgeModeChosen && c && c.modes[c.mine]) {
+      judgeModeChosen = true;
+      if (judgeMode !== c.modes[c.mine]) {
+        judgeMode = c.modes[c.mine];
+        if (body.isConnected && tab !== 'live') render();
+      }
+    }
+  }).catch(() => {});
 
   function renderTabs() {
     clear(tabsEl);
-    const tabs = [['live', 'En direct'], ['laps', 'Tours'], ['board', 'Classement'], ['compare', 'Comparer'], ['battles', 'Battles'], ['champ', 'Championnat'], ['profile', 'Profil']];
-    if (isAdmin()) tabs.push(['judge', 'Juge'], ['course', 'Parcours drift']);
-    tabs.push(['tools', 'Outils']);
-    if (!tabs.some(([k]) => k === tab)) tab = 'live';
-    tabsEl.append(seg(tabs, tab, (v) => { tab = v; render(); }));
+    let tabs;
+    if (section === 'competition') {
+      tabs = [['champ', 'Championnats'], ['battles', 'Battles']];
+      if (isAdmin()) tabs.push(['judge', 'Juge']);
+    } else {
+      tabs = [['live', 'En direct'], ['laps', 'Passages'], ['board', 'Classements'], ['compare', 'Comparer'], ['profile', 'Profil']];
+      if (tab === 'detail') tabs.splice(2, 0, ['detail', 'Détail']);
+      if (isAdmin()) tabs.push(['course', 'Parcours']);
+      tabs.push(['tools', 'Outils']);
+    }
+    if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]);
+    tabsEl.append(seg(tabs, tab, (v) => { setTab(v); render(); }));
+  }
+
+  /** Open a passage (local or from the shared leaderboard) with all its curves. */
+  function openDetail(id) {
+    detailId = id;
+    setTab('detail');
+    render();
   }
 
   function render() {
@@ -329,14 +380,14 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, detail: renderDetail, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
   }
 
   // ------------------------------------------------------------ live
   async function renderLive() {
     const st = await guard(() => api.call('telemetry:status'));
     if (st && st.enabled === false) {
-      body.append(h('div.notice', h('span.grow', 'La télémétrie est désactivée.'), h('button.btn.btn-sm', { on: { click: () => { tab = 'tools'; render(); } } }, 'Réglages')));
+      body.append(h('div.notice', h('span.grow', 'La télémétrie est désactivée.'), h('button.btn.btn-sm', { on: { click: () => { setTab('tools'); render(); } } }, 'Réglages')));
       return;
     }
     if (st && st.error) body.append(h('div.notice', st.error));
@@ -356,9 +407,10 @@ export default function telemetryView(root, params = {}) {
         h('div.live-tile.wide', h('div.label', 'Pilotes autour'), (el.others = h('div.live-others')), (el.battle = h('div.hint.mt'))),
         h('div.live-tile.wide', h('div.label', 'Pneus (°C)'), (el.tyres = h('div.live-tyres')), h('div.hint.mt', (el.session = h('span', '—')))),
       ),
-      (el.mapWrap = h('div.panel.mt')),
     );
-    body.append(waiting, panel, h('div.row.mt', h('button.btn.btn-sm.btn-ghost.right', { on: { click: async () => {
+    el.mapWrap = h('div.panel.live-map', { hidden: true });
+    el.lastWrap = h('div.panel.mt.live-last', { hidden: true });
+    body.append(h('div.live-layout', h('div.live-left', waiting, panel, el.lastWrap), el.mapWrap), h('div.row.mt', h('button.btn.btn-sm.btn-ghost.right', { on: { click: async () => {
       const text = await guard(() => api.call('telemetry:diagnostic'));
       if (text) { await api.call('clipboard:write', text); toast('Diagnostic copié : colle-le à un admin', 'success'); }
     } } }, 'Copier le diagnostic')));
@@ -366,6 +418,7 @@ export default function telemetryView(root, params = {}) {
       const on = s && s.status === 2;
       waiting.hidden = on;
       panel.hidden = !on;
+      el.mapWrap.hidden = !on;
       if (!on) return;
       el.speed.textContent = Math.round(s.speed);
       el.gear.textContent = s.gear;
@@ -404,18 +457,40 @@ export default function telemetryView(root, params = {}) {
         const ref = laps.filter((l) => l.valid).sort((a, b) => a.lapMs - b.lapMs)[0] || laps[0];
         if (ref || (course && course.refLine && course.refLine.length)) {
           const full = ref ? await api.call('telemetry:lap', ref.id) : null;
-          map = trackMap(full ? [full] : [], { height: 240, live: true, course });
+          map = trackMap(full ? [full] : [], { height: Math.max(420, Math.min(720, Math.round(window.innerHeight * 0.68))), live: true, course });
           el.mapWrap.append(h('h3', 'Carte'), map);
         } else el.mapWrap.append(h('p.muted', { style: { margin: 0 } }, 'La carte apparaît après ton premier tour complet.'));
       }
       if (map) map.redraw({ x: s.x, z: s.z, others: s.others || [] });
     };
+    // the last passage, with its detailed note
+    let lastKey = null;
+    const showLast = async () => {
+      const laps = (await api.call('telemetry:laps', {}).catch(() => [])) || [];
+      const s = st && st.live;
+      const pickFrom = s && s.track ? laps.filter((l) => l.track === s.track && (l.layout || '') === (s.layout || '')) : laps;
+      const last = [...(pickFrom.length ? pickFrom : laps)].sort((a, b) => Date.parse(b.date) - Date.parse(a.date))[0];
+      if (!last || (lastKey === last.id && el.lastWrap.childNodes.length)) return;
+      lastKey = last.id;
+      const lap = await api.call('telemetry:lap', last.id).catch(() => null);
+      if (!lap) return;
+      const tandem = Boolean(lap.tandem && lap.tandem.leadSamples);
+      const d = resultOf(lap, tandem ? 'tandem' : 'drift');
+      el.lastWrap.hidden = false;
+      clear(el.lastWrap).append(
+        h('div.row', h('h3', { style: { margin: 0 } }, `Dernier passage · ${dateFr(lap.date)}`), h('span.s', ` ${comboLabel(lap)}${tandem ? ` · derrière ${lap.tandem.lead.name}` : ''}`),
+          h('div.right.row', seg(MODES, judgeMode, (v) => { judgeMode = v; lastKey = null; showLast(); }), h('button.btn.btn-sm', { on: { click: () => openDetail(lap.id) } }, 'Toutes les courbes'))),
+        h('div.live-last-grid.mt-s', scorePanel(d, tandem), clipsPanelOf(tandem ? null : d)));
+    };
+    showLast();
+    const offLastLap = window.lks.on('telemetry:lap', () => showLast());
     update(st && st.live);
     const offLive = window.lks.on('telemetry:live', update);
     const offReset = window.lks.on('telemetry:reset', (r) => toast(r && r.why === 'pits' ? 'Retour aux stands : run remise à zéro' : 'Voiture replacée : run remise à zéro', 'info'));
     liveOff = () => {
       offLive();
       offReset();
+      offLastLap();
     };
   }
 
@@ -481,6 +556,17 @@ export default function telemetryView(root, params = {}) {
     const p = await guard(() => api.call('telemetry:profile'));
     if (!p) return;
     const stat = (label, value) => h('div.live-tile', h('div.label', label), h('div.live-v', String(value)));
+    if (catInfo) {
+      const me = catInfo.map[String(catInfo.me || '').trim().toLowerCase()];
+      const next = { debutant: 'Amateur', amateur: 'Pro', pro: null }[catInfo.mine];
+      body.append(h('div.panel.category-panel',
+        h('div.row', h('div', h('div.label', 'Ta catégorie'), h('div.category-name', CAT_LABEL[catInfo.mine])),
+          h('div.grow.s', catInfo.serverOutdated
+            ? 'Le serveur du groupe n’est pas encore à jour : les catégories n’y existent pas, tout le monde est affiché Débutant. Un admin doit lancer « ./lks.sh update » sur le serveur (ou relancer le script SQL sur Supabase) : chaque pilote reçoit alors sa catégorie d’après ses notes déjà enregistrées.'
+            : me && me.runs >= 3
+            ? `Moyenne de tes 5 meilleures notes (notées ${CAT_LABEL[catInfo.mine]}) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
+            : `Il faut au moins 3 runs partagées pour être classé. Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
+    }
     body.append(
       h('div.live-grid',
         stat('Runs solo', p.runs), stat('Tandems', p.tandems), stat('Minutes en glisse', p.driftMinutes),
@@ -510,7 +596,7 @@ export default function telemetryView(root, params = {}) {
   async function renderLaps() {
     const laps = (await guard(() => api.call('telemetry:laps', {}))) || [];
     body.append(h('div.row.wrap',
-      h('p.muted', { style: { margin: 0 } }, `${laps.length} tour(s) enregistré(s). Choisis A et B pour les comparer.`),
+      h('p.muted', { style: { margin: 0 } }, `${laps.length} passage(s). Clique sur un passage pour tout voir, ou choisis A et B pour les comparer.`),
       h('div.right', seg(MODES, judgeMode, (v) => { judgeMode = v; render(); })),
       h('button.btn.btn-sm', { on: { click: async () => { const r = await guard(() => api.call('telemetry:import')); if (r && r.length) { toast(`${r.length} tour(s) importé(s)`, 'success'); render(); } } } }, icon('download'), 'Importer')));
     if (!laps.length) {
@@ -522,7 +608,7 @@ export default function telemetryView(root, params = {}) {
     for (const l of laps.slice(0, 300)) {
       const d = resultOf(l, 'drift');
       const t = l.tandem ? resultOf(l, 'tandem') : null;
-      list.append(h('div.list-row.lap-row',
+      list.append(h('div.list-row.lap-row.clickable', { title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(l.id); } } },
         h('span.s', dateFr(l.date)),
         h('div', h('div.t', `${l.driver.name}${l.imported ? ' (importé)' : ''}`), h('div.s', comboLabel(l))),
         h('div', h('strong', lapTime(l.lapMs)), ' ', l.valid ? null : h('span.tag.warn', 'invalide')),
@@ -530,7 +616,7 @@ export default function telemetryView(root, params = {}) {
           ? h('div', h('strong', note(t, '—')), h('div.s', `Tandem derrière ${l.tandem.lead.name}`))
           : h('div', h('strong', note(d)), h('div.s', d && d.zeroed ? `Run à 0 : ${d.zeroed}` : d && d.score > 0 ? `${Math.round(d.avgAngle)}° moy. · ${Math.round(d.maxAngle)}° max` : '')),
         h('div.row',
-          l.tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(l.id) } }, 'Voir') : null,
+          h('button.btn.btn-sm', { on: { click: () => openDetail(l.id) } }, 'Détail'),
           l.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce tour en fantôme', on: { click: () => useGhost(l.id) } }, 'Fantôme') : null,
           h('button.btn.btn-sm', { title: 'Tour A', on: { click: () => pick('a', l.id) } }, 'A'),
           h('button.btn.btn-sm', { title: 'Tour B', on: { click: () => pick('b', l.id) } }, 'B'),
@@ -540,6 +626,111 @@ export default function telemetryView(root, params = {}) {
     body.append(list);
   }
 
+  // ------------------------------------------------------------ one passage, in detail
+  /** Note of one passage, bar by bar (drift or tandem). */
+  function scorePanel(d, tandem) {
+    const panel = h('div.panel.judge', h('h3', `Note · ${MODE_LABEL[judgeMode]}`));
+    if (!d) {
+      panel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de note pour ce passage.'));
+      return panel;
+    }
+    const row = (label, v, max) => panel.append(h('div.judge-row',
+      h('span.label', label),
+      h('div.judge-bars', h('div.judge-bar.a', h('i', { style: { width: `${max ? Math.max(0, Math.min(100, ((v || 0) / max) * 100)) : 0}%` } }), h('b', v == null ? '—' : String(Math.round(v * 10) / 10)))),
+      h('span.s', max ? `/ ${max}` : '')));
+    if (tandem) {
+      row('Proximité', d.proximity, 35);
+      row('Angle copié', d.angleMatch, 25);
+      row('Ligne du leader', d.line, 20);
+      row('Drift', d.drift, 20);
+    } else {
+      row('Angle', d.angle, 35);
+      row('Vitesse', d.speed, 30);
+      if (d.line != null) row('Ligne et clips', d.line, 35);
+    }
+    if (d.penalty) row('Pénalités', -d.penalty, 0);
+    row('Note', d.score, 100);
+    if (d.zeroed) panel.append(h('div.notice.mt', `Run à 0 : ${d.zeroed}`));
+    return panel;
+  }
+
+  function clipsPanelOf(d) {
+    const panel = h('div.panel', h('h3', 'Clips et zones'));
+    const clips = (d && d.clips) || [];
+    if (!clips.length) panel.append(h('p.muted', { style: { margin: 0 } }, 'Pas de clips sur ce circuit.'));
+    else {
+      const zoneOf = (name) => (d.zones || []).find((z) => z.name === name);
+      panel.append(h('div.clip-table.detail',
+        h('span.label', 'Clip'), h('span.label', 'Résultat'), h('span.label', 'Zone'),
+        ...clips.flatMap((c, i) => {
+          const z = zoneOf(c.name);
+          const what = c.cover !== undefined ? `${c.cover} % parcouru` : c.dist == null ? '' : `${c.dist} m`;
+          return [h('span', `${i + 1}. ${c.name}`), h('span', h(`span.clip-chip${c.hit ? '.hit' : ''}`, c.hit ? '✓' : '✗'), ` ${what}`), h('strong', z ? `${z.score}/100` : '—')];
+        })));
+    }
+    if (clips.length) {
+      const measured = clips.some((c) => c.measured);
+      panel.append(h('p.hint', { style: { margin: '6px 0 0' } }, measured
+        ? 'Clips mesurés par l’appli en jeu : distance exacte du pare-chocs (avant pour une corde, arrière pour une zone extérieure), à chaque image, avec la forme de la voiture.'
+        : 'Clips estimés depuis le centre de la voiture (appli en jeu absente pendant ce passage).'));
+    }
+    const pens = ((d && d.penalties) || []).map((p) => `${p.label} ${p.zero ? '(run à 0)' : `(−${p.points})`} à ${Math.round((p.d || 0) * 100)} %`);
+    panel.append(h('div.label.mt', 'Pénalités'), h('p.s', { style: { margin: '4px 0 0' } }, pens.length ? pens.join(' · ') : 'Aucune.'));
+    return panel;
+  }
+
+  async function renderDetail() {
+    const lap = detailId ? await guard(() => api.call('telemetry:lap', detailId)) : null;
+    if (!lap) {
+      body.append(h('div.empty', h('strong', 'Passage introuvable'), 'Choisis un passage dans « Passages » ou « Classements ».'));
+      return;
+    }
+    const course = await getCourse(lap.track, lap.layout);
+    const tandem = Boolean(lap.tandem && lap.tandem.leadSamples);
+    const d = resultOf(lap, tandem ? 'tandem' : 'drift');
+    const judged = Boolean(course || tandem || (d && d.score > 0));
+    body.append(h('div.toolbar',
+      h('button.btn.btn-sm.btn-ghost', { on: { click: () => { setTab('laps'); render(); } } }, '← Passages'),
+      judged ? seg(MODES, judgeMode, (v) => { judgeMode = v; render(); }) : null,
+      h('div.right.row',
+        lap.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce passage en fantôme', on: { click: () => useGhost(lap.id) } }, 'Fantôme') : null,
+        tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(lap.id) } }, 'Avec le leader') : null,
+        h('button.btn.btn-sm', { on: { click: () => pick('a', lap.id) } }, 'Comparer (A)'),
+        h('button.btn.btn-sm', { on: { click: () => pick('b', lap.id) } }, 'Comparer (B)'))));
+    const ang = lap.samples.map((x) => Math.min(90, x[COL.angle]));
+    const avgAngle = Math.round(ang.reduce((p, v) => p + v, 0) / (ang.length || 1));
+    body.append(h('div.detail-head.panel',
+      h('div.detail-score', judged && d ? [h('strong', d.score > 0 ? d.score.toFixed(1) : '0'), h('small', ' /100')] : h('strong', lapTime(lap.lapMs))),
+      h('div.grow',
+        h('div.t', `${lap.driver.name}${tandem ? ` · chase derrière ${lap.tandem.lead.name}` : ''}`),
+        h('div.s', `${comboLabel(lap)} · ${dateFr(lap.date)}`),
+        h('div.s', [judged ? `Temps ${lapTime(lap.lapMs)}` : null, `${Math.round(lap.topSpeed || 0)} km/h max`, `${avgAngle}° moy. · ${Math.round(Math.max(0, ...ang))}° max`, lap.valid === false ? 'invalide' : null].filter(Boolean).join(' · ')))));
+    if (judged) body.append(h('div.grid.grid-2.mt', scorePanel(d, tandem), clipsPanelOf(tandem ? null : d)));
+    const pts = (col, f = (v) => v) => lap.samples.map((x) => [x[COL.d], f(x[col])]);
+    const at = (col, unit = '', digits = 0, f = (v) => v) => (dd) => {
+      const v = valueAt(lap.samples, dd, col);
+      return v == null ? '' : `${Number(f(v)).toFixed(digits)}${unit}`;
+    };
+    const one = (name, col, unit, digits, f) => [{ name, color: COLORS.a, points: pts(col, f), at: at(col, unit, digits, f) }];
+    const maxSpeed = Math.max(20, ...lap.samples.map((x) => x[COL.speed]));
+    const steerMax = Math.max(0.1, ...lap.samples.map((x) => Math.abs(x[COL.steer] || 0)));
+    const curves = [
+      chart({ label: 'Angle (°)', height: 130, yMin: 0, yMax: Math.ceil(Math.max(10, ...ang) / 10) * 10, series: one('', COL.angle, '°', 0, (v) => Math.min(90, v)) }),
+      chart({ label: 'Vitesse (km/h)', height: 120, yMin: 0, yMax: Math.ceil(maxSpeed / 20) * 20, series: one('', COL.speed, ' km/h') }),
+      chart({ label: 'Gaz', height: 70, yMin: 0, yMax: 1, series: one('', COL.gas, '', 2) }),
+      chart({ label: 'Frein', height: 70, yMin: 0, yMax: 1, series: one('', COL.brake, '', 2) }),
+      chart({ label: 'Volant', height: 80, yMin: -steerMax, yMax: steerMax, zero: true, series: one('', COL.steer, '', 2) }),
+      chart({ label: 'Rapport', height: 60, yMin: 0, yMax: 8, series: [{ name: '', color: COLORS.a, points: pts(COL.gear, (g) => g - 1), at: (dd) => String((valueAt(lap.samples, dd, COL.gear) || 1) - 1) }] }),
+    ];
+    if (tandem) {
+      const gap = lap.samples.map((x, i) => { const l = lap.tandem.leadSamples[i]; return [x[0], l ? Math.hypot(x[COL.x] - l[0], x[COL.z] - l[1]) : 0]; });
+      curves.unshift(chart({ label: 'Écart avec le leader (m)', height: 110, yMin: 0, yMax: Math.ceil(Math.max(10, ...gap.map((g) => g[1])) / 5) * 5, series: [{ name: '', color: '#e3a33a', points: gap, at: (dd) => { const g = gap.find((x) => x[0] >= dd) || gap[gap.length - 1]; return `${g[1].toFixed(1)} m`; } }] }));
+    }
+    body.append(
+      h('p.hint.mt', 'Survole une courbe : le point correspondant s’affiche sur la carte.'),
+      h('div.cmp-layout.detail', h('div.cmp-charts', ...curves), h('div.panel.cmp-map', h('h3', 'Carte'), trackMap([lap], { height: 420, course }))));
+  }
+
   async function pick(slot, id) {
     const lap = await guard(() => api.call('telemetry:lap', id));
     if (!lap) return;
@@ -547,7 +738,7 @@ export default function telemetryView(root, params = {}) {
     if (compareMode === 'tandem') compareMode = 'drift';
     toast(`Tour ${slot.toUpperCase()} : ${lap.driver.name}`, 'info');
     if (compare.a && compare.b) {
-      tab = 'compare';
+      setTab('compare');
       render();
     }
   }
@@ -562,7 +753,7 @@ export default function telemetryView(root, params = {}) {
     if (!lap || !lap.tandem) return;
     compare = { a: lap, b: leadLap(lap) };
     compareMode = 'tandem';
-    tab = 'compare';
+    setTab('compare');
     render();
   }
 
@@ -584,7 +775,7 @@ export default function telemetryView(root, params = {}) {
     else parts.push('Pas de clips sur ce circuit : seuls l’angle et la vitesse comptent.');
     return h('div.notice.info.mt-s',
       h('span.grow', parts.join(' ')),
-      isAdmin() ? h('button.btn.btn-sm', { on: { click: () => { editor = null; tab = 'course'; render(); } } }, course && info.source === 'published' ? 'Modifier' : 'Placer les clips') : null);
+      isAdmin() ? h('button.btn.btn-sm', { on: { click: () => { editor = null; setTab('course'); render(); } } }, course && info.source === 'published' ? 'Modifier' : 'Placer les clips') : null);
   }
 
   async function renderBoard() {
@@ -600,7 +791,7 @@ export default function telemetryView(root, params = {}) {
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${boardQuery.track}|${boardQuery.layout}`, (v) => { Object.assign(boardQuery, combosMap.get(v)); render(); }, 'board-select'),
       select([['', 'Toutes les voitures'], ...cars.map((c) => [c, carName(c)])], boardQuery.car, (v) => { boardQuery.car = v; render(); }, 'board-select'),
       seg([['time', 'Chrono'], ['drift', 'Drift'], ['tandem', 'Tandem']], boardQuery.kind, (v) => { boardQuery.kind = v; render(); }),
-      judged ? seg(MODES, judgeMode, (v) => { judgeMode = v; render(); }) : null));
+      judged ? h('div.row', h('span.label', 'Catégorie'), seg(MODES, judgeMode, (v) => { judgeMode = v; judgeModeChosen = true; render(); })) : null));
     if (!boardQuery.track) {
       body.append(h('div.empty', h('strong', 'Pas encore de tours'), 'Le classement se remplit dès ton premier tour.'));
       return;
@@ -611,9 +802,22 @@ export default function telemetryView(root, params = {}) {
     if (res.error) body.append(h('div.notice', res.error));
     else if (!remote) body.append(h('div.notice.info', 'Classement partagé pas encore configuré : seuls tes tours et ceux importés apparaissent.'));
     if (judged) body.append(courseNotice(info, boardQuery.kind));
-    const rows = remote
-      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: r.steam_id === store.settings.steamId }))
+    const meName = String(store.settings.driverName || '').trim().toLowerCase();
+    let rows = remote
+      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: String(r.driver).trim().toLowerCase() === meName, old: Boolean(r.old) }))
       : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.result ? l.result.score : 0, d: l.result, lead: l.tandem && l.tandem.lead, ghost: Boolean(l.ghost), date: l.date, me: l.driver.steamId === store.settings.steamId }));
+    // drift and tandem: the drivers of the chosen category, judged like that category
+    if (judged && remote && catInfo && Object.keys(catInfo.map || {}).length) {
+      const want = catOfMode(judgeMode);
+      const others = rows.filter((r) => catOf(r.driver) !== want).length;
+      if (boardWho === 'cat') rows = rows.filter((r) => catOf(r.driver) === want);
+      body.append(h('div.row.mt',
+        h('p.hint', { style: { margin: 0 } }, boardWho === 'cat'
+          ? `Pilotes ${CAT_LABEL[want]} seulement, notés comme leur catégorie.${others ? ` ${others} autre${others > 1 ? 's' : ''} pilote${others > 1 ? 's' : ''} dans d’autres catégories.` : ''}`
+          : `Tous les pilotes, notés comme la catégorie ${CAT_LABEL[want]}.`),
+        h('div.right', seg([['cat', 'Ma catégorie'], ['all', 'Tous']], boardWho, (v) => { boardWho = v; render(); }))));
+    }
+    if (rows.some((r) => r.old)) body.append(h('p.hint', 'Certains records datent d’une ancienne version du parcours (un admin a changé un clip ou une règle) : ils sont affichés en dessous, en gris, jusqu’à ce que le pilote ouvre son launcher (ses runs sont re-notées et renvoyées) ou roule à nouveau.'));
     if (!rows.length) {
       body.append(h('div.empty.mt', h('strong', 'Personne pour l’instant'), boardQuery.kind === 'tandem' ? 'Installe l’appli en jeu (Outils) et suis un pote : ton chase est noté.' : judged ? 'Sois le premier à poser une run.' : 'Sois le premier à poser un temps.'));
       return;
@@ -624,9 +828,9 @@ export default function telemetryView(root, params = {}) {
       const value = judged ? `${r.score.toFixed(1)}` : lapTime(r.lapMs);
       const gap = i === 0 ? '' : judged ? `−${(top - r.score).toFixed(1)}` : `+${((r.lapMs - top) / 1000).toFixed(3)}`;
       const sub = [carName(r.car), r.lead ? `derrière ${r.lead.name}` : null].filter(Boolean).join(' · ');
-      list.append(h('div.list-row.board-row', { class: r.me ? 'me' : '' },
+      list.append(h('div.list-row.board-row.clickable', { class: `clickable${r.me ? ' me' : ''}${r.old ? ' old' : ''}`, title: 'Voir le détail', on: { click: (e) => { if (!e.target.closest('button')) openDetail(r.id); } } },
         h('span.board-pos', `${i + 1}`),
-        h('div', h('div.t', r.driver), h('div.s', sub), judged && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
+        h('div', h('div.t', r.driver, catInfo && Object.keys(catInfo.map || {}).length ? h(`span.cat-chip.cat-${catOf(r.driver)}`, CAT_LABEL[catOf(r.driver)]) : null, r.old ? h('span.cat-chip.old', 'ancien parcours') : null), h('div.s', sub), judged && breakdown(r.d) ? h('div.s', breakdown(r.d)) : null),
         h('strong.board-v', value, judged ? h('small', ' /100') : null),
         h('span.s', gap),
         h('div.row', h('span.s', dateFr(r.date)),
@@ -645,7 +849,7 @@ export default function telemetryView(root, params = {}) {
       const [mine, theirs] = await Promise.all([guard(() => api.call('telemetry:lap', row.id)), guard(() => api.call('telemetry:lap', rival.id))]);
       if (!mine || !theirs) return;
       compare = { a: mine, b: theirs };
-      tab = 'compare';
+      setTab('compare');
       render();
       return;
     }
@@ -657,7 +861,7 @@ export default function telemetryView(root, params = {}) {
     mine.sort((a, b) => otherCar(a) - otherCar(b) || (drift ? resultOf(b).score - resultOf(a).score : a.lapMs - b.lapMs));
     compare = { a: mine[0] ? await api.call('telemetry:lap', mine[0].id) : null, b: other };
     if (!compare.a) toast('Tu n’as pas encore de tour sur ce circuit : choisis un tour A dans « Tours »', 'info', 6000);
-    tab = 'compare';
+    setTab('compare');
     render();
   }
 
@@ -818,12 +1022,15 @@ export default function telemetryView(root, params = {}) {
       };
       wrap.append(
         h('div.row', h('h3', { style: { margin: 0 } }, 'Règles'), h('div.right', seg(MODES, m, (v) => { editor.ruleMode = v; draw(); }))),
-        h('p.hint', m === 'debutant' ? 'Mode débutant : plus tolérant, jamais de run à 0 par défaut.' : m === 'pro' ? 'Mode compétition : chaque faute peut mettre la run à 0.' : 'Mode normal : les fautes coûtent des points.'),
+        h('p.hint', m === 'debutant' ? 'Catégorie Débutant : plus tolérante, jamais de run à 0 par défaut.' : m === 'pro' ? 'Catégorie Pro : chaque faute peut mettre la run à 0.' : 'Catégorie Amateur : les fautes coûtent des points.'),
         range('Angle pour la note max', { min: 20, max: 60, step: 1, value: r.angleTarget, format: (v) => `${v}°`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { angleTarget: v }); onChange(); } }),
         range('Taille des clips', { min: 0.5, max: 2, step: 0.1, value: r.clipScale, format: (v) => `× ${v}`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { clipScale: v }); onChange(); } }),
         h('div.rule-row', h('span', 'Ligne parfaite / à 0'), h('span'),
           h('input.input.rule-points', { type: 'number', min: 0, max: 30, step: 0.5, value: r.lineTol[0], on: { change: (e) => set({ lineTol: [Number(e.target.value) || 0, r.lineTol[1]] }) } }),
           h('input.input.rule-points', { type: 'number', min: 1, max: 60, step: 0.5, value: r.lineTol[1], on: { change: (e) => set({ lineTol: [r.lineTol[0], Number(e.target.value) || 1] }) } })),
+        h('div.label.mt', 'Poids de la note'),
+        ...[['angle', 'Angle'], ['speed', 'Vitesse'], ['line', 'Ligne et clips']].map(([k, label]) => range(label, { min: 0, max: 100, step: 5, value: r.weights[k], format: (v) => `${v}`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { weights: { ...r.weights, ...((editor.rules[m] || {}).weights || {}), [k]: v } }); onChange(); } })),
+        h('p.hint', 'Les poids sont ramenés sur 100 : seul leur rapport compte.'),
         h('div.label.mt', 'Fautes'),
         action('off', r.off, { label: 'Roues dehors', control: select([['1', '1 roue'], ['2', '2 roues'], ['3', '3 roues'], ['4', '4 roues']], String(r.off.wheels), (v) => set({ off: { ...r.off, wheels: Number(v) } })) }),
         action('straighten', r.straighten, { label: 'Regrip' }),
@@ -880,18 +1087,18 @@ export default function telemetryView(root, params = {}) {
     const sourceLabel = editor.source === 'published' ? 'Parcours publié' : editor.source === 'official' ? 'Parcours officiel LKS (analysé circuit par circuit)' : editor.source === 'auto' ? 'Tracé automatique (ligne IA du circuit), pas encore publié' : 'Pas encore de parcours';
     body.append(h('div.toolbar',
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), editor.key, (v) => { editor = { key: v }; render(); }, 'board-select'),
-      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? (editor.source === 'official' ? 'Ligne officielle' : 'Ligne IA du circuit') : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; render(); }, 'board-select'),
+      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? (editor.source === 'official' ? 'Ligne officielle' : 'Ligne IA du circuit') : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; editor.mapState = null; editor.lineEdited = false; render(); }, 'board-select'),
       h('button.btn.btn-sm', { on: { click: async () => {
         const auto = await guard(() => api.call('drift:autoCourse', { track, layout }));
         if (!auto) return;
-        Object.assign(editor, { clips: auto.clips.map((c) => ({ ...c })), autoRefLine: auto.refLine, section: [0, 1], lapId: '', lap: null, rules: deepMerge(auto.rules || {}, editor.rules) });
+        Object.assign(editor, { clips: auto.clips.map((c) => ({ ...c })), autoRefLine: auto.refLine, section: [0, 1], lapId: '', lap: null, rules: deepMerge(auto.rules || {}, editor.rules), mapState: null, lineEdited: false });
         toast(`${auto.clips.length} clips placés depuis la ligne IA`, 'success');
         render();
       } } }, 'Générer depuis la ligne IA'),
       h('button.btn.btn-sm', { title: 'Moyenne des meilleures runs notées sur ce parcours (une par pilote)', on: { click: async () => {
         const res = await guard(() => api.call('admin:lineFromRuns', { track, layout }));
         if (!res) return;
-        Object.assign(editor, { autoRefLine: res.line, refDriver: `meilleures runs (${res.runs.map((r) => r.driver).join(', ')})`, lapId: '', lap: null });
+        Object.assign(editor, { autoRefLine: res.line, refDriver: `meilleures runs (${res.runs.map((r) => r.driver).join(', ')})`, lapId: '', lap: null, mapState: null, lineEdited: false });
         toast(`Ligne tirée de ${res.runs.length} run(s) : ${res.runs.map((r) => `${r.driver} ${r.score}`).join(', ')}. Publie le parcours pour l’utiliser.`, 'success', 8000);
         render();
       } } }, 'Ligne des meilleures runs'),
@@ -900,38 +1107,124 @@ export default function telemetryView(root, params = {}) {
       body.append(h('div.empty', h('strong', 'Pas de ligne pour ce circuit'), 'Fais une run propre ici, ou clique « Générer depuis la ligne IA » si le circuit en a une.'));
       return;
     }
+    // bords de la route (ligne IA du circuit installé), une fois par circuit
+    if (editor.road === undefined) editor.road = (await api.call('drift:road', { track, layout }).catch(() => null)) || null;
+    const lapLine = () => (editor.lap ? resampleLine(editor.lap.samples.filter((x) => x[0] >= editor.section[0] && x[0] <= editor.section[1]).map((x) => [x[COL.x], x[COL.z]]), 2) : null);
+    if (!editor.mapState) {
+      editor.mapState = {
+        clips: editor.clips,
+        line: lapLine() || (currentLine && currentLine.length ? resampleLine(currentLine, 2) : null),
+        trace: editor.lap ? editor.lap.samples.map((x) => [x[COL.x], x[COL.z]]) : null,
+        road: editor.road,
+        staging: editor.existing ? editor.existing.staging : null,
+        start: editor.existing ? editor.existing.start : null,
+        finish: editor.existing ? editor.existing.finish : null,
+        tool: editor.tool || 'clips',
+        brush: editor.brush || 6,
+        selected: null,
+      };
+    }
+    const st = editor.mapState;
+    st.clips = editor.clips;
     const mapWrap = h('div.panel.course-map');
     const list = h('div.course-clips');
+    const lineBox = h('div.course-line-tools');
     let map = null;
-    const courseView = () => ({ refLine: editor.lap ? [] : currentLine, clips: editor.clips });
-    const redraw = () => map && map.redraw();
-    const drawMap = () => {
-      clear(mapWrap);
-      charts.clear();
-      map = trackMap(editor.lap ? [editor.lap] : [], { height: 470, course: courseView(), section: editor.lap ? editor.section : null, onClick: (x, z) => {
-        if (editor.clips.length >= 30) return toast('30 clips maximum', 'warn');
-        editor.clips.push({ name: `Clip ${editor.clips.length + 1}`, kind: 'inner', x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, r: 3 });
-        drawList();
-        drawMap();
-      } });
-      mapWrap.append(h('h3', 'Carte'), map, h('div.hint', 'Clique sur la carte pour placer un clip. ', h('span', { style: { color: CLIP_COLORS.inner } }, 'Intérieur'), ' : la corde à frôler. ', h('span', { style: { color: CLIP_COLORS.outer } }, 'Extérieur'), ' : le mur ou la zone à approcher avec l’arrière.'));
+    const redraw = () => map && map.draw();
+    const toZone = (c) => {
+      const [tx, tz] = roadDirection(st, c.x, c.z);
+      const half = Math.max(2, (c.r || 3) * 1.5);
+      c.path = [[Math.round((c.x - tx * half) * 100) / 100, Math.round((c.z - tz * half) * 100) / 100], [Math.round((c.x + tx * half) * 100) / 100, Math.round((c.z + tz * half) * 100) / 100]];
+      c.r = Math.min(c.r || 1.5, 2);
+    };
+    const snapClip = (c) => {
+      if (!st.road) return toast('Pas de bords de route pour ce circuit (ligne IA sans largeur)', 'warn');
+      if (Array.isArray(c.path) && c.path.length > 1) {
+        c.path = c.path.map(([x, z]) => { const e = snapToEdge(st.road, x, z); return e ? [Math.round(e.x * 100) / 100, Math.round(e.z * 100) / 100] : [x, z]; });
+        zoneCentre(c);
+      } else {
+        const e = snapToEdge(st.road, c.x, c.z);
+        if (e) Object.assign(c, { x: Math.round(e.x * 100) / 100, z: Math.round(e.z * 100) / 100 });
+      }
+      redraw();
     };
     const drawList = () => {
       clear(list);
-      if (!editor.clips.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Aucun clip pour l’instant.'));
-      editor.clips.forEach((c, i) => list.append(h('div.course-clip',
-        h('strong', `${i + 1}`),
-        h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
-        select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
-        range('Taille', { min: 1, max: 10, step: 0.5, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
-        h('button.btn.btn-sm.btn-ghost', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); drawList(); drawMap(); } } }, icon('trash')))));
+      if (!editor.clips.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Aucun clip pour l’instant : clique sur la carte.'));
+      editor.clips.forEach((c, i) => {
+        const zone = Array.isArray(c.path) && c.path.length > 1;
+        let len = 0;
+        if (zone) for (let j = 1; j < c.path.length; j++) len += Math.hypot(c.path[j][0] - c.path[j - 1][0], c.path[j][1] - c.path[j - 1][1]);
+        list.append(h(`div.course-clip${st.selected === i ? '.selected' : ''}`,
+          h('button.btn.btn-sm.btn-ghost.clip-n', { title: 'Zoomer sur ce clip', on: { click: () => { st.selected = i; map.focus(c.x, c.z, zone ? Math.max(30, len * 2) : 30); drawList(); } } }, `${i + 1}`),
+          h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
+          h('div.clip-kind',
+            select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
+            select([['point', 'Point'], ['zone', 'Zone']], zone ? 'zone' : 'point', (v) => { if (v === 'zone') toZone(c); else { delete c.path; } drawList(); redraw(); })),
+          range(zone ? 'Largeur' : 'Taille', { min: 0.5, max: 10, step: 0.25, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
+          h('div.clip-target', { title: 'Objectifs de la zone pour la catégorie Amateur (Débutant et Pro adaptés). Vide : objectif général.' },
+            h('input.input.rule-points', { type: 'number', min: 0, max: 80, placeholder: 'Angle °', value: (c.target && c.target.angle) || '', on: { change: (e) => { c.target = { ...(c.target || {}), angle: Number(e.target.value) || 0 }; } } }),
+            h('input.input.rule-points', { type: 'number', min: 0, max: 250, placeholder: 'km/h', value: (c.target && c.target.speed) || '', on: { change: (e) => { c.target = { ...(c.target || {}), speed: Number(e.target.value) || 0 }; } } })),
+          h('div.clip-meta', h('span.s', zone ? `${len.toFixed(1)} m de long · ${c.path.length} points` : `x ${Number(c.x).toFixed(2)} · z ${Number(c.z).toFixed(2)}`),
+            h('button.btn.btn-sm.btn-ghost', { title: 'Coller au bord de route le plus proche (vibreur, mur)', on: { click: () => { snapClip(c); drawList(); } } }, 'Au bord'),
+            zone ? h('button.btn.btn-sm.btn-ghost', { title: 'Ajouter un point au milieu de la zone (pour suivre une courbe)', on: { click: () => {
+              if (c.path.length >= 60) return;
+              let best = 0; let bl = 0;
+              for (let j = 1; j < c.path.length; j++) { const l = Math.hypot(c.path[j][0] - c.path[j - 1][0], c.path[j][1] - c.path[j - 1][1]); if (l > bl) { bl = l; best = j; } }
+              c.path.splice(best, 0, [(c.path[best][0] + c.path[best - 1][0]) / 2, (c.path[best][1] + c.path[best - 1][1]) / 2]);
+              drawList(); redraw();
+            } } }, '+ point') : null),
+          h('button.btn.btn-sm.btn-ghost.clip-del', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); st.selected = null; drawList(); redraw(); } } }, icon('trash'))));
+      });
     };
+    const drawLineTools = () => {
+      clear(lineBox);
+      if (st.tool !== 'line') return;
+      lineBox.append(
+        range('Pinceau', { min: 1, max: 30, step: 1, value: st.brush, format: (v) => `${v} m`, onInput: (v) => { st.brush = v; editor.brush = v; } }),
+        h('div.row',
+          h('button.btn.btn-sm', { on: { click: () => { if (!st.line) return; map.pushUndo(); st.line = smoothLine(st.line, 2); editor.lineEdited = true; redraw(); } } }, 'Lisser'),
+          h('button.btn.btn-sm', { on: { click: () => { if (!map.undo()) toast('Rien à annuler', 'info'); } } }, 'Annuler'),
+          h('button.btn.btn-sm.btn-ghost', { on: { click: () => { editor.lineEdited = false; st.line = lapLine() || (currentLine && currentLine.length ? resampleLine(currentLine, 2) : null); redraw(); } } }, 'Repartir de la ligne d’origine')),
+        h('p.hint', editor.lineEdited ? 'Ligne modifiée à la main : elle sera publiée telle quelle.' : 'Attrape la ligne verte et tire : les points autour suivent selon la taille du pinceau.'));
+    };
+    map = courseMap({ state: st, height: 560, onChange: (what, at) => {
+      if (what === 'add') {
+        if (editor.clips.length >= 30) return toast('30 clips maximum', 'warn');
+        let { x, z } = at;
+        editor.clips.push({ name: `Clip ${editor.clips.length + 1}`, kind: 'inner', x, z, r: 3 });
+        st.selected = editor.clips.length - 1;
+        drawList();
+        redraw();
+      } else if (what === 'select') drawList();
+      else if (what === 'move' && st.tool === 'line') editor.lineEdited = true;
+      else if (what === 'done') drawList();
+      else if (what === 'delete' && st.selected !== null) {
+        editor.clips.splice(st.selected, 1);
+        st.selected = null;
+        drawList();
+        redraw();
+      }
+    } });
+    mapWrap.append(
+      h('div.row', h('h3', { style: { margin: 0 } }, 'Carte'),
+        h('div.right', seg([['clips', 'Clips'], ['line', 'Ligne']], st.tool, (v) => { st.tool = v; editor.tool = v; drawLineTools(); redraw(); }),
+          h('button.btn.btn-sm.btn-ghost', { title: 'Vue d’ensemble', on: { click: () => map.refit() } }, 'Tout voir'))),
+      map.el,
+      lineBox,
+      h('div.hint', st.tool === 'clips'
+        ? ['Molette : zoom · glisser : se déplacer · clic : placer un clip · glisser un clip ou un point de zone : le déplacer (Maj : collé au bord de route) · Suppr : retirer le clip choisi. ',
+          h('span', { style: { color: CLIP_COLORS.inner } }, 'Intérieur'), ' : la corde, jugée avec l’avant de la voiture. ', h('span', { style: { color: CLIP_COLORS.outer } }, 'Extérieur'), ' : le mur ou la zone, jugée avec l’arrière.',
+          st.road ? '' : ' Pas de bords de route pour ce circuit (sa ligne IA n’a pas de largeur).']
+        : 'Ligne à suivre (vert). Molette : zoom pour placer au centimètre.'));
+    drawLineTools();
+    const drawMap = redraw;
     const side = h('div.course-side',
       h('div.panel',
         h('h3', 'Parcours'),
         editor.lap ? [
-          range('Départ', { min: 0, max: 0.99, step: 0.01, value: editor.section[0], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[0] = Math.min(v, editor.section[1] - 0.01); redraw(); } }),
-          range('Arrivée', { min: 0.01, max: 1, step: 0.01, value: editor.section[1], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[1] = Math.max(v, editor.section[0] + 0.01); redraw(); } }),
+          range('Départ', { min: 0, max: 0.99, step: 0.01, value: editor.section[0], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[0] = Math.min(v, editor.section[1] - 0.01); if (!editor.lineEdited) st.line = lapLine(); redraw(); } }),
+          range('Arrivée', { min: 0.01, max: 1, step: 0.01, value: editor.section[1], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[1] = Math.max(v, editor.section[0] + 0.01); if (!editor.lineEdited) st.line = lapLine(); redraw(); } }),
           h('p.hint', 'La partie notée de la run. La ligne et la vitesse de ce tour servent de référence.'),
         ] : h('p.hint', { style: { marginTop: 0 } }, 'Choisis une run pour changer la ligne de référence ou le départ et l’arrivée.'),
         h('h3.mt', 'Clips'),
@@ -942,7 +1235,7 @@ export default function telemetryView(root, params = {}) {
           if (await guard(() => api.call('admin:saveDriftCourse', { track, layout, remove: true }), 'Parcours supprimé')) { editor = { key: editor.key }; render(); }
         } } }, 'Supprimer') : null,
         h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
-          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lapId ? undefined : editor.autoRefLine || undefined, refDriver: editor.lapId ? undefined : editor.refDriver }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
+          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lineEdited && st.line ? st.line : editor.lapId ? undefined : editor.autoRefLine || undefined, lineEdited: Boolean(editor.lineEdited && st.line), refDriver: editor.lapId ? undefined : editor.lineEdited ? 'ligne ajustée à la main' : editor.refDriver }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
           if (ok) { editor = { key: editor.key }; render(); }
         } } }, icon('upload'), 'Publier')));
     body.append(h('div.course-layout', h('div.course-main', mapWrap, rulesPanel(() => {})), side));
@@ -1026,7 +1319,7 @@ export default function telemetryView(root, params = {}) {
   const KIND_LABEL = { drift: 'Solo drift', tandem: 'Tandem', battle: 'Battle' };
   const STATUS_TAG = { upcoming: ['plain', 'À venir'], live: ['warn', 'En cours'], done: ['ok', 'Terminée'] };
   const toLocal = (iso) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, season: c.season || '', points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
+  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, season: c.season || '', points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, category: r.category || '', mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
 
   async function renderChamp() {
     const list = (await guard(() => api.call('champ:list'))) || [];
@@ -1059,7 +1352,7 @@ export default function telemetryView(root, params = {}) {
       const [tagCls, tagText] = STATUS_TAG[r.status];
       const panel = h('div.panel.mt',
         h('div.row',
-          h('div', h('h3', { style: { margin: 0 } }, `M${i + 1} · ${r.name}`), h('div.s', `${trackName(r.track, r.layout)} · ${KIND_LABEL[r.kind]}${r.kind === 'battle' ? ` top ${r.bracket}` : ''} · ${MODE_LABEL[r.mode]} · du ${dateFr(r.start)} au ${dateFr(r.end)}`)),
+          h('div', h('h3', { style: { margin: 0 } }, `M${i + 1} · ${r.name}`), h('div.s', `${trackName(r.track, r.layout)} · ${KIND_LABEL[r.kind]}${r.kind === 'battle' ? ` top ${r.bracket}` : ''} · ${r.category ? `catégorie ${CAT_LABEL[r.category]}` : `ouverte, notation ${MODE_LABEL[r.mode]}`} · du ${dateFr(r.start)} au ${dateFr(r.end)}`)),
           h(`span.tag.${tagCls}.right`, tagText)));
       if (r.error) panel.append(h('div.notice.mt', r.error));
       if (r.kind !== 'battle') {
@@ -1117,7 +1410,8 @@ export default function telemetryView(root, params = {}) {
           field('Nom', h('input.input', { value: r.name, maxlength: 60, on: { input: (e) => { r.name = e.target.value; } } })),
           field('Circuit', select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${r.track}|${r.layout || ''}`, (v) => Object.assign(r, combosMap.get(v)))),
           field('Format', select([['drift', 'Solo drift'], ['tandem', 'Tandem'], ['battle', 'Battle']], r.kind, (v) => { r.kind = v; drawRounds(); })),
-          field('Mode', select(MODES, r.mode, (v) => { r.mode = v; })),
+          field('Catégorie', select([['', 'Ouverte à tous'], ['debutant', 'Débutant'], ['amateur', 'Amateur'], ['pro', 'Pro']], r.category || '', (v) => { r.category = v; drawRounds(); })),
+          r.category ? h('span') : field('Notation', select(MODES, r.mode, (v) => { r.mode = v; })),
           field('Début', h('input.input', { type: 'datetime-local', value: toLocal(r.start), on: { change: (e) => { r.start = new Date(e.target.value).toISOString(); } } })),
           field('Fin', h('input.input', { type: 'datetime-local', value: toLocal(r.end), on: { change: (e) => { r.end = new Date(e.target.value).toISOString(); } } })),
           r.kind === 'battle' ? field('Tableau', select([['4', 'Top 4'], ['8', 'Top 8'], ['16', 'Top 16']], String(r.bracket || 8), (v) => { r.bracket = Number(v); })) : h('span')),
@@ -1156,6 +1450,7 @@ export default function telemetryView(root, params = {}) {
       h('div.grid.grid-2',
         h('div.panel', h('h3', 'Réglages'),
           toggle('Enregistrer mes tours', st.enabled !== false, (v) => setT({ enabled: v })),
+          toggle('Garder tous mes passages', st.keepAll === true, (v) => setT({ keepAll: v }), 'Sinon, à la fermeture du jeu, seul ton meilleur passage par voiture et circuit reste (et les battles).'),
           toggle('Partager mes runs avec le groupe', st.shareLaps !== false, (v) => setT({ shareLaps: v }), st.board ? 'Ta note de chaque run (visible par les juges) et tes records (classement).' : 'Classement partagé pas encore configuré par les admins.')),
         h('div.panel', h('h3', 'Appli en jeu'),
           h('p.muted', { style: { marginTop: 0 } }, 'Angle, clips sur la piste et écart pendant que tu roules. Boutons : « Feux » pour un vrai départ arrêté, « Fantôme » pour choisir qui suivre, « Battle » pour défier un pilote du serveur. Elle enregistre aussi tes tandems et montre les autres pilotes ici. Custom Shaders Patch requis.'),

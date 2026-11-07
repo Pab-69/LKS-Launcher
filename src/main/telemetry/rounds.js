@@ -54,8 +54,8 @@ function bestPerDriver(rows) {
  * Results of one round from the server's rows.
  * entryRows: lks_laps rows of the round (drift / tandem), battleRows: rows of kind « battle ».
  */
-function roundFromRows(round, { entryRows = [], battleRows = [], decisions = [], points } = {}) {
-  const entries = bestPerDriver(latestVersion(entryRows).sort((a, b) => Number(b.score) - Number(a.score))).map((r) => ({ name: r.driver, score: Number(r.score) }));
+function roundFromRows(round, { entryRows = [], battleRows = [], decisions = [], points, categoryOf } = {}) {
+  const entries = champ.forCategory(round, bestPerDriver(latestVersion(entryRows).sort((a, b) => Number(b.score) - Number(a.score))).map((r) => ({ name: r.driver, score: Number(r.score) })), categoryOf);
   const battles = latestVersion(battleRows)
     .filter((r) => r.meta && r.meta.battle && r.meta.battle.result)
     .map((r) => ({ ...r.meta.battle.result, date: r.meta.battle.date || r.created_at }));

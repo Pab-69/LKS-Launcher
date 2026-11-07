@@ -400,7 +400,7 @@ grant execute on function public.add_photo(uuid, text, text, text, text, text) t
 -- ---------------------------------------------------------------------------
 -- Notes de toutes les runs (pas seulement les records) : le launcher envoie la
 -- note complète à la fin de chaque run (clips, zones, pénalités), pour que les
--- juges et le groupe les voient tout de suite. Gardées 30 jours.
+-- juges et le groupe les voient tout de suite. Après 24 h, seule la meilleure de chaque pilote par circuit reste.
 
 create table if not exists public.lks_runs (
   id uuid primary key,
@@ -418,7 +418,7 @@ revoke all on public.lks_runs from anon, authenticated;
 create index if not exists lks_runs_recent on public.lks_runs (created_at desc);
 create or replace view public.lks_runs_list with (security_invoker = false) as
   select id, driver, car, track, layout, kind, score, detail, created_at from public.lks_runs
-   where created_at > now() - interval '30 days';
+   where created_at > now() - interval '365 days';
 grant select on public.lks_runs_list to anon, authenticated;
 
 alter table public.lks_runs drop column if exists steam_id;
@@ -438,10 +438,15 @@ begin
   if (select count(*) from public.lks_runs where driver = p_driver and created_at > now() - interval '1 day') >= 400 then
     raise exception 'trop de runs aujourd''hui';
   end if;
-  delete from public.lks_runs where created_at < now() - interval '30 days';
+  -- après 24 h, seule la meilleure run de chaque pilote par circuit, tracé et type reste
+  delete from public.lks_runs r where r.created_at < now() - interval '1 day' and exists (
+    select 1 from public.lks_runs b where lower(trim(b.driver)) = lower(trim(r.driver)) and b.track = r.track and b.layout = r.layout and b.kind = r.kind
+       and (b.score > r.score or (b.score = r.score and b.created_at > r.created_at)));
+  delete from public.lks_runs where created_at < now() - interval '365 days';
   insert into public.lks_runs (id, driver, car, track, layout, kind, score, detail)
   values (p_id, p_driver, coalesce(p_car, ''), p_track, coalesce(p_layout, ''), p_kind, p_score, coalesce(p_detail, '{}'::jsonb))
   on conflict (id) do nothing;
+  perform public.lks_update_category(p_driver);
   return 'ok';
 end $$;
 revoke all on function public.add_run(uuid, text, text, text, text, text, numeric, jsonb) from public;
@@ -488,6 +493,114 @@ revoke all on function public.set_live(text, text, text, text, text, text, jsonb
 grant execute on function public.set_live(text, text, text, text, text, text, jsonb) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Catégories des pilotes : Débutant, Amateur, Pro. Chaque catégorie a sa
+-- notation (debutant, normal, pro). Le serveur range le pilote tout seul après
+-- chaque run : moyenne de ses 5 meilleures notes dans sa catégorie (au moins 3
+-- runs). 75 ou plus : il monte. Moins de 35 : il descend. Un nouveau pilote
+-- commence en Débutant.
+
+create table if not exists public.lks_categories (
+  key text primary key,           -- nom du pilote en minuscules
+  name text not null,
+  category text not null default 'debutant' check (category in ('debutant', 'amateur', 'pro')),
+  avg numeric(4, 1) not null default 0,
+  runs integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+alter table public.lks_categories enable row level security;
+revoke all on public.lks_categories from anon, authenticated;
+create or replace view public.lks_categories_list with (security_invoker = false) as
+  select name, category, avg, runs, updated_at from public.lks_categories;
+grant select on public.lks_categories_list to anon, authenticated;
+
+create or replace function public.lks_update_category(p_driver text) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  k text := lower(trim(p_driver));
+  cur text;
+  m text;
+  n integer;
+  a numeric;
+  nxt text;
+begin
+  select category into cur from public.lks_categories where key = k;
+  cur := coalesce(cur, 'debutant');
+  m := case cur when 'debutant' then 'debutant' when 'amateur' then 'normal' else 'pro' end;
+  select count(*), coalesce(avg(sc), 0) into n, a from (
+    select (detail->'modes'->>m)::numeric as sc from public.lks_runs
+     where lower(trim(driver)) = k and kind = 'drift' and jsonb_typeof(detail->'modes'->m) = 'number'
+     order by 1 desc limit 5) t;
+  nxt := cur;
+  if n >= 3 and a >= 75 and cur <> 'pro' then nxt := case cur when 'debutant' then 'amateur' else 'pro' end;
+  elsif n >= 3 and a < 35 and cur <> 'debutant' then nxt := case cur when 'pro' then 'amateur' else 'debutant' end;
+  end if;
+  insert into public.lks_categories (key, name, category, avg, runs, updated_at) values (k, trim(p_driver), nxt, round(a, 1), n, now())
+  on conflict (key) do update set name = excluded.name, category = excluded.category, avg = excluded.avg, runs = excluded.runs,
+    updated_at = case when public.lks_categories.category <> excluded.category then now() else public.lks_categories.updated_at end;
+  return nxt;
+end $$;
+revoke all on function public.lks_update_category(text) from public, anon, authenticated;
+
+-- Catégories de tous les pilotes à partir des données déjà sur le serveur :
+-- les runs (notes dans les trois catégories depuis la 1.19, sinon la note
+-- Amateur) et les records (une note par catégorie). Par pilote : moyenne des
+-- 5 meilleures notes (au moins 3) ; Débutant → Amateur à 75 en notation
+-- Débutant, Amateur → Pro à 75 en notation Amateur. Faute de notes dans une
+-- catégorie, celle de la catégorie au-dessus sert de minimum (plus sévère).
+-- Lancé une fois à l'installation de cette version ; ./lks.sh categories le relance.
+create or replace function public.lks_recompute_categories() returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  r record;
+  cnt integer := 0;
+  n_deb integer; a_deb numeric;
+  n_nor integer; a_nor numeric;
+  n_pro integer; a_pro numeric;
+  cat text;
+  n integer; a numeric;
+begin
+  create temporary table lks_scores on commit drop as
+    select lower(trim(driver)) as k, trim(driver) as name, m.key as mode, (m.value)::text::numeric as sc
+      from public.lks_runs, jsonb_each(case when jsonb_typeof(detail->'modes') = 'object' then detail->'modes' else '{}'::jsonb end) m
+     where kind = 'drift' and jsonb_typeof(m.value) = 'number'
+    union all
+    select lower(trim(driver)), trim(driver), 'normal', score from public.lks_runs
+     where kind = 'drift' and jsonb_typeof(detail->'modes') is distinct from 'object'
+    union all
+    select lower(trim(driver)), trim(driver), substring(rules from '-(debutant|normal|pro)(@|$)'), score from public.lks_laps
+     where kind = 'drift' and score is not null and rules ~ '-(debutant|normal|pro)(@|$)';
+  for r in select k, max(name) as name from lks_scores group by k loop
+    select count(*), coalesce(avg(sc), 0) into n_deb, a_deb from (select sc from lks_scores where k = r.k and mode = 'debutant' order by sc desc limit 5) t;
+    select count(*), coalesce(avg(sc), 0) into n_nor, a_nor from (select sc from lks_scores where k = r.k and mode = 'normal' order by sc desc limit 5) t;
+    select count(*), coalesce(avg(sc), 0) into n_pro, a_pro from (select sc from lks_scores where k = r.k and mode = 'pro' order by sc desc limit 5) t;
+    if n_deb < 3 and n_nor > n_deb then n_deb := n_nor; a_deb := a_nor; end if;
+    if n_nor < 3 and n_pro > n_nor then n_nor := n_pro; a_nor := a_pro; end if;
+    cat := 'debutant';
+    if n_deb >= 3 and a_deb >= 75 then cat := 'amateur'; end if;
+    if cat = 'amateur' and n_nor >= 3 and a_nor >= 75 then cat := 'pro'; end if;
+    if cat = 'debutant' then n := n_deb; a := a_deb; elsif cat = 'amateur' then n := n_nor; a := a_nor; else n := n_pro; a := a_pro; end if;
+    if cat = 'pro' and n < 3 then n := n_nor; a := a_nor; end if;
+    if cat = 'amateur' and n = 0 then n := n_deb; a := a_deb; end if;
+    insert into public.lks_categories (key, name, category, avg, runs, updated_at) values (r.k, r.name, cat, round(least(a, 100), 1), n, now())
+    on conflict (key) do update set name = excluded.name, category = excluded.category, avg = excluded.avg, runs = excluded.runs, updated_at = now();
+    cnt := cnt + 1;
+  end loop;
+  return cnt;
+end $$;
+revoke all on function public.lks_recompute_categories() from public, anon, authenticated;
+
+create table if not exists public.lks_meta (key text primary key, value text not null default '', updated_at timestamptz not null default now());
+alter table public.lks_meta enable row level security;
+revoke all on public.lks_meta from anon, authenticated;
+do $$
+begin
+  if not exists (select 1 from public.lks_meta where key = 'categories_v1') then
+    perform public.lks_recompute_categories();
+    insert into public.lks_meta (key, value) values ('categories_v1', 'fait');
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- Battles lancées en jeu : chaque launcher envoie les notes de son pilote
 -- (lead et chase, calculées sur son PC qui voit sa voiture parfaitement) et
 -- reprend celles de l'adversaire : les deux PC trouvent le même résultat.
@@ -532,7 +645,10 @@ begin
   delete from public.lks_live where updated_at < now() - interval '1 minute';
   delete from public.lks_presence where updated_at < now() - interval '15 minutes';
   delete from public.lks_hosts where updated_at < now() - interval '15 minutes';
-  delete from public.lks_runs where created_at < now() - interval '30 days';
+  delete from public.lks_runs r where r.created_at < now() - interval '1 day' and exists (
+    select 1 from public.lks_runs b where lower(trim(b.driver)) = lower(trim(r.driver)) and b.track = r.track and b.layout = r.layout and b.kind = r.kind
+       and (b.score > r.score or (b.score = r.score and b.created_at > r.created_at)));
+  delete from public.lks_runs where created_at < now() - interval '365 days';
   delete from public.lks_proposals where created_at < now() - interval '180 days';
   delete from public.lks_votes v where not exists (select 1 from public.lks_proposals p where p.id = v.proposal_id);
   delete from public.lks_battle_parts where created_at < now() - interval '7 days';
@@ -555,6 +671,7 @@ begin
   delete from public.lks_hosts where lower(host_driver) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   delete from public.lks_proposals where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   delete from public.lks_photos where lower(author) = lower(p_driver); get diagnostics k = row_count; n := n + k;
+  delete from public.lks_categories where key = lower(trim(p_driver)); get diagnostics k = row_count; n := n + k;
   delete from public.lks_battle_parts where lower(driver) = lower(p_driver) or lower(opponent) = lower(p_driver); get diagnostics k = row_count; n := n + k;
   return n || ' lignes effacées (les fichiers des photos et propositions sont à effacer dans le stockage)';
 end $$;

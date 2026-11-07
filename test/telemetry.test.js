@@ -632,3 +632,115 @@ test('shared memory: copied into our own buffer, never viewed (Electron kills th
   game[0] = 0x5a;
   assert.strictEqual(out[0], 0x41, 'a copy, not a view');
 });
+
+test('end of session: only the best passages stay (and the battles)', () => {
+  const { LapStore } = require('../src/main/telemetry/store');
+  const store = new LapStore(tmp());
+  const mk = (id, driver, lapMs, score, extra = {}) => ({
+    version: 1, id, driver: { name: driver, steamId: driver }, car: 'c', track: 't', layout: 'l', session: 'practice', lapMs, valid: true,
+    topSpeed: 150, drift: { score, modes: { debutant: { score: score + 5 }, normal: { score }, pro: { score: score - 5 } } }, date: new Date(Date.now() - lapMs).toISOString(),
+    samples: Array.from({ length: 30 }, (_, i) => [i / 29, i * 100, 100, 1, 0, 4, 5000, 0, 10, i, i]), ...extra,
+  });
+  store.save(mk('lap-a1', 'pab', 61000, 70));
+  store.save(mk('lap-a2', 'pab', 60500, 60)); // best time
+  store.save(mk('lap-a3', 'pab', 62000, 80)); // best note
+  store.save(mk('lap-a4', 'pab', 63000, 50));
+  store.save(mk('lap-a5', 'pab', 64000, 40, { battleId: 'b1' })); // battle run
+  store.save(mk('lap-k1', 'kaze', 65000, 30)); // other driver: his best stays
+  const removed = store.purge();
+  assert.strictEqual(removed, 2);
+  assert.deepStrictEqual(store.list().map((l) => l.id).sort(), ['lap-a2', 'lap-a3', 'lap-a5', 'lap-k1']);
+});
+
+test('round for one category: mode follows it, only its drivers count', () => {
+  const champ = require('../src/main/telemetry/championship');
+  const { roundFromRows } = require('../src/main/telemetry/rounds');
+  const [c] = champ.cleanChampionships([{ name: 'C', rounds: [{ name: 'M1', track: 't', kind: 'drift', category: 'pro', mode: 'debutant', start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' }] }]);
+  const round = c.rounds[0];
+  assert.equal(round.category, 'pro');
+  assert.equal(round.mode, 'pro');
+  const rows = [{ driver: 'Alice', score: 80, rules: 'v@x', created_at: '2026-01-01T10:00:00Z' }, { driver: 'Bob', score: 90, rules: 'v@x', created_at: '2026-01-01T10:00:00Z' }];
+  const cat = (n) => (n === 'Alice' ? 'pro' : 'amateur');
+  const res = roundFromRows({ ...round, start: '2000-01-01T00:00:00Z' }, { entryRows: rows, points: c.points, categoryOf: cat });
+  assert.deepEqual(res.results.map((r) => r.name), ['Alice']);
+  const [open] = champ.cleanChampionships([{ name: 'C', rounds: [{ name: 'M1', track: 't', category: 'nope', mode: 'debutant', start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' }] }]);
+  assert.equal(open.rounds[0].category, '');
+  assert.equal(open.rounds[0].mode, 'debutant');
+});
+
+test('clips judged from the in-game app measure (real car shape, every frame)', () => {
+  const { scoreDrift, scoreAllModes } = require('../src/main/telemetry/drift');
+  // straight run along x, sideways at 30°
+  const rows = Array.from({ length: 200 }, (_, i) => [i / 199, i * 50, 60, 0.8, 0, 3, 6000, 0.2, 30, i * 0.5, 0, 0, 30, 0, Math.PI / 2]);
+  const course = { section: [0, 1], clips: [{ name: 'Corde', kind: 'inner', x: 50, z: 10, r: 3 }, { name: 'Mur', kind: 'outer', x: 30, z: 0, r: 2, path: [[20, 0], [40, 0]] }], refLine: [] };
+  const est = scoreDrift(rows, course, 'normal');
+  assert.strictEqual(est.clips[0].hit, false, 'estimated from the centre: the corde is 10 m away');
+  assert.ok(!est.clips[0].measured);
+  const measure = { clips: [
+    { x: 50, z: 10, kind: 'inner', min: 0.4, drift: 0.5, d: 0.5 },
+    { x: 30, z: 0, kind: 'outer', min: 0.1, drift: 0.1, d: 0.3, slices: [...Array(14).fill(0.3), ...Array(6).fill(5)] },
+  ] };
+  const res = scoreDrift(rows, course, 'normal', measure);
+  assert.deepStrictEqual([res.clips[0].hit, res.clips[0].measured, res.clips[0].dist], [true, true, 0.4]);
+  assert.strictEqual(res.clips[1].cover, 70);
+  assert.ok(res.clips[1].hit);
+  // Pro: smaller clips (×0.8) — a corde touched at 2.5 m counts for Amateur, not for Pro
+  const far = { clips: [{ ...measure.clips[0], drift: 2.5 }, measure.clips[1]] };
+  const all = scoreAllModes(rows, course, far);
+  assert.deepStrictEqual([all.modes.normal.clips[0].hit, all.modes.pro.clips[0].hit], [true, false]);
+  // a measure of another clip (moved since) is ignored
+  const moved = scoreDrift(rows, { ...course, clips: [{ ...course.clips[0], x: 52 }, course.clips[1]] }, 'normal', measure);
+  assert.ok(!moved.clips[0].measured);
+});
+
+test('manager: the app measure of a run is attached and the run judged again', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(sim), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}) });
+  for (let i = 0; i < 1400; i++) m.tick();
+  const lap = m.store.list()[0];
+  const full = m.store.load(lap.id);
+  const s = full.samples[Math.floor(full.samples.length / 2)];
+  const clip = { name: 'C1', kind: 'inner', x: s[9] + 30, z: s[10] + 30, r: 3 };
+  m.getCourse = () => ({ section: [0, 1], clips: [clip], refLine: [] });
+  const dir = tmp();
+  const write = (name, data) => fs.writeFileSync(path.join(dir, name), JSON.stringify(data));
+  write('a.json', { v: 1, track: lap.track, layout: lap.layout, car: lap.car, time: Math.floor(Date.parse(lap.date) / 1000), lapMs: lap.lapMs + 100, frames: 900, shape: { front: 2.3, rear: 2.1, half: 0.95, source: 'voiture' }, clips: [{ x: clip.x, z: clip.z, kind: 'inner', min: 0.3, drift: 0.3, d: 0.5 }] });
+  write('b.json', { v: 1, track: lap.track, clips: 'x' });
+  assert.strictEqual(m.attachMeasures(dir), 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'used and bad files removed');
+  assert.strictEqual(m.store.list()[0].measured, true, 'index only flags it');
+  const again = m.store.load(lap.id);
+  assert.strictEqual(again.measure.shape.source, 'voiture');
+  assert.ok(again.drift.clips[0].measured && again.drift.clips[0].hit);
+  assert.strictEqual(m.attachMeasures(dir), 0);
+});
+
+test('road edges from the AI line (room on each side)', () => {
+  const { roadEdges } = require('../src/main/telemetry/ailine');
+  const pts = Array.from({ length: 60 }, (_, i) => ({ x: i, y: 0, z: 0, sideLeft: 4, sideRight: 6 }));
+  const r = roadEdges(pts);
+  assert.ok(r.line.length > 20);
+  const mid = Math.floor(r.line.length / 2);
+  assert.ok(Math.abs(Math.hypot(r.right[mid][0] - r.line[mid][0], r.right[mid][1] - r.line[mid][1]) - 6) < 0.05);
+  assert.ok(Math.abs(Math.hypot(r.left[mid][0] - r.line[mid][0], r.left[mid][1] - r.line[mid][1]) - 4) < 0.05);
+  assert.strictEqual(roadEdges(pts.map((p) => ({ ...p, sideLeft: 0, sideRight: 0 }))), null, 'old files without sides');
+});
+
+test('shared ranking: drivers with a record of an older course version stay, flagged old', async () => {
+  const { Leaderboard } = require('../src/main/telemetry/leaderboard');
+  const b = new Leaderboard({ url: 'https://x.test', anonKey: 'k', player: 'p-0123456789abcdef' });
+  const rows = [
+    { id: 1, driver: 'Pab', rules: 'new-normal', score: 82 },
+    { id: 2, driver: 'Vakew', rules: 'old-normal', score: 85 },
+    { id: 3, driver: 'Pab', rules: 'old-normal', score: 90 },
+    { id: 4, driver: 'Alex', rules: 'old-normal@r1', score: 99 },
+  ];
+  b.request = async (u) => {
+    const q = new URL(u, 'https://x.test').searchParams;
+    const rules = q.get('rules');
+    return rules.startsWith('eq.') ? rows.filter((r) => r.rules === rules.slice(3)) : rows.filter((r) => r.rules.endsWith('-normal'));
+  };
+  const list = await b.list({ track: 't', kind: 'drift', rules: 'new-normal', withOlder: true });
+  assert.deepStrictEqual(list.map((r) => [r.driver, Boolean(r.old)]), [['Pab', false], ['Vakew', true]]);
+  assert.strictEqual((await b.list({ track: 't', kind: 'drift', rules: 'new-normal' })).length, 1, 'rounds and championships: current version only');
+});

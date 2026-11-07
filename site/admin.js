@@ -99,7 +99,7 @@
     var track = h('select', tracks.map(function (o) { return h('option', { value: o[0], selected: o[0] === (ev.track ? ev.track + '|' + (ev.layout || '') : '') }, o[1]); }));
     var server = h('select', [h('option', { value: '' }, '— aucun —')].concat((g.servers || []).map(function (s) { return h('option', { value: s.value, selected: s.value === ev.server }, s.name); })));
     var size = h('select', [[0, 'Non'], [4, 'Oui : top 4'], [8, 'Oui : top 8'], [16, 'Oui : top 16']].map(function (o) { return h('option', { value: o[0], selected: ((ev.battle && ev.battle.size) || 0) === o[0] }, o[1]); }));
-    var mode = h('select', [['normal', 'Normal'], ['debutant', 'Débutant'], ['pro', 'Compétition']].map(function (o) { return h('option', { value: o[0], selected: ((ev.battle && ev.battle.mode) || 'normal') === o[0] }, o[1]); }));
+    var mode = h('select', [['normal', 'Amateur'], ['debutant', 'Débutant'], ['pro', 'Pro']].map(function (o) { return h('option', { value: o[0], selected: ((ev.battle && ev.battle.mode) || 'normal') === o[0] }, o[1]); }));
     var cars = (g.cars || []).slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (c) {
       return h('label.check', h('input', { type: 'checkbox', value: c.id, checked: (ev.cars || []).indexOf(c.id) >= 0 }), c.name);
     });
@@ -137,7 +137,7 @@
 
   // ------------------------------------------------------------ championnats, saisons, manches
   var KINDS = [['drift', 'Solo drift'], ['tandem', 'Tandem'], ['battle', 'Battle']];
-  var MODES = [['normal', 'Normal'], ['debutant', 'Débutant'], ['pro', 'Compétition']];
+  var MODES = [['normal', 'Amateur'], ['debutant', 'Débutant'], ['pro', 'Pro']];
   var rid = function () { return Math.random().toString(36).slice(2, 8); };
 
   function champForm(g, c, done) {
@@ -176,7 +176,8 @@
             h('label', 'Nom', h('input', { value: r.name, maxlength: 60, oninput: function (e) { r.name = e.target.value; } })),
             h('label', 'Circuit', sel(tracks, r.track + '|' + (r.layout || ''), function (v) { var tl = v.split('|'); r.track = tl[0]; r.layout = tl[1] || ''; })),
             h('label', 'Format', sel(KINDS, r.kind, function (v) { r.kind = v; drawRounds(); })),
-            h('label', 'Mode', sel(MODES, r.mode, function (v) { r.mode = v; })),
+            h('label', 'Catégorie', sel([['', 'Ouverte à tous'], ['debutant', 'Débutant'], ['amateur', 'Amateur'], ['pro', 'Pro']], r.category || '', function (v) { r.category = v; drawRounds(); })),
+            r.category ? null : h('label', 'Notation', sel(MODES, r.mode, function (v) { r.mode = v; })),
             h('label', 'Début', date('start')),
             h('label', 'Fin', date('end')),
             r.kind === 'battle' ? h('label', 'Tableau', sel([[4, 'Top 4'], [8, 'Top 8'], [16, 'Top 16']], r.bracket || 8, function (v) { r.bracket = Number(v); })) : null),
@@ -215,7 +216,7 @@
           var start = last ? new Date(Date.parse(last.end) + 86400000) : new Date();
           start.setHours(20, 0, 0, 0);
           var tl = (last ? last.track + '|' + (last.layout || '') : tracks[0][0]).split('|');
-          data.rounds.push({ id: rid(), name: 'Manche ' + (data.rounds.length + 1), track: tl[0], layout: tl[1] || '', kind: last ? last.kind : 'drift', mode: last ? last.mode : 'normal', start: start.toISOString(), end: new Date(start.getTime() + 7 * 86400000).toISOString(), bracket: 8 });
+          data.rounds.push({ id: rid(), name: 'Manche ' + (data.rounds.length + 1), track: tl[0], layout: tl[1] || '', kind: last ? last.kind : 'drift', category: last ? last.category || '' : '', mode: last ? last.mode : 'normal', start: start.toISOString(), end: new Date(start.getTime() + 7 * 86400000).toISOString(), bracket: 8 });
           drawRounds();
         },
       }, '+ Ajouter une manche'),

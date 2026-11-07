@@ -166,6 +166,8 @@ Au drift, le chrono ne compte pas. Chaque run reçoit une note sur 100 :
 
 **Clips automatiques** : si un circuit installé a une ligne IA (`ai/fast_lane.ai`), le launcher en tire la ligne de référence et place une corde à l'apex et un mur à l'entrée de chaque virage serré. Ce tracé sert tant qu'aucun parcours n'est publié.
 
+**Battle en jeu** : onglet Battle de l'appli, défie un pilote ; une fois accepté, les deux se placent sur la ligne de start et cliquent **Prêt**, puis les feux partent en même temps chez les deux. Deux runs, les rôles s'inversent.
+
 **Battle** : quand deux pilotes font deux runs l'un derrière l'autre en inversant les rôles (moins de 20 min d'écart, même circuit), le launcher juge la battle. Chaque pilote a (note en lead + note en chase) / 2. Si l'écart est sous le seuil du mode (Débutant 1, Normal 2, Compétition 3 points), c'est *one more time*. L'appli en jeu enregistre la run où tu suis et celle où tu es devant, donc un seul PC a la battle complète.
 
 **Championnat** (onglet Championnat, créé par les admins) : une liste de manches avec circuit, format (solo drift, tandem ou battle), mode et dates. En solo et en tandem, c'est la meilleure note de chaque pilote pendant la manche qui compte. En battle, il y a des qualifs en solo pendant la manche, puis un tableau à élimination (1 contre N, 2 contre N-1…), gagné par la dernière battle sans one more time. Les points se donnent par place (25, 18, 15… modifiables) et s'additionnent au classement général. Avec le classement partagé, les résultats d'une manche sont envoyés avec ses propres règles (`version@manche`). Sans lui, le championnat se calcule avec les tours présents sur le PC.
