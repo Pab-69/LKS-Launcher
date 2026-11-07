@@ -31,7 +31,7 @@ const MODE_LABEL = Object.fromEntries(MODES);
 
 const fmtDelta = (ms) => (ms == null ? '—' : `${ms > 0 ? '+' : ''}${(ms / 1000).toFixed(2)}`);
 const comboLabel = (l) => [trackName(l.track, l.layout), carName(l.car)].join(' · ');
-const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.hasToken);
+const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.verified);
 const getCourseInfo = (track, layout) => api.call('drift:course', { track, layout: layout || '' }).catch(() => ({ course: null, source: null }));
 const getCourse = (track, layout) => getCourseInfo(track, layout).then((r) => r.course);
 

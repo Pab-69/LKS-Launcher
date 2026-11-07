@@ -42,7 +42,7 @@ document.querySelectorAll('[data-win]').forEach((b) => b.addEventListener('click
 function renderChrome() {
   const s = store.settings;
   if (s) {
-    document.getElementById('nav-admin').hidden = !s.admin.hasToken;
+    document.getElementById('nav-admin').hidden = !s.admin.verified;
     const chip = clear(document.getElementById('driver-chip'));
     chip.append(h('span.flag', s.nationality || '—'), h('span', s.driverName || 'Pilote sans nom'));
   }

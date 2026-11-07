@@ -2,7 +2,7 @@ import { api, h, clear, icon, guard, dateFr, toast, seg, field, localImg, modal,
 import { store } from '../store.js';
 
 let tab = 'photos';
-const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.hasToken);
+const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.verified);
 
 /** The group's photos (sent by the members) and the liveries of the group's cars. */
 export default function gallery(root) {

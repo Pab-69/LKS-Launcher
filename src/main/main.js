@@ -1662,7 +1662,53 @@ async function cachedHash(kind, id) {
   return hash;
 }
 
+// ---------------------------------------------------------------- admin access
+// Being an admin is not « having a token saved »: the token must really be
+// allowed to write on the group's repository (GitHub says so). Until then the
+// admin pages stay hidden and every admin action is refused here, in the main
+// process (the renderer is never trusted for this).
+let adminAccess = { ok: false, checked: false, error: '', login: '' };
+const OFFICIAL_REPO = String(appConfig.contentRepo || '').toLowerCase();
+
+function publicSettings() {
+  const p = settings.public();
+  p.admin = { ...p.admin, verified: adminAccess.ok, checking: !adminAccess.checked && p.admin.hasToken, error: adminAccess.error };
+  return p;
+}
+
+async function verifyAdmin() {
+  const token = settings.getToken();
+  const was = adminAccess.ok;
+  if (!token) adminAccess = { ok: false, checked: true, error: '', login: '' };
+  else {
+    try {
+      // only the group's own repository makes someone an admin (tests and the demo use a local fake GitHub)
+      if (!process.env.LKS_GITHUB_API && String(settings.data.admin.repo || '').toLowerCase() !== OFFICIAL_REPO) {
+        throw new Error(`Seul le dépôt du groupe (${appConfig.contentRepo}) donne l'accès admin`);
+      }
+      const gh = newGitHub();
+      const repo = await gh.api('GET', `/repos/${settings.data.admin.repo}`);
+      if (!repo) throw new Error('Dépôt introuvable avec ce token : accès admin refusé');
+      const perms = repo.permissions || {};
+      if (!(perms.push || perms.admin || perms.maintain)) throw new Error("Ce token n'a pas le droit d'écrire sur le dépôt du groupe : accès admin refusé");
+      const me = await gh.api('GET', '/user').catch(() => null);
+      adminAccess = { ok: true, checked: true, error: '', login: (me && me.login) || '' };
+    } catch (err) {
+      const network = /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|network/i.test(err.message || '');
+      // no connection: an admin already checked in this session stays one
+      adminAccess = { ok: network ? was : false, checked: true, error: network ? 'GitHub injoignable : droits admin non vérifiés' : err.message, login: network ? adminAccess.login : '' };
+    }
+  }
+  if (win) send('settings:changed', publicSettings());
+  return adminAccess;
+}
+
+function assertAdmin() {
+  if (!adminAccess.ok) throw new Error(adminAccess.error && settings.getToken() ? `Réservé aux admins du groupe : ${adminAccess.error}` : 'Réservé aux admins du groupe');
+}
+
 async function withAdmin(fn) {
+  assertAdmin();
   if (adminBusy) throw new Error('Une publication est déjà en cours');
   adminBusy = true;
   send('admin:busy', true);
@@ -1676,9 +1722,12 @@ async function withAdmin(fn) {
 }
 
 // ---------------------------------------------------------------- IPC
+// admin channels open before the access is checked (they check it themselves)
+const ADMIN_OPEN = new Set(['admin:test']);
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
+      if (channel.startsWith('admin:') && !ADMIN_OPEN.has(channel)) assertAdmin();
       return { ok: true, data: await fn(...args) };
     } catch (err) {
       return { ok: false, error: err.message || String(err) };
@@ -1695,11 +1744,16 @@ function setupIpc() {
     if (action === 'close') win.close();
   });
 
-  handle('settings:get', () => settings.public());
+  handle('settings:get', () => publicSettings());
   handle('settings:update', (patch) => {
     const before = settings.data.acRoot;
     const beforeUrl = settings.data.manifestUrl;
     const out = settings.update(patch || {});
+    if (patch && patch.admin) {
+      // new token or repository: admin again only once GitHub confirms it
+      adminAccess = { ok: false, checked: false, error: '', login: '' };
+      verifyAdmin().catch(() => {});
+    }
     if (before !== settings.data.acRoot) {
       contentCache = null;
       sync.cleanup();
@@ -1709,7 +1763,7 @@ function setupIpc() {
     else send('sync:changed', sync.summary());
     configurePresence();
     if (patch && 'showOnline' in patch) updatePresence();
-    return out;
+    return { ...out, admin: publicSettings().admin };
   });
   handle('settings:detect', async () => {
     const [root, user] = await Promise.all([detectAcRoot(), detectSteamUser()]);
@@ -1945,6 +1999,8 @@ function setupIpc() {
 
   // Admin / publishing
   handle('admin:test', async () => {
+    const access = await verifyAdmin();
+    if (!access.ok) throw new Error(access.error || 'Accès admin refusé');
     const gh = newGitHub();
     const info = await gh.checkAccess();
     const pub = getPublisher();
@@ -2631,7 +2687,8 @@ app.whenReady().then(async () => {
   win.once('ready-to-show', applyBrandIcon);
   await firstRunDetection();
   computeWhatsNew();
-  send('settings:changed', settings.public());
+  send('settings:changed', publicSettings());
+  verifyAdmin().catch(() => {});
   refreshManifest({ autoSync: true }).catch(() => {}).finally(startPresence);
   setupUpdater();
 });

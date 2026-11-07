@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 1.23.0
+
+- **Launcher sécurisé : seuls les vrais admins voient et utilisent l'admin.** Avant, enregistrer n'importe quel texte comme token suffisait pour voir les pages admin (Parcours, Juge, création de championnats, Publication). Maintenant le launcher demande à GitHub si le token peut vraiment écrire sur le dépôt du groupe : sinon les pages admin restent cachées, et toute action admin est refusée par le launcher lui-même, même appelée en contournant l'interface. Un token d'un autre dépôt ne donne aucun droit. Réglages → Accès admin indique si l'accès est vérifié ou refusé, et pourquoi.
+- **Catégories calculées avec toutes les données déjà sur le serveur** : à la mise à jour du serveur, chaque pilote reçoit sa catégorie d'après ses runs et ses records déjà enregistrés (moyenne de ses 5 meilleures notes, au moins 3), au lieu de repartir de Débutant. Ensuite, la catégorie évolue à chaque run comme avant.
+- **Admins** : serveur du groupe → `./lks.sh update` (le calcul se fait une fois, tout seul). `./lks.sh categories` le relance quand vous voulez. Sur Supabase → relancez le script.
+
 ## 1.22.0
 
 - **Clips mesurés au centimètre par l'appli en jeu (3.1)** : à chaque image, l'appli mesure la distance exacte entre le clip et le vrai pare-chocs de ta voiture (avant pour une corde, arrière pour une zone extérieure), avec les dimensions réelles de la voiture. Le launcher note les clips avec ces mesures au lieu de les estimer depuis le centre de la voiture. Les zones longues sont mesurées mètre par mètre, même à faible nombre d'images par seconde. Le détail d'un passage indique si ses clips ont été mesurés en jeu.

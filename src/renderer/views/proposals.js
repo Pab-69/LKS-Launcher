@@ -21,7 +21,7 @@ function askText(title, label) {
   });
 }
 
-const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.hasToken);
+const isAdmin = () => Boolean(store.settings && store.settings.admin && store.settings.admin.verified);
 const KIND_LABEL = { car: 'Voiture', skin: 'Livrée', setup: 'Setups' };
 const STATUS = { pending: ['En attente', 'plain'], accepted: ['Acceptée', 'ok'], refused: ['Refusée', 'bad'] };
 
