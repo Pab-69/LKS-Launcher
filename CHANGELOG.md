@@ -1,5 +1,19 @@
 # Journal des versions
 
+## 1.19.0
+
+- **Vraies catégories : Débutant, Amateur, Pro.** Chaque pilote a sa catégorie, attribuée automatiquement selon ses notes (moyenne de ses 5 meilleures runs, au moins 3 runs) : 75 et plus → catégorie au-dessus, moins de 35 → catégorie en dessous. Un nouveau pilote commence Débutant.
+- **Notation selon la catégorie** : tes runs sont notées avec les règles de ta catégorie (dans le jeu, sur le serveur et dans le launcher). Télémétrie → Profil montre ta catégorie, ta moyenne et ce qu'il faut pour monter.
+- **Classements par catégorie** : le choix « Catégorie » montre les pilotes de cette catégorie, notés comme elle.
+- **Réglages par circuit** (admins, Télémétrie → Parcours) :
+  - poids de la note par catégorie (angle, vitesse, ligne et clips) ;
+  - objectifs par zone : angle et vitesse visés à chaque clip (pour Amateur, adaptés pour Débutant et Pro). Sans objectif, la zone garde l'objectif général ;
+  - pénalités par catégorie (comme avant).
+- **Manches par catégorie** : une manche peut être ouverte à tous (avec la notation choisie) ou réservée à une catégorie (seuls ses pilotes comptent, notés comme elle). Dans le launcher et sur le site.
+- **Purge sur le serveur** : après un jour, seule la meilleure run de chaque pilote par circuit et par type reste ; tout est effacé après un an. Les battles et leurs runs restent.
+- Site : catégories Débutant / Amateur / Pro dans les classements et les championnats.
+- **Admins** : serveur du groupe → `./lks.sh update` ; sur Supabase → relancez le script (Publication → Classement → Copier le script).
+
 ## 1.18.0
 
 - **Nouveau menu « Compétition »** : championnats (saisons, manches, tableaux), battles et juge ont leur propre page. La télémétrie garde : En direct, Passages, Classements, Comparer, Profil, Outils.

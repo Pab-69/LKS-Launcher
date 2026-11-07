@@ -69,6 +69,12 @@
 
     // ------------------------------------------------ championnats (même calcul que le launcher)
     var C = window.LKSChamp;
+    // catégorie de chaque pilote (Débutant tant qu'il n'a pas assez de runs notées)
+    var cats = L.getJson(api + 'lks_categories_list?select=name,category', key).then(function (list) {
+      var map = {};
+      (list || []).forEach(function (r) { map[String(r.name).trim().toLowerCase()] = r.category; });
+      return function (name) { return map[String(name || '').trim().toLowerCase()] || 'debutant'; };
+    }).catch(function () { return null; });
     var champs = L.clear($('champs'));
     var all = (g.championships || []).filter(function (c) { return (c.rounds || []).length; });
     // saisons : la plus récente d'abord (celle dont une manche a commencé le plus tard)
@@ -104,8 +110,9 @@
         return Promise.all([
           rows(COLS + '&kind=eq.' + kind + '&order=score.desc' + base),
           round.kind === 'battle' ? rows(COLS + '&kind=eq.battle' + base) : Promise.resolve([]),
+          round.category ? cats : Promise.resolve(null),
         ]).then(function (r) {
-          return window.LKSRounds.roundFromRows(round, { entryRows: r[0] || [], battleRows: r[1] || [], decisions: g.judging || [], points: c.points });
+          return window.LKSRounds.roundFromRows(round, { entryRows: r[0] || [], battleRows: r[1] || [], decisions: g.judging || [], points: c.points, categoryOf: r[2] });
         });
       })).then(function (rounds) {
         var table = C.standings(c, rounds);
@@ -121,7 +128,7 @@
         rounds.forEach(function (r) {
           var label = { upcoming: 'à venir', live: 'en cours', done: 'terminée' }[r.status] || '';
           var top = (r.results || []).slice(0, 3).map(function (x) { return x.position + '. ' + x.name; }).join('  ');
-          rl.appendChild(h('div.round', h('strong', r.name), h('span.muted', ' — ' + L.trackName(g, r.track, r.layout) + ' · ' + L.dateFr(r.start, { day: 'numeric', month: 'short' }) + ' · ' + label), top ? h('div', top) : null));
+          rl.appendChild(h('div.round', h('strong', r.name), h('span.muted', ' — ' + L.trackName(g, r.track, r.layout) + (r.category ? ' · ' + C.CATEGORY_LABEL[r.category] : '') + ' · ' + L.dateFr(r.start, { day: 'numeric', month: 'short' }) + ' · ' + label), top ? h('div', top) : null));
         });
         box.appendChild(rl);
       }).catch(function (err) { L.clear(box).appendChild(h('p.status', title + ' : ' + err.message)); });

@@ -134,6 +134,13 @@ class Community {
     return (rows || []).map((r) => ({ id: r.id, name: r.name, car: r.car, track: r.track, layout: r.layout, data: r.data || {}, updatedAt: r.updated_at }));
   }
 
+  // ------------------------------------------------------------ driver categories
+  /** Category of every driver (set by the server from the best notes): [{ name, category, avg, runs, updatedAt }] */
+  async categories() {
+    const rows = await this.request('/rest/v1/lks_categories_list?select=*&limit=1000');
+    return (rows || []).map((r) => ({ name: r.name, category: ['debutant', 'amateur', 'pro'].includes(r.category) ? r.category : 'debutant', avg: Number(r.avg) || 0, runs: Number(r.runs) || 0, updatedAt: r.updated_at }));
+  }
+
   // ------------------------------------------------------------ battles launched in game
   /** This PC's driver notes for a battle: { tag, driver, opponent, parts: { mode: { lead, chase } } } */
   addBattlePart(p) {

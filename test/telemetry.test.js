@@ -651,3 +651,19 @@ test('end of session: only the best passages stay (and the battles)', () => {
   assert.strictEqual(removed, 2);
   assert.deepStrictEqual(store.list().map((l) => l.id).sort(), ['lap-a2', 'lap-a3', 'lap-a5', 'lap-k1']);
 });
+
+test('round for one category: mode follows it, only its drivers count', () => {
+  const champ = require('../src/main/telemetry/championship');
+  const { roundFromRows } = require('../src/main/telemetry/rounds');
+  const [c] = champ.cleanChampionships([{ name: 'C', rounds: [{ name: 'M1', track: 't', kind: 'drift', category: 'pro', mode: 'debutant', start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' }] }]);
+  const round = c.rounds[0];
+  assert.equal(round.category, 'pro');
+  assert.equal(round.mode, 'pro');
+  const rows = [{ driver: 'Alice', score: 80, rules: 'v@x', created_at: '2026-01-01T10:00:00Z' }, { driver: 'Bob', score: 90, rules: 'v@x', created_at: '2026-01-01T10:00:00Z' }];
+  const cat = (n) => (n === 'Alice' ? 'pro' : 'amateur');
+  const res = roundFromRows({ ...round, start: '2000-01-01T00:00:00Z' }, { entryRows: rows, points: c.points, categoryOf: cat });
+  assert.deepEqual(res.results.map((r) => r.name), ['Alice']);
+  const [open] = champ.cleanChampionships([{ name: 'C', rounds: [{ name: 'M1', track: 't', category: 'nope', mode: 'debutant', start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' }] }]);
+  assert.equal(open.rounds[0].category, '');
+  assert.equal(open.rounds[0].mode, 'debutant');
+});

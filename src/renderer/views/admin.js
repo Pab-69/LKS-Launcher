@@ -280,7 +280,7 @@ export default function admin(root) {
               h('select.input', { on: { change: (e) => { const size = Number(e.target.value); ev.battle = size ? { size, mode: (ev.battle && ev.battle.mode) || 'normal' } : null; } } },
                 [[0, 'Non'], [4, 'Oui : top 4'], [8, 'Oui : top 8'], [16, 'Oui : top 16']].map(([v, l]) => h('option', { value: v, selected: ((ev.battle && ev.battle.size) || 0) === v }, l))),
               h('select.input', { on: { change: (e) => { if (ev.battle) ev.battle.mode = e.target.value; } } },
-                [['debutant', 'Débutant'], ['normal', 'Normal'], ['pro', 'Compétition']].map(([v, l]) => h('option', { value: v, selected: ((ev.battle && ev.battle.mode) || 'normal') === v }, l)))),
+                [['debutant', 'Débutant'], ['normal', 'Amateur'], ['pro', 'Pro']].map(([v, l]) => h('option', { value: v, selected: ((ev.battle && ev.battle.mode) || 'normal') === v }, l)))),
               'Qualifs en solo pendant la soirée, puis tableau des meilleurs : dans Télémétrie → Championnat « Soirées LKS ». Il faut choisir le circuit.'),
             field('Voitures imposées', h('div.event-cars', (group.cars || []).map((c) => h('label.row', h('input', { type: 'checkbox', checked: (ev.cars || []).includes(c.id), on: { change: (e) => { ev.cars = e.target.checked ? [...new Set([...(ev.cars || []), c.id])] : (ev.cars || []).filter((x) => x !== c.id); } } }), c.name)))),
           ),

@@ -731,3 +731,9 @@ select.input.board-select { width: auto; min-width: 240px; }
 .live-last-grid { display: grid; gap: 12px; }
 .live-last .row { flex-wrap: wrap; gap: 8px; }
 @media (max-width: 1150px) { .live-layout { grid-template-columns: 1fr; } .live-layout .live-map { position: static; } }
+
+.category-panel { margin-bottom: 12px; }
+.category-panel .row { gap: 24px; align-items: center; }
+.category-name { font: 700 30px/1.1 'Barlow Condensed', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2, #e01b3a); }
+.course-clip .clip-target { grid-column: 2 / 3; display: flex; gap: 6px; }
+.course-clip .clip-target input { flex: 1; min-width: 0; }

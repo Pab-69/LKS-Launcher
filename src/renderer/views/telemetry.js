@@ -5,6 +5,15 @@ import { store } from '../store.js';
 const tabsBySection = { telemetry: 'live', competition: 'champ' };
 const COMPETITION_TABS = ['champ', 'battles', 'judge'];
 let detailId = null; // passage shown in « Détail »
+// driver categories (from the group's server): { mine, me, map: { name: { category, avg, runs } }, modes, up, down }
+let catInfo = null;
+let judgeModeChosen = false;
+const CAT_LABEL = { debutant: 'Débutant', amateur: 'Amateur', pro: 'Pro' };
+const catOf = (name) => {
+  const r = catInfo && catInfo.map && catInfo.map[String(name || '').trim().toLowerCase()];
+  return r ? r.category : 'debutant';
+};
+const catOfMode = (m) => (catInfo ? Object.keys(catInfo.modes).find((k) => catInfo.modes[k] === m) : null) || ({ debutant: 'debutant', normal: 'amateur', pro: 'pro' })[m];
 let compare = { a: null, b: null };
 let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
 let compareMode = 'time';
@@ -16,7 +25,7 @@ let champEditor = null; // admins: championships being edited
 
 const COLORS = { a: '#e01b3a', b: '#ece5da', grid: '#261e22', text: '#6c615c' };
 const COL = { d: 0, t: 1, speed: 2, gas: 3, brake: 4, gear: 5, rpm: 6, steer: 7, angle: 8, x: 9, z: 10 };
-const MODES = [['debutant', 'Débutant'], ['normal', 'Normal'], ['pro', 'Compétition']];
+const MODES = [['debutant', 'Débutant'], ['normal', 'Amateur'], ['pro', 'Pro']]; // catégories de pilote : chacune sa notation
 const MODE_LABEL = Object.fromEntries(MODES);
 
 const fmtDelta = (ms) => (ms == null ? '—' : `${ms > 0 ? '+' : ''}${(ms / 1000).toFixed(2)}`);
@@ -326,6 +335,17 @@ export default function telemetryView(root, params = {}) {
     body,
   );
   let liveOff = null;
+  // the notes shown by default: the driver's own category
+  api.call('telemetry:categories').then((c) => {
+    catInfo = c;
+    if (!judgeModeChosen && c && c.modes[c.mine]) {
+      judgeModeChosen = true;
+      if (judgeMode !== c.modes[c.mine]) {
+        judgeMode = c.modes[c.mine];
+        if (body.isConnected && tab !== 'live') render();
+      }
+    }
+  }).catch(() => {});
 
   function renderTabs() {
     clear(tabsEl);
@@ -534,6 +554,15 @@ export default function telemetryView(root, params = {}) {
     const p = await guard(() => api.call('telemetry:profile'));
     if (!p) return;
     const stat = (label, value) => h('div.live-tile', h('div.label', label), h('div.live-v', String(value)));
+    if (catInfo) {
+      const me = catInfo.map[String(catInfo.me || '').trim().toLowerCase()];
+      const next = { debutant: 'Amateur', amateur: 'Pro', pro: null }[catInfo.mine];
+      body.append(h('div.panel.category-panel',
+        h('div.row', h('div', h('div.label', 'Ta catégorie'), h('div.category-name', CAT_LABEL[catInfo.mine])),
+          h('div.grow.s', me && me.runs >= 3
+            ? `Moyenne de tes 5 meilleures notes (notées ${CAT_LABEL[catInfo.mine]}) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
+            : `Il faut au moins 3 runs partagées pour être classé. Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
+    }
     body.append(
       h('div.live-grid',
         stat('Runs solo', p.runs), stat('Tandems', p.tandems), stat('Minutes en glisse', p.driftMinutes),
@@ -752,7 +781,7 @@ export default function telemetryView(root, params = {}) {
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${boardQuery.track}|${boardQuery.layout}`, (v) => { Object.assign(boardQuery, combosMap.get(v)); render(); }, 'board-select'),
       select([['', 'Toutes les voitures'], ...cars.map((c) => [c, carName(c)])], boardQuery.car, (v) => { boardQuery.car = v; render(); }, 'board-select'),
       seg([['time', 'Chrono'], ['drift', 'Drift'], ['tandem', 'Tandem']], boardQuery.kind, (v) => { boardQuery.kind = v; render(); }),
-      judged ? seg(MODES, judgeMode, (v) => { judgeMode = v; render(); }) : null));
+      judged ? h('div.row', h('span.label', 'Catégorie'), seg(MODES, judgeMode, (v) => { judgeMode = v; judgeModeChosen = true; render(); })) : null));
     if (!boardQuery.track) {
       body.append(h('div.empty', h('strong', 'Pas encore de tours'), 'Le classement se remplit dès ton premier tour.'));
       return;
@@ -763,9 +792,16 @@ export default function telemetryView(root, params = {}) {
     if (res.error) body.append(h('div.notice', res.error));
     else if (!remote) body.append(h('div.notice.info', 'Classement partagé pas encore configuré : seuls tes tours et ceux importés apparaissent.'));
     if (judged) body.append(courseNotice(info, boardQuery.kind));
-    const rows = remote
-      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: r.steam_id === store.settings.steamId }))
+    const meName = String(store.settings.driverName || '').trim().toLowerCase();
+    let rows = remote
+      ? remote.map((r) => ({ id: `remote-${r.id}`, driver: r.driver, car: r.car, lapMs: r.lap_ms, score: Number(r.score), d: (r.meta && (r.meta.drift || r.meta.tandem)) || null, lead: r.meta && r.meta.lead, ghost: Boolean(r.meta && r.meta.ghost), date: r.created_at, me: String(r.driver).trim().toLowerCase() === meName }))
       : res.local.map((l) => ({ id: l.id, driver: l.driver.name, car: l.car, lapMs: l.lapMs, score: l.result ? l.result.score : 0, d: l.result, lead: l.tandem && l.tandem.lead, ghost: Boolean(l.ghost), date: l.date, me: l.driver.steamId === store.settings.steamId }));
+    // drift and tandem: the drivers of the chosen category, judged like that category
+    if (judged && remote && catInfo && Object.keys(catInfo.map || {}).length) {
+      const want = catOfMode(judgeMode);
+      rows = rows.filter((r) => catOf(r.driver) === want);
+      body.append(h('p.hint', `Pilotes ${CAT_LABEL[want]} seulement, notés comme leur catégorie. La catégorie change toute seule avec tes meilleures notes.`));
+    }
     if (!rows.length) {
       body.append(h('div.empty.mt', h('strong', 'Personne pour l’instant'), boardQuery.kind === 'tandem' ? 'Installe l’appli en jeu (Outils) et suis un pote : ton chase est noté.' : judged ? 'Sois le premier à poser une run.' : 'Sois le premier à poser un temps.'));
       return;
@@ -970,12 +1006,15 @@ export default function telemetryView(root, params = {}) {
       };
       wrap.append(
         h('div.row', h('h3', { style: { margin: 0 } }, 'Règles'), h('div.right', seg(MODES, m, (v) => { editor.ruleMode = v; draw(); }))),
-        h('p.hint', m === 'debutant' ? 'Mode débutant : plus tolérant, jamais de run à 0 par défaut.' : m === 'pro' ? 'Mode compétition : chaque faute peut mettre la run à 0.' : 'Mode normal : les fautes coûtent des points.'),
+        h('p.hint', m === 'debutant' ? 'Catégorie Débutant : plus tolérante, jamais de run à 0 par défaut.' : m === 'pro' ? 'Catégorie Pro : chaque faute peut mettre la run à 0.' : 'Catégorie Amateur : les fautes coûtent des points.'),
         range('Angle pour la note max', { min: 20, max: 60, step: 1, value: r.angleTarget, format: (v) => `${v}°`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { angleTarget: v }); onChange(); } }),
         range('Taille des clips', { min: 0.5, max: 2, step: 0.1, value: r.clipScale, format: (v) => `× ${v}`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { clipScale: v }); onChange(); } }),
         h('div.rule-row', h('span', 'Ligne parfaite / à 0'), h('span'),
           h('input.input.rule-points', { type: 'number', min: 0, max: 30, step: 0.5, value: r.lineTol[0], on: { change: (e) => set({ lineTol: [Number(e.target.value) || 0, r.lineTol[1]] }) } }),
           h('input.input.rule-points', { type: 'number', min: 1, max: 60, step: 0.5, value: r.lineTol[1], on: { change: (e) => set({ lineTol: [r.lineTol[0], Number(e.target.value) || 1] }) } })),
+        h('div.label.mt', 'Poids de la note'),
+        ...[['angle', 'Angle'], ['speed', 'Vitesse'], ['line', 'Ligne et clips']].map(([k, label]) => range(label, { min: 0, max: 100, step: 5, value: r.weights[k], format: (v) => `${v}`, onInput: (v) => { editor.rules[m] = deepMerge(editor.rules[m] || {}, { weights: { ...r.weights, ...((editor.rules[m] || {}).weights || {}), [k]: v } }); onChange(); } })),
+        h('p.hint', 'Les poids sont ramenés sur 100 : seul leur rapport compte.'),
         h('div.label.mt', 'Fautes'),
         action('off', r.off, { label: 'Roues dehors', control: select([['1', '1 roue'], ['2', '2 roues'], ['3', '3 roues'], ['4', '4 roues']], String(r.off.wheels), (v) => set({ off: { ...r.off, wheels: Number(v) } })) }),
         action('straighten', r.straighten, { label: 'Regrip' }),
@@ -1076,6 +1115,9 @@ export default function telemetryView(root, params = {}) {
         h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
         select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
         range('Taille', { min: 1, max: 10, step: 0.5, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
+        h('div.clip-target', { title: 'Objectifs de la zone pour la catégorie Amateur (Débutant et Pro adaptés). Vide : objectif général.' },
+          h('input.input.rule-points', { type: 'number', min: 0, max: 80, placeholder: 'Angle °', value: (c.target && c.target.angle) || '', on: { change: (e) => { c.target = { ...(c.target || {}), angle: Number(e.target.value) || 0 }; } } }),
+          h('input.input.rule-points', { type: 'number', min: 0, max: 250, placeholder: 'km/h', value: (c.target && c.target.speed) || '', on: { change: (e) => { c.target = { ...(c.target || {}), speed: Number(e.target.value) || 0 }; } } })),
         h('button.btn.btn-sm.btn-ghost', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); drawList(); drawMap(); } } }, icon('trash')))));
     };
     const side = h('div.course-side',
@@ -1178,7 +1220,7 @@ export default function telemetryView(root, params = {}) {
   const KIND_LABEL = { drift: 'Solo drift', tandem: 'Tandem', battle: 'Battle' };
   const STATUS_TAG = { upcoming: ['plain', 'À venir'], live: ['warn', 'En cours'], done: ['ok', 'Terminée'] };
   const toLocal = (iso) => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, season: c.season || '', points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
+  const strip = (list) => list.map((c) => ({ id: c.id, name: c.name, season: c.season || '', points: [...c.points], rounds: c.rounds.map((r) => ({ id: r.id, name: r.name, track: r.track, layout: r.layout || '', kind: r.kind, category: r.category || '', mode: r.mode, start: r.start, end: r.end, bracket: r.bracket || 8 })) }));
 
   async function renderChamp() {
     const list = (await guard(() => api.call('champ:list'))) || [];
@@ -1211,7 +1253,7 @@ export default function telemetryView(root, params = {}) {
       const [tagCls, tagText] = STATUS_TAG[r.status];
       const panel = h('div.panel.mt',
         h('div.row',
-          h('div', h('h3', { style: { margin: 0 } }, `M${i + 1} · ${r.name}`), h('div.s', `${trackName(r.track, r.layout)} · ${KIND_LABEL[r.kind]}${r.kind === 'battle' ? ` top ${r.bracket}` : ''} · ${MODE_LABEL[r.mode]} · du ${dateFr(r.start)} au ${dateFr(r.end)}`)),
+          h('div', h('h3', { style: { margin: 0 } }, `M${i + 1} · ${r.name}`), h('div.s', `${trackName(r.track, r.layout)} · ${KIND_LABEL[r.kind]}${r.kind === 'battle' ? ` top ${r.bracket}` : ''} · ${r.category ? `catégorie ${CAT_LABEL[r.category]}` : `ouverte, notation ${MODE_LABEL[r.mode]}`} · du ${dateFr(r.start)} au ${dateFr(r.end)}`)),
           h(`span.tag.${tagCls}.right`, tagText)));
       if (r.error) panel.append(h('div.notice.mt', r.error));
       if (r.kind !== 'battle') {
@@ -1269,7 +1311,8 @@ export default function telemetryView(root, params = {}) {
           field('Nom', h('input.input', { value: r.name, maxlength: 60, on: { input: (e) => { r.name = e.target.value; } } })),
           field('Circuit', select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${r.track}|${r.layout || ''}`, (v) => Object.assign(r, combosMap.get(v)))),
           field('Format', select([['drift', 'Solo drift'], ['tandem', 'Tandem'], ['battle', 'Battle']], r.kind, (v) => { r.kind = v; drawRounds(); })),
-          field('Mode', select(MODES, r.mode, (v) => { r.mode = v; })),
+          field('Catégorie', select([['', 'Ouverte à tous'], ['debutant', 'Débutant'], ['amateur', 'Amateur'], ['pro', 'Pro']], r.category || '', (v) => { r.category = v; drawRounds(); })),
+          r.category ? h('span') : field('Notation', select(MODES, r.mode, (v) => { r.mode = v; })),
           field('Début', h('input.input', { type: 'datetime-local', value: toLocal(r.start), on: { change: (e) => { r.start = new Date(e.target.value).toISOString(); } } })),
           field('Fin', h('input.input', { type: 'datetime-local', value: toLocal(r.end), on: { change: (e) => { r.end = new Date(e.target.value).toISOString(); } } })),
           r.kind === 'battle' ? field('Tableau', select([['4', 'Top 4'], ['8', 'Top 8'], ['16', 'Top 16']], String(r.bracket || 8), (v) => { r.bracket = Number(v); })) : h('span')),

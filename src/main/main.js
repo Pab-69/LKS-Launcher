@@ -827,6 +827,14 @@ function applyDriftCourses() {
 }
 
 /** Keep only known rule fields with sane values (admins' custom rules). */
+/** Per-zone targets of a clip (for Amateur): angle 0-80°, speed 0-250 km/h. */
+function clipTarget(t) {
+  if (!t || typeof t !== 'object') return {};
+  const angle = Math.round(Math.min(80, Math.max(0, Number(t.angle) || 0)));
+  const speed = Math.round(Math.min(250, Math.max(0, Number(t.speed) || 0)));
+  return angle || speed ? { target: { angle, speed } } : {};
+}
+
 function cleanRules(rules) {
   const out = {};
   const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
@@ -933,6 +941,29 @@ async function refreshGhostLibrary(combo, force = false) {
   ghosts.writeLibrary(appDir, picks);
 }
 
+// ---------------------------------------------------------------- driver categories (Débutant / Amateur / Pro)
+// Set by the group's server from each driver's best notes (docs/leaderboard.sql,
+// lks_update_category). Each category has its own judging (drift modes).
+const CATEGORY_MODE = { debutant: 'debutant', amateur: 'normal', pro: 'pro' };
+let categories = { at: 0, map: {} }; // driver name (lower case) -> { category, avg, runs }
+async function refreshCategories(force) {
+  const c = community();
+  if (!c || (!force && Date.now() - categories.at < 300000)) return categories.map;
+  try {
+    const rows = await c.categories();
+    categories = { at: Date.now(), map: Object.fromEntries(rows.map((r) => [String(r.name).trim().toLowerCase(), r])) };
+  } catch (err) {
+    categories.at = Date.now();
+    applog.log('categories', err.message);
+  }
+  return categories.map;
+}
+function categoryOf(name) {
+  const r = categories.map[String(name || '').trim().toLowerCase()];
+  return r && CATEGORY_MODE[r.category] ? r.category : 'debutant';
+}
+const myMode = () => CATEGORY_MODE[categoryOf(settings.data.driverName)];
+
 /**
  * Note of the run just finished, for the in-game app (apps/lua/LKS/score.json):
  * the app shows it right after the run, with each clip and each zone.
@@ -941,18 +972,20 @@ function writeScoreForGame(lap, pbDrift = [], pbTandem = []) {
   if (!acRoot() || !lap) return;
   const dir = ingame.appDir(acRoot());
   if (!fs.existsSync(dir)) return;
-  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
-  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  const mode = myMode();
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes[mode] || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes[mode] || lap.drift : lap.drift;
   if (!tandem && !(d && d.score !== undefined)) return;
   const base = tandem || d;
   const data = {
+    category: categoryOf(settings.data.driverName),
     id: lap.id,
     track: lap.track,
     layout: lap.layout || '',
     kind: tandem ? 'tandem' : 'drift',
     driver: lap.driver && lap.driver.name,
     score: base.score,
-    record: (tandem ? pbTandem : pbDrift).includes('normal'),
+    record: (tandem ? pbTandem : pbDrift).includes(mode),
     ...(tandem
       ? { tandem: { proximity: tandem.proximity, angleMatch: tandem.angleMatch, line: tandem.line, avgGap: tandem.avgGap, lead: lap.tandem.lead && lap.tandem.lead.name } }
       : { angle: d.angle, speed: d.speed, line: d.line, penalty: d.penalty, zeroed: d.zeroed || null }),
@@ -976,11 +1009,16 @@ function shareRun(lap) {
   const c = community();
   if (!c || !lap || settings.data.telemetry.shareLaps === false) return;
   if (((lap.driver && lap.driver.steamId) || '') !== (settings.data.steamId || '')) return; // a run where you led: the chaser's launcher sends it
-  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes.normal || lap.tandem : null;
-  const d = lap.drift && lap.drift.modes ? lap.drift.modes.normal || lap.drift : lap.drift;
+  // the note of the driver's category; the three notes go along (they decide the category)
+  const mode = myMode();
+  const tandem = lap.tandem && lap.tandem.modes ? lap.tandem.modes[mode] || lap.tandem : null;
+  const d = lap.drift && lap.drift.modes ? lap.drift.modes[mode] || lap.drift : lap.drift;
   const base = tandem || d;
   if (!base || !(base.score >= 0)) return;
+  const all = (tandem ? lap.tandem : lap.drift) || {};
   const detail = {
+    category: categoryOf(settings.data.driverName),
+    modes: all.modes ? Object.fromEntries(Object.entries(all.modes).map(([m, r]) => [m, r && Number.isFinite(r.score) ? r.score : 0])) : undefined,
     angle: d && d.angle,
     speed: d && d.speed,
     line: d && d.line,
@@ -996,7 +1034,9 @@ function shareRun(lap) {
   // same id for the same run, whoever sends it again
   const hash = require('crypto').createHash('sha1').update(`${playerId()}|${lap.id}`).digest('hex');
   const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-  c.addRun({ id, driver: lap.driver.name, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail }).catch((err) => applog.log('run share', err.message));
+  c.addRun({ id, driver: lap.driver.name, car: lap.car, track: lap.track, layout: lap.layout, kind: tandem ? 'tandem' : 'drift', score: base.score, detail })
+    .then(() => refreshCategories(true)) // the server may have moved the driver up or down
+    .catch((err) => applog.log('run share', err.message));
 }
 
 /** Evening going on (from 30 min before to the end): live sharing for the judges. */
@@ -1072,6 +1112,10 @@ async function championshipsNow() {
       }
       if (!entries) entries = telemetry.store.leaderboard({ track: round.track, layout: round.layout || '', kind, mode: round.mode, rules: version, from: round.start, to: round.end }).map((l) => ({ name: l.driver.name, steamId: l.driver.steamId, score: l.result.score }));
       if (!battles) battles = telemetry.battles.list({ track: round.track, layout: round.layout || '' }).filter((b) => inWindow(b.date) && b.modes[round.mode] && b.modes[round.mode].rules === version).map((b) => ({ ...b.modes[round.mode], date: b.date }));
+      if (round.category) {
+        await refreshCategories();
+        entries = champ.forCategory(round, entries, categoryOf);
+      }
       const decisions = (sync.manifest && sync.manifest.judging) || [];
       const ruled = ruledBattles(round, battles, decisions);
       rounds.push({ ...round, ...champ.roundResults(round, { entries, battles: ruled, points: c.points }), error });
@@ -2067,6 +2111,10 @@ function setupIpc() {
       `Tours enregistrés sur ce circuit : ${combo ? telemetry.store.list({ track: combo.track, layout: combo.layout || '' }).length : '—'}`,
     ].filter(Boolean).join('\n');
   });
+  handle('telemetry:categories', async () => {
+    const map = await refreshCategories(false);
+    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35 };
+  });
   handle('telemetry:settings', async (patch) => {
     settings.update({ telemetry: patch || {} });
     await applyDash();
@@ -2307,7 +2355,7 @@ function setupIpc() {
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
-        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}) })), refLine: [], refSpeed: 0 };
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}), ...clipTarget(c.target) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
         const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
         if (gated) for (const k of ['progress', 'staging', 'start', 'finish', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];

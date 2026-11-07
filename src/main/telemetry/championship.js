@@ -132,6 +132,16 @@ function standings(championship, rounds) {
 }
 
 /** Admin input → clean championship list. */
+/** Driver categories and the judging mode each one is noted with. */
+const CATEGORY_MODE = { debutant: 'debutant', amateur: 'normal', pro: 'pro' };
+const CATEGORY_LABEL = { debutant: 'Débutant', amateur: 'Amateur', pro: 'Pro' };
+
+/** Entries of a round for one category: only the drivers of that category. */
+function forCategory(round, entries, categoryOf) {
+  if (!round.category || !categoryOf) return entries;
+  return entries.filter((e) => categoryOf(e.name) === round.category);
+}
+
 function cleanChampionships(list) {
   const id = (v) => String(v || '').replace(/[^\w-]/g, '').slice(0, 6);
   const date = (v) => (Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null);
@@ -146,7 +156,9 @@ function cleanChampionships(list) {
       track: String(r.track || '').replace(/[^\w.-]/g, ''),
       layout: String(r.layout || '').replace(/[^\w.-]/g, ''),
       kind: ['drift', 'tandem', 'battle'].includes(r.kind) ? r.kind : 'drift',
-      mode: ['debutant', 'normal', 'pro'].includes(r.mode) ? r.mode : 'normal',
+      // a round for one category (only its drivers, judged like it) or open to all
+      category: CATEGORY_MODE[r.category] ? r.category : '',
+      mode: CATEGORY_MODE[r.category] || (['debutant', 'normal', 'pro'].includes(r.mode) ? r.mode : 'normal'),
       start: date(r.start) || new Date().toISOString(),
       end: date(r.end) || new Date(Date.now() + 7 * 86400000).toISOString(),
       bracket: [4, 8, 16, 32].includes(Number(r.bracket)) ? Number(r.bracket) : 8,
@@ -185,4 +197,4 @@ function syncSoirees(championships, events, now = Date.now()) {
   return cleanChampionships(champs);
 }
 
-module.exports = { roundStatus, openRounds, pointsFor, seedOrder, bracket, roundResults, standings, cleanChampionships, syncSoirees, DEFAULT_POINTS };
+module.exports = { CATEGORY_MODE, CATEGORY_LABEL, forCategory, roundStatus, openRounds, pointsFor, seedOrder, bracket, roundResults, standings, cleanChampionships, syncSoirees, DEFAULT_POINTS };
