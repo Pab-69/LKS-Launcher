@@ -14,11 +14,12 @@ const { Leaderboard } = require('./leaderboard');
 const { DashServer } = require('./dash-server');
 const { BattleStore, findPartnerRun } = require('./battles');
 const { readGhostFiles, matchLap } = require('./ghosts');
+const { readMeasureFiles, measureMatches } = require('./measures');
 const fs = require('fs');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, applyBattleParts, MODE_IDS } = require('./drift');
 
 class TelemetryManager extends EventEmitter {
-  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs, getExchange, exchangeWaitMs, canonical }) {
+  constructor({ dataDir, source, getDriver, getBoardConfig, getPlayer, getSettings, getCourse, getRounds, getObs, getExchange, exchangeWaitMs, canonical, getMeasureDir, measureWaitMs }) {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
@@ -33,6 +34,9 @@ class TelemetryManager extends EventEmitter {
     this.getExchange = getExchange || (() => null);
     this.exchangeWaitMs = exchangeWaitMs === undefined ? 90000 : exchangeWaitMs;
     this.battleJobs = Promise.resolve();
+    // exact clip distances from the in-game app (apps/lua/LKS/measures)
+    this.getMeasureDir = getMeasureDir || (() => null);
+    this.measureWaitMs = measureWaitMs === undefined ? 2500 : measureWaitMs;
     this.getSettings = getSettings || (() => ({}));
     this.dash = new DashServer({ getLive: () => this.live(), getObs: () => (getObs ? getObs() : null) });
     this.timer = null;
@@ -45,7 +49,13 @@ class TelemetryManager extends EventEmitter {
       this.loadReference(c);
       this.emit('combo', c);
     });
-    this.recorder.on('lap', (lap) => this.onLap(lap));
+    this.recorder.on('lap', (lap) => {
+      const course = this.getMeasureDir() ? this.getCourse(lap) : null;
+      if (!course || !(course.clips || []).length) return this.onLap(lap); // no in-game app or no clips: right away
+      this.withMeasure(lap)
+        .then((l) => this.onLap(l))
+        .catch((err) => this.emit('submitError', err));
+    });
     this.recorder.on('reset', (r) => this.emit('reset', r));
   }
 
@@ -119,7 +129,7 @@ class TelemetryManager extends EventEmitter {
 
   /** Judge a full lap (solo + tandem when there was a leader). */
   judge(lap, course) {
-    lap.drift = { maxAngle: lap.drift ? lap.drift.maxAngle || 0 : 0, avgAngle: 0, driftTime: 0, ...scoreAllModes(lap.samples, course) };
+    lap.drift = { maxAngle: lap.drift ? lap.drift.maxAngle || 0 : 0, avgAngle: 0, driftTime: 0, ...scoreAllModes(lap.samples, course, lap.measure || null) };
     // the battle tag (battles launched in game) stays with the run
     if (lap.tandem && lap.tandem.leadSamples) lap.tandem = { lead: lap.tandem.lead, leadSamples: lap.tandem.leadSamples, ...(lap.tandem.battle ? { battle: lap.tandem.battle } : {}), ...scoreTandemAll(lap.samples, lap.tandem.leadSamples, course) };
     return lap;
@@ -243,6 +253,60 @@ class TelemetryManager extends EventEmitter {
     this.judge(lap, this.getCourse(lap));
     await this.onLap(lap);
     return this.detectBattle(lap);
+  }
+
+  /** The app's measure of this run, if it wrote one (it finishes the run at the same moment). */
+  takeMeasure(lap) {
+    const dir = this.getMeasureDir();
+    if (!dir) return null;
+    const found = readMeasureFiles(dir).find((f) => f.measure && measureMatches(f.measure, lap));
+    if (!found) return null;
+    fs.rmSync(found.file, { force: true });
+    return found.measure;
+  }
+
+  /** A run from the shared memory: wait a moment for the app's exact clip measure, then judge with it. */
+  async withMeasure(lap) {
+    const course = this.getCourse(lap);
+    if (!this.getMeasureDir() || !course || !(course.clips || []).length) return lap;
+    const until = Date.now() + this.measureWaitMs;
+    for (;;) {
+      const m = this.takeMeasure(lap);
+      if (m) {
+        lap.measure = m;
+        return this.judge(lap, course);
+      }
+      if (Date.now() >= until) return lap;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  /**
+   * Measures that came late (or of tandem runs imported from the app): judge
+   * the matching lap again with them. Measures older than 10 min are dropped.
+   */
+  attachMeasures(dir, now = Date.now()) {
+    const { steamId } = this.recorder.getDriver() || {};
+    let n = 0;
+    for (const { file, measure, bad } of readMeasureFiles(dir)) {
+      if (bad) {
+        fs.rmSync(file, { force: true });
+        continue;
+      }
+      const match = this.store.list({ track: measure.track, layout: measure.layout }).filter((l) => !l.measured && (l.driver.steamId || '') === (steamId || '') && measureMatches(measure, l))[0];
+      if (match) {
+        try {
+          const lap = this.store.load(match.id);
+          lap.measure = measure;
+          this.store.save(this.judge(lap, this.getCourse(lap)), { imported: Boolean(match.imported) });
+          n++;
+        } catch {
+          /* lap gone */
+        }
+      } else if (now - measure.time < 10 * 60 * 1000) continue; // its lap may not be saved yet
+      fs.rmSync(file, { force: true });
+    }
+    return n;
   }
 
   /**

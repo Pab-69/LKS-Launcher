@@ -667,3 +667,61 @@ test('round for one category: mode follows it, only its drivers count', () => {
   assert.equal(open.rounds[0].category, '');
   assert.equal(open.rounds[0].mode, 'debutant');
 });
+
+test('clips judged from the in-game app measure (real car shape, every frame)', () => {
+  const { scoreDrift, scoreAllModes } = require('../src/main/telemetry/drift');
+  // straight run along x, sideways at 30°
+  const rows = Array.from({ length: 200 }, (_, i) => [i / 199, i * 50, 60, 0.8, 0, 3, 6000, 0.2, 30, i * 0.5, 0, 0, 30, 0, Math.PI / 2]);
+  const course = { section: [0, 1], clips: [{ name: 'Corde', kind: 'inner', x: 50, z: 10, r: 3 }, { name: 'Mur', kind: 'outer', x: 30, z: 0, r: 2, path: [[20, 0], [40, 0]] }], refLine: [] };
+  const est = scoreDrift(rows, course, 'normal');
+  assert.strictEqual(est.clips[0].hit, false, 'estimated from the centre: the corde is 10 m away');
+  assert.ok(!est.clips[0].measured);
+  const measure = { clips: [
+    { x: 50, z: 10, kind: 'inner', min: 0.4, drift: 0.5, d: 0.5 },
+    { x: 30, z: 0, kind: 'outer', min: 0.1, drift: 0.1, d: 0.3, slices: [...Array(14).fill(0.3), ...Array(6).fill(5)] },
+  ] };
+  const res = scoreDrift(rows, course, 'normal', measure);
+  assert.deepStrictEqual([res.clips[0].hit, res.clips[0].measured, res.clips[0].dist], [true, true, 0.4]);
+  assert.strictEqual(res.clips[1].cover, 70);
+  assert.ok(res.clips[1].hit);
+  // Pro: smaller clips (×0.8) — a corde touched at 2.5 m counts for Amateur, not for Pro
+  const far = { clips: [{ ...measure.clips[0], drift: 2.5 }, measure.clips[1]] };
+  const all = scoreAllModes(rows, course, far);
+  assert.deepStrictEqual([all.modes.normal.clips[0].hit, all.modes.pro.clips[0].hit], [true, false]);
+  // a measure of another clip (moved since) is ignored
+  const moved = scoreDrift(rows, { ...course, clips: [{ ...course.clips[0], x: 52 }, course.clips[1]] }, 'normal', measure);
+  assert.ok(!moved.clips[0].measured);
+});
+
+test('manager: the app measure of a run is attached and the run judged again', () => {
+  const sim = new Simulator({ lapMs: 20000, seed: 4 });
+  const m = new TelemetryManager({ dataDir: tmp(), source: new SimulatedSource(sim), getDriver: () => ({ name: 'Pab', steamId: '7656' }), getSettings: () => ({}) });
+  for (let i = 0; i < 1400; i++) m.tick();
+  const lap = m.store.list()[0];
+  const full = m.store.load(lap.id);
+  const s = full.samples[Math.floor(full.samples.length / 2)];
+  const clip = { name: 'C1', kind: 'inner', x: s[9] + 30, z: s[10] + 30, r: 3 };
+  m.getCourse = () => ({ section: [0, 1], clips: [clip], refLine: [] });
+  const dir = tmp();
+  const write = (name, data) => fs.writeFileSync(path.join(dir, name), JSON.stringify(data));
+  write('a.json', { v: 1, track: lap.track, layout: lap.layout, car: lap.car, time: Math.floor(Date.parse(lap.date) / 1000), lapMs: lap.lapMs + 100, frames: 900, shape: { front: 2.3, rear: 2.1, half: 0.95, source: 'voiture' }, clips: [{ x: clip.x, z: clip.z, kind: 'inner', min: 0.3, drift: 0.3, d: 0.5 }] });
+  write('b.json', { v: 1, track: lap.track, clips: 'x' });
+  assert.strictEqual(m.attachMeasures(dir), 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'used and bad files removed');
+  assert.strictEqual(m.store.list()[0].measured, true, 'index only flags it');
+  const again = m.store.load(lap.id);
+  assert.strictEqual(again.measure.shape.source, 'voiture');
+  assert.ok(again.drift.clips[0].measured && again.drift.clips[0].hit);
+  assert.strictEqual(m.attachMeasures(dir), 0);
+});
+
+test('road edges from the AI line (room on each side)', () => {
+  const { roadEdges } = require('../src/main/telemetry/ailine');
+  const pts = Array.from({ length: 60 }, (_, i) => ({ x: i, y: 0, z: 0, sideLeft: 4, sideRight: 6 }));
+  const r = roadEdges(pts);
+  assert.ok(r.line.length > 20);
+  const mid = Math.floor(r.line.length / 2);
+  assert.ok(Math.abs(Math.hypot(r.right[mid][0] - r.line[mid][0], r.right[mid][1] - r.line[mid][1]) - 6) < 0.05);
+  assert.ok(Math.abs(Math.hypot(r.left[mid][0] - r.line[mid][0], r.left[mid][1] - r.line[mid][1]) - 4) < 0.05);
+  assert.strictEqual(roadEdges(pts.map((p) => ({ ...p, sideLeft: 0, sideRight: 0 }))), null, 'old files without sides');
+});

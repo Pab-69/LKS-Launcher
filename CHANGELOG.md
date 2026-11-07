@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 1.22.0
+
+- **Clips mesurés au centimètre par l'appli en jeu (3.1)** : à chaque image, l'appli mesure la distance exacte entre le clip et le vrai pare-chocs de ta voiture (avant pour une corde, arrière pour une zone extérieure), avec les dimensions réelles de la voiture. Le launcher note les clips avec ces mesures au lieu de les estimer depuis le centre de la voiture. Les zones longues sont mesurées mètre par mètre, même à faible nombre d'images par seconde. Le détail d'un passage indique si ses clips ont été mesurés en jeu.
+- **Éditeur de parcours précis** (admins, Télémétrie → Parcours) :
+  - carte zoomable à la molette (jusqu'au centimètre), on se déplace en glissant, échelle et position du pointeur (distance au bord de route et à la ligne) ;
+  - **bords de la route** dessinés depuis la ligne IA du circuit ;
+  - chaque clip est un **point** ou une **zone** (début → fin, points ajoutables pour suivre une courbe), à sa vraie taille ; on le déplace à la souris, Maj pour le coller au bord de route, bouton « Au bord », Suppr pour le retirer ; clic sur son numéro pour zoomer dessus ;
+  - **ligne à suivre ajustée à la main** : onglet « Ligne », attrape la ligne et tire, les points autour suivent selon la taille du pinceau ; Lisser, Annuler (Ctrl+Z), Repartir de la ligne d'origine. Partie d'une run, la vitesse de référence de cette run est gardée.
+
 ## 1.21.0
 
 - **Site : page Pilotes** : tous les pilotes rangés par catégorie (Pro, Amateur, Débutant) avec leur moyenne, et une recherche. Clique un pilote : sa catégorie et ce qu'il faut pour monter, ses records par circuit, ses dernières runs (avec les runs à 0) et ses battles.

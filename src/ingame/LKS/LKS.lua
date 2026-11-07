@@ -219,62 +219,124 @@ local function resetClips()
 end
 resetClips()
 
--- distance au clip : à son centre, ou à sa bande pour une zone longue peinte au sol
-local function clipDist(c, x, z)
-  local path = c.path
-  if not path or #path < 2 then return math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2) end
-  local best = math.huge
-  for i = 1, #path - 1 do
-    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
-    local vx, vz = bx - ax, bz - az
-    local l2 = vx * vx + vz * vz
-    if l2 <= 0 then l2 = 1 end
-    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / l2))
-    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
-    if d < best then best = d end
-  end
-  return best
+-- Forme réelle de la voiture : boîte englobante du modèle (CSP), sinon 4,4 m × 1,8 m.
+-- Pour une corde (clip intérieur) on mesure le pare-chocs avant, pour une zone
+-- extérieure le pare-chocs arrière : la distance exacte entre ce bord et le clip.
+local shape = nil
+local function carShape(car)
+  if shape and shape.at and clock - shape.at < 10000 then return shape end
+  local sh = { front = 2.2, rear = 2.2, half = 0.9, source = 'défaut', at = clock }
+  safe(function()
+    local c, sz = car.aabbCenter, car.aabbSize
+    if c and sz and sz.z > 1 and sz.x > 0.5 then
+      -- aabbSize donne la taille complète (ou la demi-taille selon la version du CSP)
+      local len, wid = sz.z, sz.x
+      if len < 3 then len, wid = len * 2, wid * 2 end
+      if len > 2.5 and len < 7 and wid > 1.2 and wid < 3 then
+        sh.front, sh.rear, sh.half, sh.source = len / 2 + c.z, len / 2 - c.z, wid / 2, 'voiture'
+      end
+    end
+  end)
+  shape = sh
+  return sh
 end
 
--- position le long d'une zone (m depuis son début) et distance à elle
-local function alongPath(path, x, z)
-  local bestD, bestAt, acc = math.huge, 0, 0
+-- bord avant ou arrière de la voiture : deux coins (x, z)
+local function bumper(c, car)
+  local sh = carShape(car)
+  local p, l = car.position, car.look
+  local ll = math.sqrt(l.x * l.x + l.z * l.z)
+  if ll <= 0 then return p.x, p.z, p.x, p.z end
+  local fx, fz = l.x / ll, l.z / ll
+  local sx, sz = fz, -fx
+  local k = (c.kind == 'outer') and -sh.rear or sh.front
+  local cx, cz = p.x + fx * k, p.z + fz * k
+  return cx - sx * sh.half, cz - sz * sh.half, cx + sx * sh.half, cz + sz * sh.half
+end
+
+-- distance d'un point au segment [a, b]
+local function pointSeg(px, pz, ax, az, bx, bz)
+  local vx, vz = bx - ax, bz - az
+  local l2 = vx * vx + vz * vz
+  local k = l2 > 0 and math.max(0, math.min(1, ((px - ax) * vx + (pz - az) * vz) / l2)) or 0
+  return math.sqrt((px - ax - vx * k) ^ 2 + (pz - az - vz * k) ^ 2)
+end
+-- distance entre deux segments (plan x/z)
+local function segSeg(ax, az, bx, bz, cx, cz, dx, dz)
+  local function side(px, pz, qx, qz, rx, rz) return (qx - px) * (rz - pz) - (qz - pz) * (rx - px) end
+  local d1, d2 = side(ax, az, bx, bz, cx, cz), side(ax, az, bx, bz, dx, dz)
+  local d3, d4 = side(cx, cz, dx, dz, ax, az), side(cx, cz, dx, dz, bx, bz)
+  if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)) then return 0 end
+  return math.min(pointSeg(ax, az, cx, cz, dx, dz), pointSeg(bx, bz, cx, cz, dx, dz), pointSeg(cx, cz, ax, az, bx, bz), pointSeg(dx, dz, ax, az, bx, bz))
+end
+
+-- distance exacte du bord jugé au clip ; pour une zone, aussi la position le long d'elle
+local function clipMeasure(c, car)
+  local ax, az, bx, bz = bumper(c, car)
+  local path = c.path
+  if not path or #path < 2 then return pointSeg(c.x, c.z, ax, az, bx, bz), nil end
+  local best, at = math.huge, 0
+  local mx, mz = (ax + bx) / 2, (az + bz) / 2
+  local acc = 0
   for i = 1, #path - 1 do
-    local ax, az, bx, bz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
-    local vx, vz = bx - ax, bz - az
+    local px, pz, qx, qz = path[i][1], path[i][2], path[i + 1][1], path[i + 1][2]
+    local d = segSeg(ax, az, bx, bz, px, pz, qx, qz)
+    local vx, vz = qx - px, qz - pz
     local len = math.sqrt(vx * vx + vz * vz)
-    if len <= 0 then len = 1e-6 end
-    local k = math.max(0, math.min(1, ((x - ax) * vx + (z - az) * vz) / (len * len)))
-    local d = math.sqrt((x - ax - vx * k) ^ 2 + (z - az - vz * k) ^ 2)
-    if d < bestD then bestD, bestAt = d, acc + k * len end
+    if d < best then
+      best = d
+      local k = len > 0 and math.max(0, math.min(1, ((mx - px) * vx + (mz - pz) * vz) / (len * len))) or 0
+      at = acc + k * len
+    end
     acc = acc + len
   end
-  return bestD, bestAt
-end
-
--- point jugé : l'avant de la voiture pour une corde, l'arrière pour une zone extérieure
-local HALF_LENGTH = 2.0
-local function judgedPoint(c, car)
-  local p, l = car.position, car.look
-  local k = (c.kind == 'outer') and -HALF_LENGTH or HALF_LENGTH
-  local ll = math.sqrt(l.x * l.x + l.z * l.z)
-  if ll <= 0 then return p.x, p.z end
-  return p.x + l.x / ll * k, p.z + l.z / ll * k
+  return best, at
 end
 
 local ZONE_HIT = 0.2 -- part d'une zone longue à couvrir pour qu'elle compte
 
-local function updateClips(car, angle, gap)
-  local drifting = angle >= 12 and car.speedKmh >= 25
+-- mesures de la run pour le launcher : au plus près de chaque clip, à chaque image
+local measure = { clips = {}, frames = 0 }
+local function resetMeasure()
+  measure = { clips = {}, frames = 0 }
   for i, c in ipairs(clips) do
-    local x, z = judgedPoint(c, car)
+    local m = { min = nil, drift = nil, d = nil }
+    if clipState[i] and clipState[i].slices then m.slices = {} end
+    measure.clips[i] = m
+  end
+end
+
+local function updateClips(car, angle, gap, d)
+  local drifting = angle >= 12 and car.speedKmh >= 25
+  measure.frames = measure.frames + 1
+  for i, c in ipairs(clips) do
+    local dist, at = clipMeasure(c, car)
     local st = clipState[i]
+    local m = measure.clips[i]
+    if m then
+      if m.min == nil or dist < m.min then m.min = dist end
+      if drifting and (m.drift == nil or dist < m.drift) then m.drift, m.d = dist, d end
+      if m.slices and drifting and at then
+        local k = math.min(st.n, math.floor(at) + 1)
+        if m.slices[k] == nil or dist < m.slices[k] then m.slices[k] = dist end
+        -- peu d'images par seconde : les tranches sautées entre deux images prennent la pire des deux distances
+        if m.lastK and math.abs(k - m.lastK) > 1 and math.abs(k - m.lastK) <= 4 then
+          local worst = math.max(dist, m.lastDist)
+          local step = k > m.lastK and 1 or -1
+          for j = m.lastK + step, k - step, step do
+            if m.slices[j] == nil or worst < m.slices[j] then m.slices[j] = worst end
+          end
+        end
+        m.lastK, m.lastDist = k, dist
+      elseif m.slices then
+        m.lastK = nil
+      end
+    end
     if st.slices then
-      local dist, at = alongPath(c.path, x, z)
       if dist < c.r * 4 then
         if st.best == nil or dist < st.best then st.best = dist end
         if dist <= c.r and drifting then
-          local k = math.min(st.n, math.floor(at) + 1)
+          local k = math.min(st.n, math.floor(at or 0) + 1)
           if not st.slices[k] then
             st.slices[k] = true
             st.covered = st.covered + 1
@@ -286,17 +348,44 @@ local function updateClips(car, angle, gap)
         end
       end
     else
-      local dist = math.sqrt((x - c.x) ^ 2 + (z - c.z) ^ 2)
       if dist < c.r * 4 then
         if st.best == nil or dist < st.best then st.best = dist end
         if not st.hit and dist <= c.r and drifting then
           st.hit = true
           st.gap = gap
-          lastClip = string.format('%s ✓ %.1f m', c.name, dist)
+          lastClip = string.format('%s ✓ %.2f m', c.name, dist)
         end
       end
     end
   end
+end
+
+-- fichier lu par le launcher : la note de la run utilise ces distances exactes
+local function saveMeasure(lapMs)
+  if #clips == 0 or measure.frames < 20 or (lapMs or 0) <= 0 then return end
+  local car = ac.getCar(0)
+  local sh = car and carShape(car) or { front = 2.2, rear = 2.2, half = 0.9, source = 'défaut' }
+  local f = function(v) return v == nil and 'null' or string.format('%.2f', v) end
+  local out = {}
+  for i, c in ipairs(clips) do
+    local m = measure.clips[i] or {}
+    local parts = { '"x":' .. f(c.x), '"z":' .. f(c.z), '"kind":' .. jstr(c.kind or 'inner'), '"min":' .. f(m.min), '"drift":' .. f(m.drift), '"d":' .. (m.d and string.format('%.4f', m.d) or 'null') }
+    if m.slices then
+      local st = clipState[i]
+      local sl = {}
+      for k = 1, (st and st.n or 0) do sl[k] = f(m.slices[k]) end
+      parts[#parts + 1] = '"slices":[' .. table.concat(sl, ',') .. ']'
+    end
+    out[i] = '{' .. table.concat(parts, ',') .. '}'
+  end
+  local json = '{"v":1,"track":' .. jstr(trackId) .. ',"layout":' .. jstr(layoutId) ..
+    ',"car":' .. jstr(safe(function() return ac.getCarID(0) end, '')) ..
+    ',"time":' .. tostring(safe(function() return os.time() end, 0)) ..
+    ',"lapMs":' .. tostring(math.floor(lapMs)) ..
+    ',"frames":' .. tostring(measure.frames) ..
+    ',"shape":{"front":' .. f(sh.front) .. ',"rear":' .. f(sh.rear) .. ',"half":' .. f(sh.half) .. ',"source":' .. jstr(sh.source) .. '}' ..
+    ',"clips":[' .. table.concat(out, ',') .. ']}'
+  writeFile('measures/' .. stamp() .. '.json', json)
 end
 
 -- ------------------------------------------------------------- run
@@ -819,6 +908,7 @@ local function onRunStart(car)
   if battle and (battle.phase == 'staging' or battle.phase == 'lights') then battle.phase = 'running' end
   run.lights = lights.greenAt ~= nil and clock - lights.greenAt < 30000
   resetClips()
+  resetMeasure()
   if not tandem.closing then resetTandem() end
   -- fantôme : les secondes d'avant le départ font partie de l'enregistrement
   rec.rows, rec.lastT = {}, -1
@@ -865,6 +955,7 @@ local function onRunEnd(car, ms)
   if ms and ms > 0 then
     if run.bestMs == nil or ms < run.bestMs then run.best, run.bestMs = run.current, ms end
     run.lastMs = ms
+    saveMeasure(ms)
     local offset = gated and run.t0 or 0
     saveGhost(ms, offset, rec.green and (rec.green - offset) or nil)
     if battle and battle.phase == 'running' and tandem.battle then
@@ -923,7 +1014,7 @@ function script.update(dt)
   prevPos = { x = x, z = z, inPit = inPit }
 
   local angle = driftAngle(car)
-  if run.active then updateClips(car, angle, state.gap) end
+  if run.active then updateClips(car, angle, state.gap, gated and run.d or safe(function() return car.splinePosition end, nil)) end
   state.angle = angle
 
   -- tandem : pendant la run (et quelques secondes après en battle)

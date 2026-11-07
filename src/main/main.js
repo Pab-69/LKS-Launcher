@@ -41,7 +41,8 @@ const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
 const { Leaderboard } = require('./telemetry/leaderboard');
 const { courseVersion, referenceFrom, driftOf, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
-const { autoCourse } = require('./telemetry/ailine');
+const ailine = require('./telemetry/ailine');
+const { autoCourse } = ailine;
 const { bundledCourse, bundledCourses } = require('./telemetry/courses');
 const { hasGates } = require('./telemetry/geo');
 const { lineFromRuns } = require('./telemetry/reference');
@@ -866,6 +867,7 @@ async function importTandemRuns() {
   if (!telemetry || !acRoot() || settings.data.telemetry.enabled === false) return;
   const appDir = ingame.appDir(acRoot());
   try {
+    if (telemetry.attachMeasures(path.join(appDir, 'measures'))) send('telemetry:lap', null);
     if (telemetry.attachGhosts(path.join(appDir, 'ghosts'))) {
       send('telemetry:lap', null);
       if (telemetry.recorder.combo) refreshGhostLibrary(telemetry.recorder.combo, true).catch((err) => console.warn('[ghost]', err.message));
@@ -1203,6 +1205,8 @@ function setupTelemetry() {
     canonical: canonicalCombo,
     getRounds: (combo) => champ.openRounds((sync.manifest && sync.manifest.championships) || [], combo),
     getObs: obsData,
+    // the in-game app's exact clip distances (real car shape, every frame)
+    getMeasureDir: () => (acRoot() ? path.join(ingame.appDir(acRoot()), 'measures') : null),
   });
   telemetry.on('battle', (b) => {
     const res = b.modes.normal;
@@ -2139,6 +2143,14 @@ function setupIpc() {
     if (!course) throw new Error('Pas de ligne IA (ai/fast_lane.ai) pour ce circuit : place les clips à la main.');
     return course;
   });
+  // edges of the road (AI line of the installed track), for the course editor
+  handle('drift:road', ({ track, layout }) => {
+    try {
+      return ailine.trackRoad(acRoot(), track, layout || '');
+    } catch {
+      return null;
+    }
+  });
   handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
   handle('ghost:status', () => (acRoot() ? ghosts.currentGhost(ingame.appDir(acRoot())) : null));
   handle('ghost:clear', () => {
@@ -2345,7 +2357,7 @@ function setupIpc() {
       return r;
     }),
   );
-  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, refDriver, remove }) =>
+  handle('admin:saveDriftCourse', ({ track, layout = '', lapId, section, clips, rules, refLine, refDriver, remove, lineEdited }) =>
     withAdmin(async () => {
       const pub = getPublisher();
       if (!pub.manifest) await pub.open();
@@ -2355,14 +2367,20 @@ function setupIpc() {
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
-        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(1, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Number(q[0]) || 0, Number(q[1]) || 0]) } : {}), ...clipTarget(c.target) })), refLine: [], refSpeed: 0 };
+        const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(0.5, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Math.round((Number(q[0]) || 0) * 100) / 100, Math.round((Number(q[1]) || 0) * 100) / 100]) } : {}), ...clipTarget(c.target) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
         const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
         if (gated) for (const k of ['progress', 'staging', 'start', 'finish', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
+        const cleanLine = (pts) => pts.slice(0, 4000).map((p) => [Math.round((Number(p[0]) || 0) * 100) / 100, Math.round((Number(p[1]) || 0) * 100) / 100]);
         if (lapId) {
           const lap = String(lapId).startsWith('remote-') ? await telemetry.board().lap(String(lapId).slice(7)) : telemetry.store.load(lapId);
           if (lap.track !== track || (lap.layout || '') !== layout) throw new Error("Ce tour n'est pas sur ce circuit");
           Object.assign(course, referenceFrom(lap.samples, sec), { refDriver: lap.driver.name });
+          // the line adjusted by hand on top of this run (its speed stays the reference)
+          if (lineEdited && Array.isArray(refLine) && refLine.length > 1) Object.assign(course, { refLine: cleanLine(refLine), refDriver: `${lap.driver.name}, ajustée à la main` });
+        } else if (lineEdited && Array.isArray(refLine) && refLine.length > 1) {
+          // line adjusted by hand: the reference speed of the current course stays
+          Object.assign(course, { refLine: cleanLine(refLine), refSpeed: (all[key] && all[key].refSpeed) || 0, refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : 'ligne ajustée à la main', ...(all[key] && all[key].slipSign ? { slipSign: all[key].slipSign } : {}) });
         } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : gated ? 'ligne officielle' : 'ligne IA' });
         else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
         if (rules) course.rules = cleanRules(rules);

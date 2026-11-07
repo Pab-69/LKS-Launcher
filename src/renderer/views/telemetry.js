@@ -1,5 +1,6 @@
 import { api, h, clear, icon, guard, toast, seg, select, field, toggle, range, lapTime, dateFr, confirmBox, modal } from '../ui.js';
 import { store } from '../store.js';
+import { courseMap, resampleLine, smoothLine, snapToEdge, roadDirection, zoneCentre } from './course-editor.js';
 
 // state kept while switching tabs (one tab per section: Télémétrie / Compétition)
 const tabsBySection = { telemetry: 'live', competition: 'champ' };
@@ -664,6 +665,12 @@ export default function telemetryView(root, params = {}) {
           return [h('span', `${i + 1}. ${c.name}`), h('span', h(`span.clip-chip${c.hit ? '.hit' : ''}`, c.hit ? '✓' : '✗'), ` ${what}`), h('strong', z ? `${z.score}/100` : '—')];
         })));
     }
+    if (clips.length) {
+      const measured = clips.some((c) => c.measured);
+      panel.append(h('p.hint', { style: { margin: '6px 0 0' } }, measured
+        ? 'Clips mesurés par l’appli en jeu : distance exacte du pare-chocs (avant pour une corde, arrière pour une zone extérieure), à chaque image, avec la forme de la voiture.'
+        : 'Clips estimés depuis le centre de la voiture (appli en jeu absente pendant ce passage).'));
+    }
     const pens = ((d && d.penalties) || []).map((p) => `${p.label} ${p.zero ? '(run à 0)' : `(−${p.points})`} à ${Math.round((p.d || 0) * 100)} %`);
     panel.append(h('div.label.mt', 'Pénalités'), h('p.s', { style: { margin: '4px 0 0' } }, pens.length ? pens.join(' · ') : 'Aucune.'));
     return panel;
@@ -1071,18 +1078,18 @@ export default function telemetryView(root, params = {}) {
     const sourceLabel = editor.source === 'published' ? 'Parcours publié' : editor.source === 'official' ? 'Parcours officiel LKS (analysé circuit par circuit)' : editor.source === 'auto' ? 'Tracé automatique (ligne IA du circuit), pas encore publié' : 'Pas encore de parcours';
     body.append(h('div.toolbar',
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), editor.key, (v) => { editor = { key: v }; render(); }, 'board-select'),
-      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? (editor.source === 'official' ? 'Ligne officielle' : 'Ligne IA du circuit') : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; render(); }, 'board-select'),
+      select([...(currentLine && currentLine.length ? [['', editor.autoRefLine ? (editor.source === 'official' ? 'Ligne officielle' : 'Ligne IA du circuit') : `Ligne actuelle (${(editor.existing && editor.existing.refDriver) || 'référence'})`]] : []), ...onTrack.map((l) => [l.id, `${l.driver.name} · ${note(resultOf(l))} · ${dateFr(l.date)}`])], editor.lapId, (v) => { editor.lapId = v; editor.lap = null; editor.mapState = null; editor.lineEdited = false; render(); }, 'board-select'),
       h('button.btn.btn-sm', { on: { click: async () => {
         const auto = await guard(() => api.call('drift:autoCourse', { track, layout }));
         if (!auto) return;
-        Object.assign(editor, { clips: auto.clips.map((c) => ({ ...c })), autoRefLine: auto.refLine, section: [0, 1], lapId: '', lap: null, rules: deepMerge(auto.rules || {}, editor.rules) });
+        Object.assign(editor, { clips: auto.clips.map((c) => ({ ...c })), autoRefLine: auto.refLine, section: [0, 1], lapId: '', lap: null, rules: deepMerge(auto.rules || {}, editor.rules), mapState: null, lineEdited: false });
         toast(`${auto.clips.length} clips placés depuis la ligne IA`, 'success');
         render();
       } } }, 'Générer depuis la ligne IA'),
       h('button.btn.btn-sm', { title: 'Moyenne des meilleures runs notées sur ce parcours (une par pilote)', on: { click: async () => {
         const res = await guard(() => api.call('admin:lineFromRuns', { track, layout }));
         if (!res) return;
-        Object.assign(editor, { autoRefLine: res.line, refDriver: `meilleures runs (${res.runs.map((r) => r.driver).join(', ')})`, lapId: '', lap: null });
+        Object.assign(editor, { autoRefLine: res.line, refDriver: `meilleures runs (${res.runs.map((r) => r.driver).join(', ')})`, lapId: '', lap: null, mapState: null, lineEdited: false });
         toast(`Ligne tirée de ${res.runs.length} run(s) : ${res.runs.map((r) => `${r.driver} ${r.score}`).join(', ')}. Publie le parcours pour l’utiliser.`, 'success', 8000);
         render();
       } } }, 'Ligne des meilleures runs'),
@@ -1091,41 +1098,124 @@ export default function telemetryView(root, params = {}) {
       body.append(h('div.empty', h('strong', 'Pas de ligne pour ce circuit'), 'Fais une run propre ici, ou clique « Générer depuis la ligne IA » si le circuit en a une.'));
       return;
     }
+    // bords de la route (ligne IA du circuit installé), une fois par circuit
+    if (editor.road === undefined) editor.road = (await api.call('drift:road', { track, layout }).catch(() => null)) || null;
+    const lapLine = () => (editor.lap ? resampleLine(editor.lap.samples.filter((x) => x[0] >= editor.section[0] && x[0] <= editor.section[1]).map((x) => [x[COL.x], x[COL.z]]), 2) : null);
+    if (!editor.mapState) {
+      editor.mapState = {
+        clips: editor.clips,
+        line: lapLine() || (currentLine && currentLine.length ? resampleLine(currentLine, 2) : null),
+        trace: editor.lap ? editor.lap.samples.map((x) => [x[COL.x], x[COL.z]]) : null,
+        road: editor.road,
+        staging: editor.existing ? editor.existing.staging : null,
+        start: editor.existing ? editor.existing.start : null,
+        finish: editor.existing ? editor.existing.finish : null,
+        tool: editor.tool || 'clips',
+        brush: editor.brush || 6,
+        selected: null,
+      };
+    }
+    const st = editor.mapState;
+    st.clips = editor.clips;
     const mapWrap = h('div.panel.course-map');
     const list = h('div.course-clips');
+    const lineBox = h('div.course-line-tools');
     let map = null;
-    const courseView = () => ({ refLine: editor.lap ? [] : currentLine, clips: editor.clips });
-    const redraw = () => map && map.redraw();
-    const drawMap = () => {
-      clear(mapWrap);
-      charts.clear();
-      map = trackMap(editor.lap ? [editor.lap] : [], { height: 470, course: courseView(), section: editor.lap ? editor.section : null, onClick: (x, z) => {
-        if (editor.clips.length >= 30) return toast('30 clips maximum', 'warn');
-        editor.clips.push({ name: `Clip ${editor.clips.length + 1}`, kind: 'inner', x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, r: 3 });
-        drawList();
-        drawMap();
-      } });
-      mapWrap.append(h('h3', 'Carte'), map, h('div.hint', 'Clique sur la carte pour placer un clip. ', h('span', { style: { color: CLIP_COLORS.inner } }, 'Intérieur'), ' : la corde à frôler. ', h('span', { style: { color: CLIP_COLORS.outer } }, 'Extérieur'), ' : le mur ou la zone à approcher avec l’arrière.'));
+    const redraw = () => map && map.draw();
+    const toZone = (c) => {
+      const [tx, tz] = roadDirection(st, c.x, c.z);
+      const half = Math.max(2, (c.r || 3) * 1.5);
+      c.path = [[Math.round((c.x - tx * half) * 100) / 100, Math.round((c.z - tz * half) * 100) / 100], [Math.round((c.x + tx * half) * 100) / 100, Math.round((c.z + tz * half) * 100) / 100]];
+      c.r = Math.min(c.r || 1.5, 2);
+    };
+    const snapClip = (c) => {
+      if (!st.road) return toast('Pas de bords de route pour ce circuit (ligne IA sans largeur)', 'warn');
+      if (Array.isArray(c.path) && c.path.length > 1) {
+        c.path = c.path.map(([x, z]) => { const e = snapToEdge(st.road, x, z); return e ? [Math.round(e.x * 100) / 100, Math.round(e.z * 100) / 100] : [x, z]; });
+        zoneCentre(c);
+      } else {
+        const e = snapToEdge(st.road, c.x, c.z);
+        if (e) Object.assign(c, { x: Math.round(e.x * 100) / 100, z: Math.round(e.z * 100) / 100 });
+      }
+      redraw();
     };
     const drawList = () => {
       clear(list);
-      if (!editor.clips.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Aucun clip pour l’instant.'));
-      editor.clips.forEach((c, i) => list.append(h('div.course-clip',
-        h('strong', `${i + 1}`),
-        h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
-        select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
-        range('Taille', { min: 1, max: 10, step: 0.5, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
-        h('div.clip-target', { title: 'Objectifs de la zone pour la catégorie Amateur (Débutant et Pro adaptés). Vide : objectif général.' },
-          h('input.input.rule-points', { type: 'number', min: 0, max: 80, placeholder: 'Angle °', value: (c.target && c.target.angle) || '', on: { change: (e) => { c.target = { ...(c.target || {}), angle: Number(e.target.value) || 0 }; } } }),
-          h('input.input.rule-points', { type: 'number', min: 0, max: 250, placeholder: 'km/h', value: (c.target && c.target.speed) || '', on: { change: (e) => { c.target = { ...(c.target || {}), speed: Number(e.target.value) || 0 }; } } })),
-        h('button.btn.btn-sm.btn-ghost', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); drawList(); drawMap(); } } }, icon('trash')))));
+      if (!editor.clips.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Aucun clip pour l’instant : clique sur la carte.'));
+      editor.clips.forEach((c, i) => {
+        const zone = Array.isArray(c.path) && c.path.length > 1;
+        let len = 0;
+        if (zone) for (let j = 1; j < c.path.length; j++) len += Math.hypot(c.path[j][0] - c.path[j - 1][0], c.path[j][1] - c.path[j - 1][1]);
+        list.append(h(`div.course-clip${st.selected === i ? '.selected' : ''}`,
+          h('button.btn.btn-sm.btn-ghost.clip-n', { title: 'Zoomer sur ce clip', on: { click: () => { st.selected = i; map.focus(c.x, c.z, zone ? Math.max(30, len * 2) : 30); drawList(); } } }, `${i + 1}`),
+          h('input.input', { value: c.name, maxlength: 30, on: { input: (e) => { c.name = e.target.value; } } }),
+          h('div.clip-kind',
+            select([['inner', 'Intérieur'], ['outer', 'Extérieur']], c.kind, (v) => { c.kind = v; redraw(); }),
+            select([['point', 'Point'], ['zone', 'Zone']], zone ? 'zone' : 'point', (v) => { if (v === 'zone') toZone(c); else { delete c.path; } drawList(); redraw(); })),
+          range(zone ? 'Largeur' : 'Taille', { min: 0.5, max: 10, step: 0.25, value: c.r, format: (v) => `${v} m`, onInput: (v) => { c.r = v; redraw(); } }),
+          h('div.clip-target', { title: 'Objectifs de la zone pour la catégorie Amateur (Débutant et Pro adaptés). Vide : objectif général.' },
+            h('input.input.rule-points', { type: 'number', min: 0, max: 80, placeholder: 'Angle °', value: (c.target && c.target.angle) || '', on: { change: (e) => { c.target = { ...(c.target || {}), angle: Number(e.target.value) || 0 }; } } }),
+            h('input.input.rule-points', { type: 'number', min: 0, max: 250, placeholder: 'km/h', value: (c.target && c.target.speed) || '', on: { change: (e) => { c.target = { ...(c.target || {}), speed: Number(e.target.value) || 0 }; } } })),
+          h('div.clip-meta', h('span.s', zone ? `${len.toFixed(1)} m de long · ${c.path.length} points` : `x ${Number(c.x).toFixed(2)} · z ${Number(c.z).toFixed(2)}`),
+            h('button.btn.btn-sm.btn-ghost', { title: 'Coller au bord de route le plus proche (vibreur, mur)', on: { click: () => { snapClip(c); drawList(); } } }, 'Au bord'),
+            zone ? h('button.btn.btn-sm.btn-ghost', { title: 'Ajouter un point au milieu de la zone (pour suivre une courbe)', on: { click: () => {
+              if (c.path.length >= 60) return;
+              let best = 0; let bl = 0;
+              for (let j = 1; j < c.path.length; j++) { const l = Math.hypot(c.path[j][0] - c.path[j - 1][0], c.path[j][1] - c.path[j - 1][1]); if (l > bl) { bl = l; best = j; } }
+              c.path.splice(best, 0, [(c.path[best][0] + c.path[best - 1][0]) / 2, (c.path[best][1] + c.path[best - 1][1]) / 2]);
+              drawList(); redraw();
+            } } }, '+ point') : null),
+          h('button.btn.btn-sm.btn-ghost.clip-del', { title: 'Retirer', on: { click: () => { editor.clips.splice(i, 1); st.selected = null; drawList(); redraw(); } } }, icon('trash'))));
+      });
     };
+    const drawLineTools = () => {
+      clear(lineBox);
+      if (st.tool !== 'line') return;
+      lineBox.append(
+        range('Pinceau', { min: 1, max: 30, step: 1, value: st.brush, format: (v) => `${v} m`, onInput: (v) => { st.brush = v; editor.brush = v; } }),
+        h('div.row',
+          h('button.btn.btn-sm', { on: { click: () => { if (!st.line) return; map.pushUndo(); st.line = smoothLine(st.line, 2); editor.lineEdited = true; redraw(); } } }, 'Lisser'),
+          h('button.btn.btn-sm', { on: { click: () => { if (!map.undo()) toast('Rien à annuler', 'info'); } } }, 'Annuler'),
+          h('button.btn.btn-sm.btn-ghost', { on: { click: () => { editor.lineEdited = false; st.line = lapLine() || (currentLine && currentLine.length ? resampleLine(currentLine, 2) : null); redraw(); } } }, 'Repartir de la ligne d’origine')),
+        h('p.hint', editor.lineEdited ? 'Ligne modifiée à la main : elle sera publiée telle quelle.' : 'Attrape la ligne verte et tire : les points autour suivent selon la taille du pinceau.'));
+    };
+    map = courseMap({ state: st, height: 560, onChange: (what, at) => {
+      if (what === 'add') {
+        if (editor.clips.length >= 30) return toast('30 clips maximum', 'warn');
+        let { x, z } = at;
+        editor.clips.push({ name: `Clip ${editor.clips.length + 1}`, kind: 'inner', x, z, r: 3 });
+        st.selected = editor.clips.length - 1;
+        drawList();
+        redraw();
+      } else if (what === 'select') drawList();
+      else if (what === 'move' && st.tool === 'line') editor.lineEdited = true;
+      else if (what === 'done') drawList();
+      else if (what === 'delete' && st.selected !== null) {
+        editor.clips.splice(st.selected, 1);
+        st.selected = null;
+        drawList();
+        redraw();
+      }
+    } });
+    mapWrap.append(
+      h('div.row', h('h3', { style: { margin: 0 } }, 'Carte'),
+        h('div.right', seg([['clips', 'Clips'], ['line', 'Ligne']], st.tool, (v) => { st.tool = v; editor.tool = v; drawLineTools(); redraw(); }),
+          h('button.btn.btn-sm.btn-ghost', { title: 'Vue d’ensemble', on: { click: () => map.refit() } }, 'Tout voir'))),
+      map.el,
+      lineBox,
+      h('div.hint', st.tool === 'clips'
+        ? ['Molette : zoom · glisser : se déplacer · clic : placer un clip · glisser un clip ou un point de zone : le déplacer (Maj : collé au bord de route) · Suppr : retirer le clip choisi. ',
+          h('span', { style: { color: CLIP_COLORS.inner } }, 'Intérieur'), ' : la corde, jugée avec l’avant de la voiture. ', h('span', { style: { color: CLIP_COLORS.outer } }, 'Extérieur'), ' : le mur ou la zone, jugée avec l’arrière.',
+          st.road ? '' : ' Pas de bords de route pour ce circuit (sa ligne IA n’a pas de largeur).']
+        : 'Ligne à suivre (vert). Molette : zoom pour placer au centimètre.'));
+    drawLineTools();
+    const drawMap = redraw;
     const side = h('div.course-side',
       h('div.panel',
         h('h3', 'Parcours'),
         editor.lap ? [
-          range('Départ', { min: 0, max: 0.99, step: 0.01, value: editor.section[0], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[0] = Math.min(v, editor.section[1] - 0.01); redraw(); } }),
-          range('Arrivée', { min: 0.01, max: 1, step: 0.01, value: editor.section[1], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[1] = Math.max(v, editor.section[0] + 0.01); redraw(); } }),
+          range('Départ', { min: 0, max: 0.99, step: 0.01, value: editor.section[0], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[0] = Math.min(v, editor.section[1] - 0.01); if (!editor.lineEdited) st.line = lapLine(); redraw(); } }),
+          range('Arrivée', { min: 0.01, max: 1, step: 0.01, value: editor.section[1], format: (v) => `${Math.round(v * 100)} %`, onInput: (v) => { editor.section[1] = Math.max(v, editor.section[0] + 0.01); if (!editor.lineEdited) st.line = lapLine(); redraw(); } }),
           h('p.hint', 'La partie notée de la run. La ligne et la vitesse de ce tour servent de référence.'),
         ] : h('p.hint', { style: { marginTop: 0 } }, 'Choisis une run pour changer la ligne de référence ou le départ et l’arrivée.'),
         h('h3.mt', 'Clips'),
@@ -1136,7 +1226,7 @@ export default function telemetryView(root, params = {}) {
           if (await guard(() => api.call('admin:saveDriftCourse', { track, layout, remove: true }), 'Parcours supprimé')) { editor = { key: editor.key }; render(); }
         } } }, 'Supprimer') : null,
         h('button.btn.btn-sm.btn-primary.right', { on: { click: async () => {
-          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lapId ? undefined : editor.autoRefLine || undefined, refDriver: editor.lapId ? undefined : editor.refDriver }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
+          const ok = await guard(() => api.call('admin:saveDriftCourse', { track, layout, lapId: editor.lapId || null, section: editor.section, clips: editor.clips, rules: editor.rules, refLine: editor.lineEdited && st.line ? st.line : editor.lapId ? undefined : editor.autoRefLine || undefined, lineEdited: Boolean(editor.lineEdited && st.line), refDriver: editor.lapId ? undefined : editor.lineEdited ? 'ligne ajustée à la main' : editor.refDriver }), 'Parcours publié : les runs sont notées avec ces clips et ces règles');
           if (ok) { editor = { key: editor.key }; render(); }
         } } }, icon('upload'), 'Publier')));
     body.append(h('div.course-layout', h('div.course-main', mapWrap, rulesPanel(() => {})), side));

@@ -74,6 +74,7 @@ function installIngame(acRoot, courses) {
   for (const f of fs.readdirSync(SRC)) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   fs.mkdirSync(path.join(dir, 'runs'), { recursive: true }); // tandem runs written by the app
   fs.mkdirSync(path.join(dir, 'ghosts'), { recursive: true }); // laps recorded for the ghost
+  fs.mkdirSync(path.join(dir, 'measures'), { recursive: true }); // exact clip distances of each run (real car shape)
   fs.mkdirSync(path.join(dir, 'library'), { recursive: true }); // ghosts to pick in game
   writeCourses(acRoot, courses);
   return ingameStatus(acRoot);

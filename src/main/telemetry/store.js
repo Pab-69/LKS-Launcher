@@ -14,7 +14,8 @@ const { driftOf, MODE_IDS } = require('./drift');
 const MAX_PER_COMBO = 40; // keep the bests + the most recent laps
 
 function summary(lap) {
-  const { samples, columns, ...rest } = lap;
+  const { samples, columns, measure, ...rest } = lap;
+  if (measure) rest.measured = true; // clips judged from the in-game app's exact distances
   if (rest.tandem) {
     const { leadSamples, ...tandem } = rest.tandem;
     rest.tandem = tandem;

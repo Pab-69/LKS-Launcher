@@ -183,6 +183,32 @@ function judgeClip(c, rows, r) {
   return { hit, dist: best ? r1(best.dist) : null, q: hit ? r1((1 - 0.5 * (best.dist / r)) * 100) / 100 : 0, d: best ? best.s[C.d] : null };
 }
 
+/**
+ * Clip measured by the in-game app (real car shape, every frame), when it was
+ * measured on the same clip: { min, drift, d, slices[] } distances in metres
+ * from the bumper (front for a corde, rear for an outer zone) to the clip.
+ */
+function measuredOf(measure, c, i) {
+  const m = measure && Array.isArray(measure.clips) ? measure.clips[i] : null;
+  if (!m || Math.abs(Number(m.x) - c.x) > 0.3 || Math.abs(Number(m.z) - c.z) > 0.3 || (m.kind || 'inner') !== (c.kind || 'inner')) return null;
+  if (isZone(c) !== Array.isArray(m.slices)) return null;
+  return m;
+}
+
+/** Judge one clip from the app's measure (same result shape as judgeClip). */
+function judgeMeasured(c, m, r) {
+  const num = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
+  if (isZone(c)) {
+    const slices = m.slices.map(num);
+    const cover = slices.length ? slices.filter((v) => v !== null && v <= r).length / slices.length : 0;
+    const hit = cover >= ZONE_HIT;
+    return { hit, dist: num(m.min) === null ? null : r1(num(m.min)), q: hit ? r1(cover * 100) / 100 : 0, cover: Math.round(cover * 100), d: num(m.d), measured: true };
+  }
+  const best = num(m.drift);
+  const hit = best !== null && best <= r;
+  return { hit, dist: num(m.min) === null ? null : Math.round(num(m.min) * 100) / 100, q: hit ? r1((1 - 0.5 * (best / r)) * 100) / 100 : 0, d: num(m.d), measured: true };
+}
+
 /** Rules of a mode for a course: preset + the admins' changes for this track. */
 function rulesFor(course, mode = 'normal') {
   const m = MODES[mode] ? mode : 'normal';
@@ -386,7 +412,7 @@ function zoneParts(judged, clips) {
  * Score a solo run in one mode. Returns null when the car never drifted.
  * { score, angle, speed, line, penalty, zeroed, penalties[], clips[], avgAngle, maxAngle, avgSpeed, driftTime, rules, mode }
  */
-function scoreDrift(samples, course, mode = 'normal') {
+function scoreDrift(samples, course, mode = 'normal', measure = null) {
   const rules = rulesFor(course, mode);
   const part = judgedRows(samples, course);
   if (!part) return null;
@@ -404,7 +430,9 @@ function scoreDrift(samples, course, mode = 'normal') {
   const found = [];
   const courseClips = (course && course.clips) || [];
   const clips = courseClips.map((c, i) => {
-    const res = judgeClip(c, judged, (c.r || 3) * rules.clipScale);
+    const r = (c.r || 3) * rules.clipScale;
+    const m = measuredOf(measure, c, i);
+    const res = m ? judgeMeasured(c, m, r) : judgeClip(c, judged, r);
     const name = c.name || `Clip ${i + 1}`;
     if (!res.hit) found.push({ rule: rules.missedClip, kind: 'clip', label: `${name} raté`, d: res.d });
     return { name, kind: c.kind || 'inner', ...res };
@@ -510,9 +538,9 @@ function zoneScores(judged, clips, penalties, { rules, W, ref, refSpeed, s0, s1,
 }
 
 /** Judge a solo run in every mode: the normal result + { modes: { debutant, normal, pro } }. */
-function scoreAllModes(samples, course) {
+function scoreAllModes(samples, course, measure = null) {
   const modes = {};
-  for (const m of MODE_IDS) modes[m] = scoreDrift(samples, course, m) || { mode: m, score: 0, rules: courseVersion(course, m), clips: [], penalties: [] };
+  for (const m of MODE_IDS) modes[m] = scoreDrift(samples, course, m, measure) || { mode: m, score: 0, rules: courseVersion(course, m), clips: [], penalties: [] };
   return { ...modes.normal, modes };
 }
 
