@@ -35,6 +35,10 @@ const state = createStore('state', {
   liveBoard: null,
   lastRecap: null,
   serverAlerts: {},
+  categories: null, // nom du pilote (minuscules) -> catégorie connue (annonces de montée / descente)
+  weekly: null, // moyennes au dernier récap (pilote de la semaine)
+  challenges: [], // défis /defi en cours
+  signups: {}, // soirée (id@date) -> [id Discord des inscrits]
 });
 
 function pilotOf(discordId) {

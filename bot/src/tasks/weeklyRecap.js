@@ -1,7 +1,7 @@
 /** Récap de la semaine posté automatiquement (par défaut le lundi à 10 h, heure de Paris). */
 const config = require('../../config.json');
 const { getManifest } = require('../lks/manifest');
-const { buildWeeklyRecap } = require('../lks/recap');
+const { buildWeeklyRecap, categorySnapshot } = require('../lks/recap');
 const { state } = require('../lks/store');
 const { getTextChannel } = require('../lks/discord');
 
@@ -36,6 +36,9 @@ module.exports = {
     if (!channel) return;
     const m = await getManifest();
     await channel.send({ embeds: [await buildWeeklyRecap(m)] });
+    // moyennes de cette semaine : le prochain récap désignera la plus grosse progression
+    const snap = await categorySnapshot();
+    if (snap) state.data.weekly = snap;
     state.data.lastRecap = now.day;
     state.save();
   },

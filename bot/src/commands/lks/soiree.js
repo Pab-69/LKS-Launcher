@@ -3,6 +3,7 @@ const { brandEmbed } = require('../../utils/embeds');
 const { getManifest, nextEvent, sortedEvents, eventTimes } = require('../../lks/manifest');
 const { eventEmbed } = require('../../lks/views');
 const { ts, truncate } = require('../../lks/format');
+const S = require('../../lks/signups');
 
 module.exports = {
   data: new SlashCommandBuilder().setName('soiree').setDescription('La prochaine soirée LKS (ou celle en cours)'),
@@ -24,6 +25,6 @@ module.exports = {
           .setDescription(truncate(later.map((e) => `• **${e.title || 'Soirée LKS'}** — ${ts(e.date, 'f')}`).join('\n'), 4000)),
       );
     }
-    await interaction.editReply({ embeds });
+    await interaction.editReply({ embeds, components: [S.row(event)] });
   },
 };

@@ -2,8 +2,35 @@
 const { brandEmbed } = require('../utils/embeds');
 const { carName, trackLabel } = require('./manifest');
 const { query, LAP_COLUMNS } = require('./supabase');
+const { state } = require('./store');
 const { recentBattles, bestPerDriver } = require('./rankings');
 const { place, fmtScore, kindLabel, joinLines } = require('./format');
+
+/** Moyennes de catégorie de tous les pilotes : nom (minuscules) -> { name, category, avg }. */
+async function categorySnapshot() {
+  try {
+    const rows = await query('lks_categories_list', { select: 'name,category,avg,runs' }, { ttlMs: 60 * 1000 });
+    return Object.fromEntries(rows.filter((r) => r.runs >= 3).map((r) => [String(r.name).trim().toLowerCase(), { name: r.name, category: r.category, avg: Number(r.avg) }]));
+  } catch {
+    return null; // serveur sans catégories
+  }
+}
+
+const RANK = { debutant: 0, amateur: 1, pro: 2 };
+
+/**
+ * Pilote de la semaine : la plus grosse progression depuis le dernier récap
+ * (une montée de catégorie compte d'abord, puis le gain de moyenne).
+ */
+function pilotOfTheWeek(before, now) {
+  if (!before || !now) return null;
+  const moves = Object.entries(now)
+    .filter(([k]) => before[k])
+    .map(([k, r]) => ({ ...r, up: (RANK[r.category] ?? 0) - (RANK[before[k].category] ?? 0), gain: r.category === before[k].category ? r.avg - before[k].avg : 0, from: before[k] }))
+    .filter((x) => x.up > 0 || x.gain > 0.5)
+    .sort((a, b) => b.up - a.up || b.gain - a.gain);
+  return moves[0] ?? null;
+}
 
 async function buildWeeklyRecap(m) {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -49,6 +76,17 @@ async function buildWeeklyRecap(m) {
     });
   }
 
+  const week = pilotOfTheWeek(state.data.weekly, await categorySnapshot());
+  if (week) {
+    const label = { debutant: 'Débutant', amateur: 'Amateur', pro: 'Pro' };
+    embed.addFields({
+      name: '⭐ Pilote de la semaine',
+      value: week.up > 0
+        ? `**${week.name}** passe **${label[week.category]}** (moyenne ${fmtScore(week.avg)})`
+        : `**${week.name}** : moyenne ${fmtScore(week.from.avg)} → **${fmtScore(week.avg)}** (+${week.gain.toFixed(1)}) en ${label[week.category]}`,
+    });
+  }
+
   if (runs.length) {
     const counts = new Map();
     for (const r of runs) counts.set(r.driver, (counts.get(r.driver) ?? 0) + 1);
@@ -87,4 +125,4 @@ async function buildWeeklyRecap(m) {
   return embed;
 }
 
-module.exports = { buildWeeklyRecap };
+module.exports = { buildWeeklyRecap, categorySnapshot, pilotOfTheWeek };
