@@ -1,4 +1,4 @@
-# Version Coolify du serveur LKS : images construites depuis ce dépôt, redéployées à chaque push sur main.
+# Version Coolify du serveur LKS : images construites depuis ce dépôt, redéployées à chaque push sur main (dossiers server/ et docs/leaderboard.sql).
 # Application Coolify « Docker Compose », dépôt Pab-69/LKS-Launcher, dossier de base /server,
 # fichier docker-compose.coolify.yml. Le HTTPS et le routage sont gérés par Traefik (pas de Caddy ici).
 # Variables à définir dans Coolify : POSTGRES_PASSWORD, AUTHENTICATOR_PASSWORD, JWT_SECRET, ANON_KEY,
