@@ -1,0 +1,42 @@
+{
+  "brand": {
+    "name": "Lowkey Syndicate",
+    "color": "#8B5CF6",
+    "logoUrl": ""
+  },
+  "welcome": {
+    "channelId": "1567287609561055372",
+    "autoRoleId": "1429945927610794032",
+    "message": "Bienvenue {user} sur le serveur **Lowkey Syndicate** ! Tu es le membre n°{count}. Pense à lire le règlement et à télécharger le launcher."
+  },
+  "tickets": {
+    "categoryId": "1567287735381659719",
+    "staffRoleId": "1429945927925239819",
+    "logChannelId": "1567287772102791230"
+  },
+  "updates": {
+    "channelId": "1567287614489239703",
+    "pingRoleId": "1567287583791386755"
+  },
+  "moderation": {
+    "logChannelId": "1567287769120776222"
+  },
+  "lks": {
+    "manifestUrl": "https://github.com/Pab-69/LKS-Launcher/releases/download/content/manifest.json",
+    "launcherUrl": "https://github.com/Pab-69/LKS-Launcher/releases/latest",
+    "channels": {
+      "reminders": "1567287654503022744",
+      "newContent": "1567287660685435021",
+      "live": "1567287657623453788",
+      "recap": "1567287663600599041",
+      "serverAlerts": "1567287666913841293"
+    },
+    "soireePingRoleId": "1567287578993103030",
+    "enPisteRoleId": "1567287574995669147",
+    "scheduledEvents": true,
+    "recap": {
+      "weekday": 1,
+      "hour": 10
+    }
+  }
+}
