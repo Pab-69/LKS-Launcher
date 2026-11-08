@@ -90,8 +90,13 @@ services:
     command: ['node', 'admin.js']
     mem_limit: 64m
     cpus: 0.25
+    depends_on: {db: {condition: service_healthy}}
     environment:
       NODE_OPTIONS: --max-old-space-size=40
+      PGHOST: db
+      PGUSER: authenticator
+      PGPASSWORD: ${AUTHENTICATOR_PASSWORD}
+      PGDATABASE: lks
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       CONTENT_REPO: ${CONTENT_REPO:-Pab-69/LKS-Launcher}
       SITE_ORIGINS: ${SITE_ORIGINS:-}

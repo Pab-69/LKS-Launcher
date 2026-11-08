@@ -72,3 +72,20 @@ test('championships from the site: season kept, rounds checked with clear messag
   assert.deepStrictEqual([s.name, s.season, s.points, s.rounds.map((x) => x.id)], ['Soirées', 'Saison 2026', [12], ['x1']]);
   assert.strictEqual(champ.cleanChampionships([{ id: 'a', name: 'A', season: 'S1', rounds: [] }])[0].season, 'S1', 'the launcher keeps the season too');
 });
+
+test('live manifest: cars, tracks, branding and setups stay on GitHub, everything else is the group data', () => {
+  const { splitManifest, mergeManifest, PATCH_KEYS, OWNED } = require('../server/admin/server');
+  const m = { schema: 1, name: 'LKS', cars: [{ id: 'a' }], tracks: [{ id: 't' }], branding: { version: 'v' }, setups: [], news: [{ title: 'x' }], events: [], leaderboard: { url: 'u' } };
+  const { meta, owned } = splitManifest(m);
+  assert.deepStrictEqual(Object.keys(owned).sort(), ['branding', 'cars', 'setups', 'tracks']);
+  assert.deepStrictEqual(Object.keys(meta).sort(), ['events', 'leaderboard', 'name', 'news', 'schema']);
+  assert.deepStrictEqual(mergeManifest(meta, owned), m);
+  for (const k of PATCH_KEYS) assert.ok(!OWNED.has(k), `${k} cannot be both published from the launcher and written to the database`);
+});
+
+test('live manifest: the keys the launcher may write to the server are exactly the ones it writes to GitHub', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/main/publisher.js'), 'utf8');
+  const keys = JSON.parse(src.match(/const META_KEYS = (\[.*?\]);/)[1].replace(/'/g, '"'));
+  const { PATCH_KEYS } = require('../server/admin/server');
+  assert.deepStrictEqual([...PATCH_KEYS].sort(), [...keys].sort());
+});

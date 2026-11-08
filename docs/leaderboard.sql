@@ -676,3 +676,41 @@ begin
   return n || ' lignes effacées (les fichiers des photos et propositions sont à effacer dans le stockage)';
 end $$;
 revoke all on function public.lks_forget(text) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Données du groupe en direct : tout le manifeste SAUF voitures, circuits, identité visuelle et
+-- setups (ceux-là restent publiés depuis le launcher sur GitHub). Une seule ligne ; le service
+-- « admin » la lit et l'écrit, jamais les launchers directement (ils passent par son API).
+create table if not exists public.lks_manifest (
+  id integer primary key default 1 check (id = 1),
+  data jsonb not null default '{}'::jsonb,
+  rev bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+revoke all on public.lks_manifest from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'authenticator') then
+    grant select, insert, update on public.lks_manifest to authenticator;
+  end if;
+end $$;
+
+-- Le direct : chaque changement envoie un message « lks » que le service admin relaie à tous les
+-- launchers et au site (flux SSE /admin/api/stream), sans interrogation périodique.
+create or replace function public.lks_notify() returns trigger language plpgsql as $$
+begin
+  perform pg_notify('lks', json_build_object('t', tg_argv[0])::text);
+  return null;
+end $$;
+revoke all on function public.lks_notify() from public, anon, authenticated;
+do $$
+declare t record;
+begin
+  for t in select * from (values
+    ('lks_manifest', 'meta'), ('lks_laps', 'laps'), ('lks_runs', 'runs'), ('lks_battle_parts', 'battles'),
+    ('lks_presence', 'presence'), ('lks_hosts', 'hosts'), ('lks_photos', 'photos'),
+    ('lks_proposals', 'proposals'), ('lks_votes', 'proposals'), ('lks_categories', 'categories')
+  ) as v(tbl, topic) loop
+    execute format('drop trigger if exists lks_notify on public.%I', t.tbl);
+    execute format('create trigger lks_notify after insert or update or delete on public.%I for each statement execute function public.lks_notify(%L)', t.tbl, t.topic);
+  end loop;
+end $$;

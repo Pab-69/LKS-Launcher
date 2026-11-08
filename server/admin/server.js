@@ -24,6 +24,22 @@
 const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
+// Optional: with DATABASE_URL (and the « pg » package, installed in the Docker image) the group's data
+// lives in the server's database and is pushed live. Without it, everything stays on GitHub as before.
+const Pool = (() => {
+  try {
+    return require('pg').Pool;
+  } catch {
+    return null;
+  }
+})();
+const Client = (() => {
+  try {
+    return require('pg').Client;
+  } catch {
+    return null;
+  }
+})();
 const champ = (() => {
   try {
     return require('./championship');
@@ -33,6 +49,9 @@ const champ = (() => {
 })();
 
 const PORT = Number(process.env.PORT) || 8090;
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const DB_ON = Boolean(DATABASE_URL || process.env.PGHOST); // or PGHOST/PGUSER/PGPASSWORD/PGDATABASE
+const dbConfig = () => (DATABASE_URL ? { connectionString: DATABASE_URL } : {});
 const TOKEN = process.env.GITHUB_TOKEN || '';
 const REPO = process.env.CONTENT_REPO || 'Pab-69/LKS-Launcher';
 const TAG = process.env.CONTENT_TAG || 'content';
@@ -65,7 +84,7 @@ async function gh(method, url, { body, type, raw } = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-async function openManifest() {
+async function openGithub() {
   const release = await gh('GET', `/repos/${REPO}/releases/tags/${encodeURIComponent(TAG)}`);
   const assets = await gh('GET', `/repos/${REPO}/releases/${release.id}/assets?per_page=100`);
   const asset = assets.find((a) => a.name === MANIFEST);
@@ -75,7 +94,7 @@ async function openManifest() {
 }
 
 /** Upload under a temporary name, then swap: launchers never see a missing manifest for long. */
-async function saveManifest(state, manifest, by, actions) {
+async function saveGithub(state, manifest, by, actions) {
   const date = new Date().toISOString();
   manifest.updatedAt = date;
   manifest.history = [...actions.map((action) => ({ date, by, action })).reverse(), ...(Array.isArray(manifest.history) ? manifest.history : [])].slice(0, 100);
@@ -95,9 +114,168 @@ const serial = (fn) => {
   return run;
 };
 
+
+// ------------------------------------------------------------------ live data (database)
+// Everything in the manifest except what is published from the launcher (cars, tracks, branding, setups)
+// lives in the table lks_manifest. Launchers and the site read it from here and are told of every change
+// through the SSE stream; GitHub keeps a mirror (old launchers, the bot, a safety copy).
+const OWNED = new Set(['cars', 'tracks', 'branding', 'setups']);
+const PATCH_KEYS = new Set(['servers', 'news', 'name', 'motd', 'csp', 'showcase', 'donate', 'shop', 'events', 'soloPresets', 'discord', 'vpn', 'leaderboard', 'drift', 'championships', 'allowAllContent', 'proposals', 'judging', 'galleryHidden']);
+const sha = (x) => crypto.createHash('sha256').update(x).digest('hex');
+const stable = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+
+function splitManifest(m) {
+  const meta = {};
+  const owned = {};
+  for (const [k, v] of Object.entries(m || {})) (OWNED.has(k) ? owned : meta)[k] = v;
+  return { meta, owned };
+}
+const mergeManifest = (meta, owned) => ({ ...meta, ...owned });
+
+const pool = Pool && DB_ON ? new Pool({ ...dbConfig(), max: 3, idleTimeoutMillis: 30000 }) : null;
+if (pool) pool.on('error', () => {});
+
+async function githubManifest() {
+  try {
+    const res = await fetch(`https://github.com/${REPO}/releases/download/${encodeURIComponent(TAG)}/${MANIFEST}`, { headers: { 'Cache-Control': 'no-cache' } });
+    if (res.ok) return await res.json();
+  } catch {
+    /* fall through to the API (private repository) */
+  }
+  return (await openGithub()).manifest;
+}
+
+let ownedCache = { at: 0, owned: {}, digest: '' };
+async function ownedFromGithub(force) {
+  if (!force && ownedCache.at && Date.now() - ownedCache.at < 60000) return ownedCache.owned;
+  try {
+    const { owned } = splitManifest(await githubManifest());
+    const digest = sha(stable(owned));
+    const changed = ownedCache.digest && ownedCache.digest !== digest;
+    ownedCache = { at: Date.now(), owned, digest };
+    if (changed) await pool.query("select pg_notify('lks', '{\"t\":\"manifest\"}')").catch(() => {});
+  } catch (err) {
+    if (!ownedCache.at) throw err;
+    ownedCache.at = Date.now() - 30000; // GitHub unreachable: keep the last copy, try again in 30 s
+  }
+  return ownedCache.owned;
+}
+
+async function loadMeta() {
+  const r = await pool.query('select data, rev from public.lks_manifest where id = 1');
+  if (r.rows[0]) return r.rows[0];
+  // first start: the group's current data is taken from the manifest on GitHub
+  const { meta } = splitManifest(await githubManifest());
+  await pool.query('insert into public.lks_manifest (id, data, rev) values (1, $1, 1) on conflict (id) do nothing', [meta]);
+  return (await pool.query('select data, rev from public.lks_manifest where id = 1')).rows[0];
+}
+
+async function openManifest() {
+  if (!pool) return openGithub();
+  const [{ data, rev }, owned] = await Promise.all([loadMeta(), ownedFromGithub()]);
+  return { manifest: mergeManifest(data, owned), rev };
+}
+
+async function saveManifest(state, manifest, by, actions) {
+  if (!pool) return saveGithub(state, manifest, by, actions);
+  const { meta } = splitManifest(manifest);
+  const date = new Date().toISOString();
+  meta.updatedAt = date;
+  meta.history = [...actions.map((action) => ({ date, by, action })).reverse(), ...(Array.isArray(meta.history) ? meta.history : [])].slice(0, 100);
+  await pool.query('update public.lks_manifest set data = $1, rev = rev + 1, updated_at = now() where id = 1', [meta]);
+  scheduleMirror();
+}
+
+let mirrorTimer = null;
+function scheduleMirror() {
+  if (!TOKEN) return;
+  clearTimeout(mirrorTimer);
+  mirrorTimer = setTimeout(() => mirror().catch((err) => console.error(`miroir GitHub : ${err.message}`)), 3000);
+}
+async function mirror() {
+  return serial(async () => {
+    const { data } = await loadMeta();
+    const st = await openGithub();
+    if (stable(splitManifest(st.manifest).meta) === stable(data)) return;
+    const next = {};
+    for (const [k, v] of Object.entries(st.manifest)) if (OWNED.has(k)) next[k] = v;
+    await saveGithub(st, { ...next, ...data }, 'serveur', []);
+  });
+}
+
+// GitHub admins (launcher): a personal token with write access to the content repository
+const ghAdmins = new Map(); // sha(token) -> { login, exp }
+async function githubAdmin(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) throw Object.assign(new Error('Connexion requise'), { status: 401 });
+  const key = sha(token);
+  const known = ghAdmins.get(key);
+  if (known && known.exp > Date.now()) return known;
+  const headers = { Authorization: `Bearer ${token}`, 'User-Agent': 'LKS-admin', Accept: 'application/vnd.github+json' };
+  const repo = await fetch(`${API}/repos/${REPO}`, { headers });
+  if (!repo.ok) throw Object.assign(new Error('Jeton GitHub refusé'), { status: 401 });
+  if (!((await repo.json()).permissions || {}).push) throw Object.assign(new Error('Il faut un accès en écriture au dépôt du groupe'), { status: 403 });
+  const me = await fetch(`${API}/user`, { headers }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  if (ghAdmins.size > 200) ghAdmins.clear();
+  const admin = { login: me.login || 'admin', exp: Date.now() + 5 * 60000 };
+  ghAdmins.set(key, admin);
+  return admin;
+}
+
+async function putMeta(by, body) {
+  const patch = body && body.patch;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw Object.assign(new Error('Il manque « patch »'), { status: 400 });
+  const keys = Object.keys(patch);
+  const bad = keys.find((k) => !PATCH_KEYS.has(k));
+  if (!keys.length || bad) throw Object.assign(new Error(bad ? `Clé non modifiable : ${bad}` : 'Rien à modifier'), { status: 400 });
+  const actions = (Array.isArray(body.actions) ? body.actions : []).map((a) => clean(a, 120)).filter(Boolean).slice(0, 10);
+  return serial(async () => {
+    const state = await openManifest();
+    const m = state.manifest;
+    for (const k of keys) m[k] = patch[k];
+    await saveManifest(state, m, by, actions.length ? actions : keys.map((k) => `${k} modifié`));
+    return { ok: true };
+  });
+}
+
+// ------------------------------------------------------------------ live stream (SSE)
+const clients = new Set();
+const queued = new Map();
+function relay(topic) {
+  if (queued.has(topic)) return; // several changes within 300 ms: one message
+  queued.set(topic, setTimeout(() => {
+    queued.delete(topic);
+    const msg = `event: ${topic}\ndata: {"t":"${topic}"}\n\n`;
+    for (const res of clients) res.write(msg);
+  }, 300));
+}
+function listen() {
+  if (!Client || !DB_ON) return;
+  const c = new Client(dbConfig());
+  let dead = false;
+  const retry = () => {
+    if (dead) return;
+    dead = true;
+    c.end().catch(() => {});
+    setTimeout(listen, 5000).unref();
+  };
+  c.on('error', retry);
+  c.on('end', retry);
+  c.on('notification', (n) => {
+    try {
+      const t = JSON.parse(n.payload).t;
+      if (/^[a-z]{2,20}$/.test(t)) relay(t);
+    } catch {
+      /* ignore */
+    }
+  });
+  c.connect().then(() => c.query('LISTEN lks')).then(() => relay('manifest')).catch(retry);
+}
+
 // ------------------------------------------------------------------ public data (cached 60 s)
 let cache = { at: 0, manifest: null };
 async function current() {
+  if (pool) return (await openManifest()).manifest;
   if (cache.manifest && Date.now() - cache.at < 60000) return cache.manifest;
   try {
     cache = { at: Date.now(), manifest: (await openManifest()).manifest };
@@ -367,13 +545,13 @@ const json = (res, status, body) => {
   res.end(JSON.stringify(body));
 };
 
-function readJson(req) {
+function readJson(req, max = 64 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const parts = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 64 * 1024) {
+      if (size > max) {
         reject(Object.assign(new Error('Trop long'), { status: 413 }));
         req.destroy();
       } else parts.push(c);
@@ -392,12 +570,33 @@ function readJson(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname.replace(/\/+$/, '');
-  const isPublic = p === '/admin/api/public' || p === '/admin/api/health';
+  const isPublic = ['/admin/api/public', '/admin/api/health', '/admin/api/manifest', '/admin/api/stream'].includes(p);
   cors(req, res, isPublic);
   if (req.method === 'OPTIONS') return res.writeHead(204).end();
   try {
-    if (p === '/admin/api/health') return json(res, 200, { ok: true, github: Boolean(TOKEN), admins: Object.keys(admins()).length });
+    if (p === '/admin/api/health') return json(res, 200, { ok: true, github: Boolean(TOKEN), live: Boolean(pool), admins: Object.keys(admins()).length });
     if (p === '/admin/api/public' && req.method === 'GET') return json(res, 200, publicView(await current()));
+    if (p === '/admin/api/manifest' && req.method === 'GET') {
+      const body = JSON.stringify((await openManifest()).manifest);
+      const etag = `W/"${sha(body).slice(0, 20)}"`;
+      if (req.headers['if-none-match'] === etag) return res.writeHead(304, { ETag: etag }).end();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ETag: etag });
+      return res.end(body);
+    }
+    if (p === '/admin/api/stream' && req.method === 'GET') {
+      if (!pool) throw Object.assign(new Error('Direct indisponible'), { status: 503 });
+      if (clients.size >= 400) throw Object.assign(new Error('Trop de connexions'), { status: 503 });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      res.write('retry: 5000\n\nevent: hello\ndata: {}\n\n');
+      clients.add(res);
+      req.on('close', () => clients.delete(res));
+      return;
+    }
+    if (p === '/admin/api/meta' && req.method === 'PUT') {
+      if (!pool) throw Object.assign(new Error('Serveur sans base : écris directement sur GitHub'), { status: 503 });
+      const admin = await githubAdmin(req);
+      return json(res, 200, await putMeta(admin.login, await readJson(req, 512 * 1024)));
+    }
     if (p === '/admin/api/login' && req.method === 'POST') return json(res, 200, await login(await readJson(req)));
     const me = who(req);
     if (p === '/admin/api/me' && req.method === 'GET') return json(res, 200, { name: me.name, github: Boolean(TOKEN) });
@@ -434,8 +633,15 @@ if (require.main === module) {
     setInterval(() => {
       for (const [t, s] of sessions) if (s.exp < Date.now()) sessions.delete(t);
     }, 600000).unref();
+    if (pool) {
+      listen();
+      setInterval(() => ownedFromGithub(true).catch(() => {}), 60000).unref();
+      setInterval(() => {
+        for (const res of clients) res.write(': ping\n\n');
+      }, 25000).unref();
+    }
     server.listen(PORT, () => console.log(`admin LKS prêt (port ${PORT}${TOKEN ? '' : ', sans GITHUB_TOKEN : lecture seule'})`));
   }
 }
 
-module.exports = { server, hashPassword, checkPassword, publicView, cleanEvent, cleanChampionship };
+module.exports = { server, splitManifest, mergeManifest, putMeta, PATCH_KEYS, OWNED, hashPassword, checkPassword, publicView, cleanEvent, cleanChampionship };
