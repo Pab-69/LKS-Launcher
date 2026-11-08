@@ -134,6 +134,7 @@ Tout se gère dans l'onglet **Publication** :
 - **Setups partagés** : enregistre tes setups dans le jeu, coche les voitures dans Publication, puis clique sur **Publier les setups**.
 - **Discord** : crée une application nommée « Lowkey Syndicate » sur [discord.com/developers/applications](https://discord.com/developers/applications), puis colle son *Application ID* et le lien d'invitation de ton serveur. Chaque membre peut désactiver son statut Discord dans les Paramètres.
 - **Historique** : chaque publication est enregistrée avec le compte GitHub de l'admin.
+- **Bot Discord** : le code est dans [`bot/`](bot) (classements, records, catégories, soirées, direct, récap, tickets, modération). Installation et commandes : [bot/README.md](bot/README.md).
 
 ### Télémétrie et classement
 

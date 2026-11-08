@@ -35,7 +35,8 @@ test('course line: progress, distance and gates', () => {
 
 test('official courses: every track of the group with gates, line and clips on the road', () => {
   const all = bundledCourses();
-  for (const key of ['cfd_calmont_2023|Calmont', 'vdc_bikernieki_2022|drift_vdc', 'kart_volan_championship|', 'poland_pge_narodowy_v3|', 'englishtown_gambler_esda|']) {
+  for (const key of ['cfd_calmont_2023|Calmont', 'vdc_bikernieki_2022|drift_vdc', 'kart_volan_championship|', 'poland_pge_narodowy_v3|', 'englishtown_gambler_esda|',
+    'Circuit_Du_Val_Argenton|val_dargenton_layout_2023', 'Circuit_Du_Val_Argenton|val_dargenton_layout_2024', 'cfd_circuit_charade_2025|', 'cfd_croix_en_ternois_2025|', 'cfd_val_de_vienne_2022|']) {
     const c = all[key];
     assert.ok(c, key);
     assert.ok(hasGates(c));

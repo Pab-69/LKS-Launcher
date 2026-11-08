@@ -76,7 +76,7 @@
     box.appendChild(h('div.detail-layout', h('div.detail-left', records, battles), h('div.detail-right', runs)));
     var enc = encodeURIComponent(name);
 
-    db('lks_laps', 'select=id,car,track,layout,kind,rules,lap_ms,score,meta,created_at&driver=eq.' + enc + '&kind=in.(drift,tandem,time)&order=created_at.desc&limit=200').then(function (list) {
+    db('lks_laps', 'select=id,car,track,layout,kind,rules,lap_ms,score,meta,created_at&driver=eq.' + enc + '&kind=in.(drift,tandem)&order=created_at.desc&limit=200').then(function (list) {
       list = (list || []).filter(function (r) { return r.kind === 'time' || r.rules.indexOf('@') < 0; });
       var best = {};
       list.forEach(function (r) {

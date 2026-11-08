@@ -368,7 +368,7 @@ test('manager: sends bests made before the leaderboard existed', async () => {
   m2.tick();
   m2.tick();
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(sent[0], 'time');
+  assert.ok(!sent.includes('time'), 'no lap-time ranking any more');
   assert.ok(sent.includes('drift:normal') && sent.includes('drift:debutant'), 'existing bests sent once per mode when driving the combo');
 });
 

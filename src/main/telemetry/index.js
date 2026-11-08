@@ -174,8 +174,6 @@ class TelemetryManager extends EventEmitter {
     try {
       const q = { car: combo.car, track: combo.track, layout: combo.layout || '', steamId: steamId || '' };
       const own = (l) => l && !l.imported && (l.driver.steamId || '') === (steamId || '');
-      const bestTime = this.store.list(q).filter((l) => own(l) && l.valid).sort((a, b) => a.lapMs - b.lapMs)[0];
-      if (bestTime) await board.submit(this.store.load(bestTime.id), 'time');
       const course = this.getCourse(combo);
       for (const kind of ['drift', 'tandem']) {
         for (const mode of MODE_IDS) {
@@ -229,7 +227,6 @@ class TelemetryManager extends EventEmitter {
     const board = this.getSettings().shareLaps !== false && (lap.driver.steamId || '') === me ? this.board() : null;
     if (!board) return;
     try {
-      if (pbTime) await board.submit(lap, 'time');
       for (const mode of pbDrift) await board.submit(lap, 'drift', mode);
       for (const mode of pbTandem) await board.submit(lap, 'tandem', mode);
       for (const r of this.roundRecords(lap)) await board.submit(lap, r.kind, r.mode, r.rules);

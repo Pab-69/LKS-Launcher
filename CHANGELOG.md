@@ -1,5 +1,20 @@
 # Journal des versions
 
+## 1.26.0
+
+- **Parcours officiels des nouveaux circuits**, relevés sur le marquage CFD de chaque piste (pastilles de clip peintes au sol, zones peintes, poteaux, panneaux) :
+  - **Val d'Argenton 2023 et 2024** : 5 clips et 2 zones (intérieur de l'épingle, intérieur du virage à droite). Start sur la ligne « départ » (feux), début du drift aux panneaux « attack zone », arrivée sur la ligne « arrivée ». Le couloir suit les traces de pneus de la piste.
+  - **Charade (CFD 2025)** : 7 clips et la zone extérieure de la grande épingle. Start entre les panneaux « départ », drift aux panneaux « attack », arrivée entre les panneaux « arrivée ».
+  - **Croix-en-Ternois (CFD 2025)** : la zone extérieure de la grande courbe et 6 clips. Start aux panneaux « départ » (feux), drift sur la ligne peinte à l'entrée de la zone, arrivée au panneau « arrivée ».
+  - **Val de Vienne (CFD 2022)** : 11 clips. Start sous le portique CFD, drift sur la ligne peinte « attack », arrivée sur la ligne peinte.
+- Sur chaque parcours, la **ligne de référence** est la plus fluide possible en passant par tous les clips et toutes les zones, sans sortir de la route.
+- Les runs déjà faites sur ces circuits sont re-notées toutes seules avec le nouveau parcours.
+
+## 1.25.0
+
+- **Plus de classement chrono** : les classements (launcher et site) et la comparaison ne gardent que le drift et le tandem. Les temps au tour ne sont plus envoyés au classement partagé.
+- **Les photos du launcher sont les voitures du groupe** : l'accueil, le Garage, la boutique et les autres grandes images montrent maintenant les voitures publiées (l'aperçu fait à la publication, en haute définition), les plus récentes d'abord, avec leur nom, la marque, la puissance et le poids. Une voiture publiée apparaît toute seule. Les anciennes photos ne servent plus que s'il n'y a aucune voiture avec un aperçu.
+
 ## 1.24.1
 
 - Télémétrie → Profil : si le serveur du groupe n'a pas encore la mise à jour des catégories, le launcher le dit (« un admin doit lancer ./lks.sh update ») au lieu d'afficher tout le monde Débutant sans explication.

@@ -1,6 +1,6 @@
 # Bot Discord LKS : tout ce qu'il faut savoir
 
-Ce document explique où sont les données du groupe, ce que le launcher fait déjà sur Discord et ce que ton bot peut faire en plus. Il ne contient pas de code du bot.
+Ce document explique où sont les données du groupe, ce que le launcher fait déjà sur Discord et ce que le bot peut faire en plus. Le code du bot est dans le dossier [`bot/`](../bot) de ce dépôt.
 
 ---
 
