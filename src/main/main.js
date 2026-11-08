@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 const { pathToFileURL } = require('url');
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, screen, nativeImage, Notification, clipboard } = require('electron');
 
@@ -51,6 +52,7 @@ const judging = require('./telemetry/judging');
 const { collectRuns } = require('./telemetry/tandem');
 const ghosts = require('./telemetry/ghosts');
 const champ = require('./telemetry/championship');
+const { challengeOf, weekStart } = require('./telemetry/challenge');
 const { dedupe: dedupeBattles } = require('./telemetry/battles');
 const { ruledBattles } = require('./telemetry/rounds');
 
@@ -1135,6 +1137,33 @@ function shareLive() {
     });
 }
 
+/** Tracks (and layouts) of the group with a drift course: where the weekly challenge can be. */
+function challengeTracks() {
+  const out = [];
+  for (const t of (sync && sync.manifest && sync.manifest.tracks) || []) {
+    const layouts = t.layouts && t.layouts.length ? t.layouts.map((l) => l.id || '') : [''];
+    for (const layout of layouts) {
+      const info = driftCourseInfo({ track: t.id, layout });
+      if (info && (info.source === 'published' || info.source === 'official')) out.push({ track: t.id, layout });
+    }
+  }
+  return out;
+}
+
+/** Weeks whose challenge this driver met (from the progress history). */
+function challengeWins() {
+  const tracks = challengeTracks();
+  const weeks = new Map();
+  for (const e of (telemetry && telemetry.history.items) || []) {
+    if (e.k !== 'drift') continue;
+    const w = weekStart(Date.parse(e.d));
+    if (!weeks.has(w)) weeks.set(w, { ch: challengeOf(tracks, w + 3600000), ok: false });
+    const x = weeks.get(w);
+    if (x.ch && x.ch.track === e.t && (x.ch.layout || '') === (e.l || '') && Number(e.s[x.ch.mode]) >= x.ch.target) x.ok = true;
+  }
+  return [...weeks.values()].filter((x) => x.ok).map((x) => x.ch);
+}
+
 /** Championships with every round's results (qualifying, bracket, points). */
 async function championshipsNow() {
   const list = (sync.manifest && sync.manifest.championships) || [];
@@ -2217,6 +2246,105 @@ function setupIpc() {
       `Tours enregistrés sur ce circuit : ${combo ? telemetry.store.list({ track: combo.track, layout: combo.layout || '' }).length : '—'}`,
     ].filter(Boolean).join('\n');
   });
+  // weekly challenge: the same for everybody, the drivers who met it, and this driver's best this week
+  handle('challenge:current', async () => {
+    telemetry.progress({}); // history filled on first use
+    const ch = challengeOf(challengeTracks());
+    if (!ch) return { challenge: null };
+    const name = (settings.data.driverName || '').trim().toLowerCase();
+    const mine = (telemetry.history.items || []).filter((e) => e.k === 'drift' && e.t === ch.track && (e.l || '') === ch.layout && Date.parse(e.d) >= Date.parse(ch.start)).map((e) => Number(e.s[ch.mode])).filter(Number.isFinite);
+    const result = { challenge: { ...ch, name: trackLabel(ch.track, ch.layout) }, myBest: mine.length ? Math.max(...mine) : null, wins: challengeWins().length, drivers: null };
+    const c = community();
+    if (c) {
+      try {
+        const runs = await c.runs({ track: ch.track, layout: ch.layout, since: ch.start, kind: 'drift', limit: 1000 });
+        const best = new Map();
+        for (const r of runs) {
+          const v = r.detail && r.detail.modes ? Number(r.detail.modes[ch.mode]) : NaN;
+          if (!Number.isFinite(v)) continue;
+          const k = String(r.driver).trim().toLowerCase();
+          if (!best.has(k) || v > best.get(k).score) best.set(k, { driver: r.driver, score: v, date: r.date, me: k === name });
+        }
+        result.drivers = [...best.values()].sort((a, b) => b.score - a.score).map((x) => ({ ...x, ok: x.score >= ch.target }));
+      } catch (err) {
+        result.error = err.message;
+      }
+    }
+    return result;
+  });
+  // progress of this driver: weekly average and most missed clips, per track (kept after the session purge)
+  handle('telemetry:progress', () => {
+    const mode = myMode();
+    return { mode, tracks: telemetry.progress({ mode }).map((t) => ({ ...t, name: trackLabel(t.track, t.layout) })) };
+  });
+  // what it takes to move up a category, and the tracks where the most is to gain
+  handle('telemetry:goals', async () => {
+    const c = community();
+    if (!c) return { configured: false };
+    const map = await refreshCategories(false);
+    const name = settings.data.driverName || '';
+    const category = categoryOf(name);
+    const mode = CATEGORY_MODE[category];
+    const scoreOf = (r) => {
+      const v = r.detail && r.detail.modes ? Number(r.detail.modes[mode]) : NaN;
+      return Number.isFinite(v) ? v : null;
+    };
+    const [mine, all] = await Promise.all([c.runs({ driver: name, kind: 'drift', limit: 500 }), c.runs({ kind: 'drift', limit: 2000 })]);
+    const scores = mine.map(scoreOf).filter((v) => v !== null).sort((a, b) => b - a);
+    const top = scores.slice(0, 5);
+    const avg = top.length ? top.reduce((a, b) => a + b, 0) / top.length : null;
+    const UP = 75;
+    const DOWN = 35;
+    const next = { debutant: 'amateur', amateur: 'pro', pro: null }[category];
+    let plan = null;
+    if (next && top.length >= 3) {
+      const sum = top.reduce((a, b) => a + b, 0);
+      const one = UP * top.length - (sum - top[top.length - 1]); // one run replacing the lowest of the 5
+      const two = top.length >= 2 ? (UP * top.length - (sum - top[top.length - 1] - top[top.length - 2])) / 2 : null;
+      plan = { gap: Math.max(0, Math.round((UP - avg) * 10) / 10), lowest: top[top.length - 1], one: Math.round(one * 10) / 10, two: two === null ? null : Math.round(two * 10) / 10 };
+    }
+    // per track: my best vs the best driver of my category
+    const sameCat = (driver) => {
+      const r = map[String(driver || '').trim().toLowerCase()];
+      return (r ? r.category : 'debutant') === category;
+    };
+    const tracks = new Map();
+    for (const r of all) {
+      const v = scoreOf(r);
+      if (v === null) continue;
+      const key = `${r.track}|${r.layout || ''}`;
+      const t = tracks.get(key) || { track: r.track, layout: r.layout || '', name: trackLabel(r.track, r.layout), mine: null, best: null, bestDriver: '' };
+      const isMe = String(r.driver).trim().toLowerCase() === name.trim().toLowerCase();
+      if (isMe) t.mine = Math.max(t.mine ?? 0, v);
+      else if (sameCat(r.driver) && (t.best === null || v > t.best)) Object.assign(t, { best: v, bestDriver: r.driver });
+      tracks.set(key, t);
+    }
+    const list = [...tracks.values()]
+      .filter((t) => t.best !== null || t.mine !== null)
+      .map((t) => ({ ...t, gap: t.best === null ? null : Math.round((t.best - (t.mine ?? 0)) * 10) / 10 }))
+      .sort((a, b) => (b.gap ?? -1) - (a.gap ?? -1));
+    return { configured: true, category, next, mode, avg: avg === null ? null : Math.round(avg * 10) / 10, runs: scores.length, top, up: UP, down: DOWN, plan, danger: category !== 'debutant' && avg !== null && avg < DOWN + 5, tracks: list.slice(0, 8) };
+  });
+  // a member thinks a note is wrong: the admins get the passage (to import) and the reason
+  handle('telemetry:reportScore', async ({ id, reason }) => {
+    if (!webhooks.configured('reports')) throw new Error('Les admins n’ont pas encore réglé le salon des rapports (Publication → Discord)');
+    const remote = String(id).startsWith('remote-');
+    const lap = remote ? await telemetry.board().lap(String(id).slice(7)) : telemetry.store.load(id);
+    const d = driftOf(lap, myMode(), lap.tandem ? 'tandem' : 'drift') || {};
+    const clips = (d.clips || []).map((c) => `${c.hit ? '✅' : '❌'} ${c.name}`).join(' ');
+    const who = settings.data.driverName || 'Un membre';
+    const text = [
+      `📝 **${who}** conteste une note : **${d.score ?? '?'}**/100 (${lap.driver && lap.driver.name}, ${carLabel(lap.car)}, ${trackLabel(lap.track, lap.layout)}, ${new Date(lap.date).toLocaleString('fr-FR')})`,
+      `Angle ${d.angle ?? '—'} · vitesse ${d.speed ?? '—'} · ligne ${d.line ?? '—'}${d.penalty ? ` · pénalités −${d.penalty}` : ''}${d.zeroed ? ` · run à 0 : ${d.zeroed}` : ''}`,
+      clips ? `Clips : ${clips}` : '',
+      `> ${String(reason || '').replace(/\s+/g, ' ').slice(0, 600) || '(pas de détail)'}`,
+      'Le passage est joint : Télémétrie → Outils → Importer, puis Parcours pour vérifier les clips.',
+    ].filter(Boolean).join('\n');
+    const file = remote ? zlib.gzipSync(JSON.stringify({ ...lap, id: `remote${String(id).slice(7).replace(/[^\w-]/g, '')}` })) : telemetry.store.export(id);
+    const ok = await webhooks.post('reports', crashlog.scrub(text), { name: `${lap.track}-${(lap.driver && lap.driver.name) || 'pilote'}.lkslap`.replace(/[^\w.-]+/g, '_'), content: file, type: 'application/octet-stream' });
+    if (!ok) throw new Error('Envoi impossible');
+    return true;
+  });
   handle('telemetry:categories', async () => {
     const map = await refreshCategories(false);
     return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35, serverOutdated: Boolean(categories.outdated) };
@@ -2321,6 +2449,7 @@ function setupIpc() {
       return d && Array.isArray(d.clips) && d.clips.length >= 3 && d.clips.every((c) => c.hit);
     });
     const soloRuns = own.filter((l) => !l.tandem).length;
+    const cw = challengeWins().length;
     const badges = [
       ['first', 'Première run', 'Une run enregistrée', soloRuns >= 1],
       ['runs50', '50 runs', '50 runs en solo', soloRuns >= 50],
@@ -2336,6 +2465,8 @@ function setupIpc() {
       ['tracks3', 'Globe-trotter', 'Des runs sur 3 circuits', tracks.size >= 3],
       ['weeks4', 'Fidèle', 'Des runs 4 semaines différentes', weeks.filter((w) => w.runs).length >= 4],
       ['hour', 'Une heure en glisse', '60 minutes de glisse au total', driftSeconds >= 3600],
+      ['challenge1', 'Défi relevé', 'Un défi de la semaine réussi', cw >= 1],
+      ['challenge5', 'Habitué des défis', '5 défis de la semaine réussis', cw >= 5],
     ].map(([id, name, how, earned]) => ({ id, name, how, earned }));
     return {
       name: settings.data.driverName || 'Pilote',

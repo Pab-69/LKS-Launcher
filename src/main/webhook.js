@@ -44,7 +44,7 @@ class Webhooks {
       if (file) {
         const form = new FormData();
         form.append('payload_json', JSON.stringify(payload));
-        form.append('files[0]', new Blob([file.content], { type: 'text/plain' }), file.name);
+        form.append('files[0]', new Blob([file.content], { type: file.type || 'text/plain' }), file.name);
         res = await this.fetch(`${url}?wait=true`, { method: 'POST', body: form });
       } else res = await this.fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error(`Discord a refusé le message (${res.status})`);

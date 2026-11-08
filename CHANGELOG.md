@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 1.27.0
+
+- **Replay d'un passage** (Télémétrie → Détail) : « Rejouer » fait rouler la voiture sur la carte (orientée comme dans le jeu), avec la vitesse et l'angle, en ×1, ×2 ou ×4, et les courbes qui suivent. « Contre » : rejoue en même temps un autre passage du circuit (le tien, un passage importé ou un des meilleurs du classement).
+- **Mode spectateur** (Compétition → Spectateur) : sans être en jeu, la carte du circuit avec tous les pilotes en piste (position, angle), leur progression dans la run et les notes qui tombent en direct. Pendant une soirée, la page suit son circuit.
+- **Défi de la semaine** (Compétition) : chaque lundi, un défi tiré au sort, le même pour tout le monde (un circuit du groupe, une notation, une note à atteindre). Qui l'a réussi, ta meilleure note de la semaine, et deux nouveaux badges (« Défi relevé », « Habitué des défis »).
+- **Objectif de catégorie** (Télémétrie → Profil) : ce qu'il te manque pour monter (« une seule run à 81,4 suffit ») et les circuits où tu as le plus à gagner face au meilleur de ta catégorie.
+- **Progression par circuit** (Profil) : moyenne et meilleure note de chaque semaine (12 semaines), et les clips que tu rates le plus souvent. Gardée même après la purge de fin de session.
+- **Signaler une note** (Détail) : si une note te paraît fausse, envoie le passage et ton explication aux admins (salon des rapports) ; ils l'importent et corrigent le parcours.
+- **Bot Discord** (dossier `bot/`) : rôles et annonces de catégorie, `/defi` avec résultat posté tout seul, bouton « Je viens » sur les soirées (inscrits mentionnés 1 h avant), `/comparer`, pilote de la semaine dans le récap, fils sous les records, `/parcours` (image du tracé avec les clips).
+
 ## 1.26.0
 
 - **Parcours officiels des nouveaux circuits**, relevés sur le marquage CFD de chaque piste (pastilles de clip peintes au sol, zones peintes, poteaux, panneaux) :

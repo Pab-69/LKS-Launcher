@@ -744,3 +744,26 @@ test('shared ranking: drivers with a record of an older course version stay, fla
   assert.deepStrictEqual(list.map((r) => [r.driver, Boolean(r.old)]), [['Pab', false], ['Vakew', true]]);
   assert.strictEqual((await b.list({ track: 't', kind: 'drift', rules: 'new-normal' })).length, 1, 'rounds and championships: current version only');
 });
+
+test('progress history: kept after the purge, weekly average and missed clips per track', () => {
+  const { History } = require('../src/main/telemetry/history');
+  const dir = tmp();
+  const h = new History(dir);
+  const now = Date.parse('2026-11-08T12:00:00Z');
+  const lap = (i, score, miss, daysAgo) => ({
+    id: `lap${i}xx`, date: new Date(now - daysAgo * 86400000).toISOString(), track: 't', layout: '', car: 'c',
+    drift: { score, clips: [{ name: 'Clip 1', hit: !miss }, { name: 'Clip 2', hit: true }], modes: { debutant: { score: score + 10, rules: 'v-debutant' }, normal: { score, rules: 'v-normal', clips: [{ name: 'Clip 1', hit: !miss }, { name: 'Clip 2', hit: true }] }, pro: { score: score - 10, rules: 'v-pro' } } },
+  });
+  h.add(lap(1, 60, true, 20));
+  h.add(lap(2, 70, false, 2));
+  h.add(lap(3, 80, true, 1));
+  h.add(lap(3, 82, true, 1)); // judged again: replaced, not added
+  assert.strictEqual(h.items.length, 3);
+  const again = new History(dir); // kept on disk
+  const [t] = again.progress({ mode: 'normal', now });
+  assert.strictEqual(t.runs, 3);
+  const last = t.weeks[t.weeks.length - 1];
+  assert.deepStrictEqual([last.runs, last.avg, last.best], [2, 76, 82]);
+  assert.deepStrictEqual(t.missed[0], { name: 'Clip 1', missed: 2, rate: 67 });
+  assert.strictEqual(again.progress({ mode: 'pro', now })[0].weeks.slice(-1)[0].best, 72);
+});

@@ -15,6 +15,7 @@ const { DashServer } = require('./dash-server');
 const { BattleStore, findPartnerRun } = require('./battles');
 const { readGhostFiles, matchLap } = require('./ghosts');
 const { readMeasureFiles, measureMatches } = require('./measures');
+const { History } = require('./history');
 const fs = require('fs');
 const { courseVersion, scoreAllModes, scoreTandemAll, driftOf, applyBattleParts, MODE_IDS } = require('./drift');
 
@@ -23,6 +24,7 @@ class TelemetryManager extends EventEmitter {
     super();
     this.source = source;
     this.store = new LapStore(dataDir);
+    this.history = new History(dataDir); // progress of this PC's driver, kept after the session purge
     this.battles = new BattleStore(dataDir);
     // championship rounds open now for a track: [{ id, kind, mode, start, end }]
     this.getRounds = getRounds || (() => []);
@@ -139,6 +141,13 @@ class TelemetryManager extends EventEmitter {
    * Re-judge local laps whose course or rules changed (admins moved the clips,
    * changed a rule, or laps from an older version). Returns how many were updated.
    */
+  /** Progress of this PC's driver (history filled from the passages on first use). */
+  progress(opts) {
+    const mine = (this.recorder.getDriver() || {}).steamId || '';
+    if (!this.history.items) this.history.seed(this.store.list({}).filter((l) => !l.imported && (l.driver.steamId || '') === mine).map((l) => this.store.load(l.id)));
+    return this.history.progress(opts);
+  }
+
   rescoreAll() {
     let n = 0;
     for (const l of [...this.store.index]) {
@@ -215,6 +224,14 @@ class TelemetryManager extends EventEmitter {
   }
 
   async onLap(lap) {
+    const mine = (this.recorder.getDriver() || {}).steamId || '';
+    if ((lap.driver.steamId || '') === mine) {
+      try {
+        this.history.add(lap);
+      } catch (err) {
+        this.emit('submitError', err);
+      }
+    }
     const prevBest = this.store.best({ car: lap.car, track: lap.track, layout: lap.layout, kind: 'time', steamId: lap.driver.steamId });
     const pbDrift = this.newRecords(lap, 'drift');
     const pbTandem = lap.tandem ? this.newRecords(lap, 'tandem') : [];

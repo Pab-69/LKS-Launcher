@@ -4,7 +4,7 @@ import { courseMap, resampleLine, smoothLine, snapToEdge, roadDirection, zoneCen
 
 // state kept while switching tabs (one tab per section: Télémétrie / Compétition)
 const tabsBySection = { telemetry: 'live', competition: 'champ' };
-const COMPETITION_TABS = ['champ', 'battles', 'judge'];
+const COMPETITION_TABS = ['champ', 'battles', 'spectate', 'challenge', 'judge'];
 let detailId = null; // passage shown in « Détail »
 // driver categories (from the group's server): { mine, me, map: { name: { category, avg, runs } }, modes, up, down }
 let catInfo = null;
@@ -16,6 +16,20 @@ const catOf = (name) => {
 };
 const catOfMode = (m) => (catInfo ? Object.keys(catInfo.modes).find((k) => catInfo.modes[k] === m) : null) || ({ debutant: 'debutant', normal: 'amateur', pro: 'pro' })[m];
 let compare = { a: null, b: null };
+let replayT = null; // replay of a passage: elapsed ms shown on the maps (null = off)
+
+/** Row of a passage at an elapsed time (ms since its first row). */
+function rowAtTime(samples, t) {
+  const t0 = samples[0][COL.t];
+  let lo = 0;
+  let hi = samples.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid][COL.t] - t0 < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return samples[lo];
+}
 let boardQuery = { track: '', layout: '', car: '', kind: 'drift' }; // drift | tandem (no lap-time ranking)
 let compareMode = 'drift';
 let judgeMode = 'normal'; // debutant | normal | pro
@@ -161,6 +175,15 @@ function chart({ height = 130, series, yMin, yMax, label, unit = '', zero = fals
       g.beginPath();
       s.points.forEach(([d, v], i) => (i ? g.lineTo(d * w, y(v)) : g.moveTo(d * w, y(v))));
       g.stroke();
+      if (s.dots) {
+        // one dot per value (weekly progress: a single week still shows)
+        g.fillStyle = s.color;
+        for (const [d, v] of s.points) {
+          g.beginPath();
+          g.arc(Math.min(w - 4, Math.max(4, d * w)), y(v), 3.5, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
     }
     g.setLineDash([]);
     if (cursorD != null) {
@@ -290,7 +313,33 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
         g.font = '600 11px Barlow Condensed, sans-serif';
         g.fillText(o.name, px(o.x) + 8, pz(o.z) - 6);
       }
-      dot(pos.x, pos.z, '#fff');
+      if (Number.isFinite(pos.x)) dot(pos.x, pos.z, '#fff');
+    } else if (replayT != null && !onClick) {
+      // replay: each car where it was at this time, turned like it was (body + nose)
+      laps.forEach((l, i) => {
+        const s = rowAtTime(l.samples, replayT);
+        const color = i === 0 ? COLORS.a : COLORS.b;
+        const yaw = s[14];
+        const cx = px(s[COL.x]);
+        const cz = pz(s[COL.z]);
+        if (Number.isFinite(yaw)) {
+          const len = Math.max(7, 2.2 * proj.k);
+          const wid = Math.max(4, 0.95 * proj.k);
+          g.save();
+          g.translate(cx, cz);
+          g.rotate(Math.PI - yaw); // nose (local -y) along the heading (sin yaw, cos yaw), z down the screen
+          g.fillStyle = color;
+          g.fillRect(-wid, -len, wid * 2, len * 2);
+          g.fillStyle = '#fff';
+          g.fillRect(-wid, -len, wid * 2, Math.max(2, len * 0.35));
+          g.restore();
+        } else dot(s[COL.x], s[COL.z], color);
+        if (laps.length > 1) {
+          g.fillStyle = color;
+          g.font = '600 11px Barlow Condensed, sans-serif';
+          g.fillText(l.driver.name, cx + 10, cz - 8);
+        }
+      });
     } else if (cursorD != null && !onClick) {
       laps.forEach((l, i) => {
         const s = l.samples.find((x) => x[0] >= cursorD) || l.samples[l.samples.length - 1];
@@ -353,7 +402,7 @@ export default function telemetryView(root, params = {}) {
     clear(tabsEl);
     let tabs;
     if (section === 'competition') {
-      tabs = [['champ', 'Championnats'], ['battles', 'Battles']];
+      tabs = [['spectate', 'Spectateur'], ['challenge', 'Défi de la semaine'], ['champ', 'Championnats'], ['battles', 'Battles']];
       if (isAdmin()) tabs.push(['judge', 'Juge']);
     } else {
       tabs = [['live', 'En direct'], ['laps', 'Passages'], ['board', 'Classements'], ['compare', 'Comparer'], ['profile', 'Profil']];
@@ -380,7 +429,7 @@ export default function telemetryView(root, params = {}) {
     }
     clear(body);
     renderTabs();
-    ({ live: renderLive, laps: renderLaps, detail: renderDetail, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools })[tab]();
+    ({ live: renderLive, laps: renderLaps, detail: renderDetail, board: renderBoard, compare: renderCompare, battles: renderBattles, champ: renderChamp, profile: renderProfile, judge: renderJudge, course: renderCourse, tools: renderTools, spectate: renderSpectate, challenge: renderChallenge })[tab]();
   }
 
   // ------------------------------------------------------------ live
@@ -566,6 +615,26 @@ export default function telemetryView(root, params = {}) {
             : me && me.runs >= 3
             ? `Moyenne de tes 5 meilleures notes (notées ${CAT_LABEL[catInfo.mine]}) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
             : `Il faut au moins 3 runs partagées pour être classé. Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
+      const goals = !catInfo.serverOutdated ? await api.call('telemetry:goals').catch(() => null) : null;
+      if (goals && goals.configured) {
+        const lines = [];
+        if (goals.next && goals.plan) {
+          lines.push(h('p', { style: { margin: '0 0 6px' } }, goals.plan.gap > 0
+            ? `Pour passer ${CAT_LABEL[goals.next]} : il te manque ${goals.plan.gap} point(s) de moyenne. Ta 5e meilleure note est ${goals.plan.lowest}.`
+            : `Ta moyenne atteint ${goals.up} : tu passes ${CAT_LABEL[goals.next]} à ta prochaine run partagée.`));
+          if (goals.plan.gap > 0) {
+            lines.push(h('p.s', { style: { margin: 0 } }, goals.plan.one <= 100
+              ? `Une seule run à ${goals.plan.one} suffit (elle remplace ta note de ${goals.plan.lowest}).`
+              : goals.plan.two !== null && goals.plan.two <= 100 ? `Il faut deux runs à ${goals.plan.two} (elles remplacent tes deux notes les plus basses).` : 'Il faut plusieurs très bonnes runs : vise les circuits ci-dessous.'));
+          }
+        } else if (goals.next) lines.push(h('p', { style: { margin: 0 } }, `Encore ${Math.max(0, 3 - goals.runs)} run(s) partagée(s) pour avoir une moyenne.`));
+        else lines.push(h('p', { style: { margin: 0 } }, 'Tu es dans la catégorie la plus haute.'));
+        if (goals.danger) lines.push(h('p.s', { style: { margin: '6px 0 0', color: 'var(--warn)' } }, `Attention : sous ${goals.down} de moyenne tu redescends.`));
+        const tracks = goals.tracks.filter((t) => t.gap !== null && t.gap > 0).slice(0, 5);
+        body.append(h('div.panel.mt.goals-panel', h('h3', 'Objectif'), ...lines,
+          tracks.length ? h('div.mt', h('div.label', `Où tu as le plus à gagner (écart avec le meilleur ${CAT_LABEL[goals.category]})`),
+            h('div.list', tracks.map((t) => h('div.list-row.profile-row', h('div', h('div.t', t.name), h('div.s', `${t.bestDriver} : ${t.best}${t.mine !== null ? ` · toi : ${t.mine}` : ' · pas encore roulé'}`)), h('strong', `+${t.gap}`))))) : null));
+      }
     }
     body.append(
       h('div.live-grid',
@@ -576,12 +645,37 @@ export default function telemetryView(root, params = {}) {
     const earned = p.badges.filter((b) => b.earned).length;
     body.append(h('div.panel.mt', h('h3', `Badges (${earned} / ${p.badges.length})`),
       h('div.badges', p.badges.map((b) => h(`div.badge${b.earned ? '.on' : ''}`, { title: b.how }, h('strong', b.name), h('span.s', b.how))))));
-    // progression: best solo note per week
-    const max = Math.max(100, ...p.weeks.map((w) => w.best));
-    body.append(h('div.panel.mt', h('h3', 'Progression (meilleure note de la semaine, mode Normal)'),
-      h('div.profile-weeks', p.weeks.map((w) => h('div.profile-week', { title: `${dateFr(w.from)} : ${w.best ? `${w.best}/100` : 'pas de run notée'} · ${w.runs} run(s)` },
-        h('div.bar', { style: { height: `${Math.round((w.best / max) * 100)}%` } }), h('span.s', w.best ? String(Math.round(w.best)) : '·')))),
-      h('div.hint', '12 dernières semaines, de la plus ancienne à la plus récente.')));
+    // progression per track: weekly average and best (own notation), most missed clips
+    const prog = await api.call('telemetry:progress').catch(() => null);
+    if (prog && prog.tracks.length) {
+      const box = h('div.panel.mt.progress-panel');
+      const drawProg = (key) => {
+        clear(box);
+        const t = prog.tracks.find((x) => `${x.track}|${x.layout}` === key) || prog.tracks[0];
+        const pts = (f) => t.weeks.map((w, i) => [i / (t.weeks.length - 1), f(w)]).filter(([, v]) => v !== null && v !== undefined);
+        const avg = pts((w) => w.avg);
+        const best = pts((w) => w.best);
+        const at = (which) => (d) => {
+          const w = t.weeks[Math.round(d * (t.weeks.length - 1))];
+          return w && w.runs ? `${dateFr(w.from)} : ${which === 'avg' ? `moyenne ${w.avg}` : `meilleure ${w.best}`} (${w.runs} run${w.runs > 1 ? 's' : ''})` : '';
+        };
+        box.append(
+          h('div.row', h('h3', { style: { margin: 0 } }, `Progression (notation ${MODE_LABEL[prog.mode]})`),
+            h('div.right', select(prog.tracks.map((x) => [`${x.track}|${x.layout}`, `${x.name} (${x.runs})`]), `${t.track}|${t.layout}`, (v) => drawProg(v), 'board-select'))),
+          avg.length
+            ? chart({ label: 'Moyenne et meilleure note de chaque semaine', height: 140, yMin: 0, yMax: 100, series: [
+              { name: 'moyenne', color: COLORS.b, points: avg, at: at('avg'), dots: true },
+              { name: 'meilleure', color: COLORS.a, points: best, at: at('best'), width: 2.2, dots: true }] })
+            : h('p.muted', 'Pas de run sur ce circuit ces 12 dernières semaines.'),
+          h('div.hint', '12 dernières semaines, de la plus ancienne (à gauche) à la plus récente. Gardé même après la purge de fin de session.'),
+          t.missed.length
+            ? h('div.mt', h('div.label', 'Clips les plus ratés'),
+              h('div.missed-list', t.missed.map((c) => h('div.missed', h('span', c.name), h('div.missed-bar', h('i', { style: { width: `${c.rate}%` } })), h('strong', `${c.rate} %`)))))
+            : h('p.s.mt', 'Aucun clip raté : bravo.'));
+      };
+      drawProg(`${prog.tracks[0].track}|${prog.tracks[0].layout}`);
+      body.append(box);
+    }
     // records per track
     const tracks = h('div.list');
     if (!p.tracks.length) tracks.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de run enregistrée.'));
@@ -590,6 +684,107 @@ export default function telemetryView(root, params = {}) {
     if (!p.battles.last.length) battles.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de battle.'));
     for (const b of p.battles.last) battles.append(h('div.list-row.profile-row', h('div', h('div.t', `contre ${b.against}`), h('div.s', `${b.track} · ${dateFr(b.date)}`)), h(`span.tag.${b.result === 'won' ? 'ok' : b.result === 'lost' ? 'bad' : 'plain'}`, b.result === 'won' ? 'Gagnée' : b.result === 'lost' ? 'Perdue' : 'One more time'), h('span.s', b.score)));
     body.append(h('div.grid.grid-2.mt', h('div.panel', h('h3', 'Mes records par circuit'), tracks), h('div.panel', h('h3', 'Mes dernières battles'), battles)));
+  }
+
+  // ------------------------------------------------------------ weekly challenge
+  async function renderChallenge() {
+    const r = await guard(() => api.call('challenge:current'));
+    if (!r) return;
+    const ch = r.challenge;
+    if (!ch) {
+      body.append(h('div.empty', h('strong', 'Pas de défi'), 'Aucun circuit du groupe n’a encore de parcours.'));
+      return;
+    }
+    const left = Math.max(0, Date.parse(ch.end) - Date.now());
+    const days = Math.floor(left / 86400000);
+    const hours = Math.floor((left % 86400000) / 3600000);
+    const done = r.myBest !== null && r.myBest >= ch.target;
+    body.append(h('div.panel.challenge-card',
+      h('div.label', 'Défi de la semaine'),
+      h('div.challenge-title', ch.name),
+      h('div.challenge-goal', `Drift · notation ${MODE_LABEL[ch.mode]} · `, h('strong', `${ch.target}/100`), ' ou plus'),
+      h('div.s', `Encore ${days} j ${hours} h · nouveau défi chaque lundi`),
+      h(`div.notice.mt${done ? '.success' : '.info'}`, done
+        ? `Défi relevé : ta meilleure note cette semaine est ${r.myBest}. Badge gagné !`
+        : r.myBest !== null ? `Ta meilleure note cette semaine : ${r.myBest}. Encore ${(ch.target - r.myBest).toFixed(1)} point(s).` : 'Tu n’as pas encore roulé sur ce circuit cette semaine.'),
+      h('div.row.mt', h('span.s', `Défis réussis au total : ${r.wins}`),
+        h('button.btn.btn-sm.right', { on: { click: () => { Object.assign(boardQuery, { track: ch.track, layout: ch.layout, kind: 'drift' }); judgeMode = ch.mode; judgeModeChosen = true; window.lksGo('telemetry', { tab: 'board' }); } } }, 'Voir le classement du circuit'))));
+    const list = h('div.list');
+    if (r.error) body.append(h('div.notice.mt', r.error));
+    if (!r.drivers) list.append(h('p.muted', { style: { margin: 0 } }, 'Classement partagé non configuré : seul ton résultat compte.'));
+    else if (!r.drivers.length) list.append(h('p.muted', { style: { margin: 0 } }, 'Personne n’a encore roulé sur ce circuit cette semaine : à toi !'));
+    else r.drivers.forEach((d, i) => list.append(h(`div.list-row.board-row${d.me ? '.me' : ''}`,
+      h('span.board-pos', `${i + 1}`),
+      h('div', h('div.t', d.driver), h('div.s', dateFr(d.date))),
+      h('strong.board-v', d.score.toFixed(1), h('small', ' /100')),
+      h(`span.tag.${d.ok ? 'ok' : 'plain'}`, d.ok ? 'Réussi' : 'Pas encore'))));
+    body.append(h('div.panel.mt', h('h3', `Cette semaine (notation ${MODE_LABEL[ch.mode]})`), list,
+      h('p.hint', 'Les notes viennent des runs partagées sur le serveur du groupe, notées dans la notation du défi (quelle que soit ta catégorie).')));
+  }
+
+  // ------------------------------------------------------------ spectator
+  /** Everyone on track (in-game app + launcher), live on the map, and the notes as they come. */
+  async function renderSpectate() {
+    const mapWrap = h('div.panel.live-map');
+    const side = h('div.live-left');
+    const drivers = h('div.list');
+    const feed = h('div.list');
+    const head = h('div.notice.info');
+    side.append(head, h('div.panel', h('h3', 'En piste'), drivers), h('div.panel.mt', h('h3', 'Dernières notes'), feed));
+    body.append(h('div.live-layout', side, mapWrap));
+    let map = null;
+    let mapKey = null;
+    let pick = null; // circuit shown when several are in use
+    const tick = async () => {
+      if (!body.contains(mapWrap)) return;
+      const f = await api.call('judge:feed', {}).catch(() => null);
+      if (!f || !f.configured) {
+        head.textContent = 'Le classement partagé n’est pas configuré : rien à suivre.';
+        return;
+      }
+      const tracks = [...new Set(f.live.map((p) => `${p.track}|${p.layout || ''}`))];
+      const wanted = f.soiree && f.soiree.track ? `${f.soiree.track}|${f.soiree.layout || ''}` : pick && tracks.includes(pick) ? pick : tracks[0] || null;
+      head.textContent = f.soiree ? `Soirée en cours : ${f.soiree.title}${f.soiree.trackName ? ` · ${f.soiree.trackName}` : ''}` : f.live.length ? 'Pas de soirée en ce moment : voici qui roule.' : 'Personne en piste pour le moment. La page se met à jour toute seule.';
+      // the map of the circuit followed
+      if (wanted && wanted !== mapKey) {
+        mapKey = wanted;
+        const [track, layout] = wanted.split('|');
+        const info = await getCourseInfo(track, layout);
+        clear(mapWrap);
+        if (info.course && (info.course.refLine || []).length) {
+          map = trackMap([], { height: Math.max(420, Math.min(720, window.innerHeight * 0.68)), course: info.course, live: true });
+          mapWrap.append(h('div.row', h('h3', { style: { margin: 0 } }, trackName(track, layout)),
+            tracks.length > 1 && !(f.soiree && f.soiree.track) ? h('div.right', select(tracks.map((k) => [k, trackName(...k.split('|'))]), wanted, (v) => { pick = v; tick(); }, 'board-select')) : null), map);
+        } else {
+          map = null;
+          mapWrap.append(h('div.empty', h('strong', trackName(track, layout)), 'Pas de parcours pour dessiner la carte de ce circuit.'));
+        }
+      }
+      const here = f.live.filter((p) => `${p.track}|${p.layout || ''}` === mapKey);
+      if (map) map.redraw({ others: here.filter((p) => Number.isFinite(p.data.x)).map((p) => ({ name: `${p.name} ${Math.round(p.data.angle || 0)}°`, x: p.data.x, z: p.data.z })) });
+      clear(drivers);
+      if (!f.live.length) drivers.append(h('p.muted', { style: { margin: 0 } }, 'Personne.'));
+      for (const p of f.live) {
+        const d = p.data || {};
+        drivers.append(h('div.list-row.spect-row',
+          h('div', h('div.t', p.name, catInfo ? h(`span.cat-chip.cat-${catOf(p.name)}`, CAT_LABEL[catOf(p.name)]) : null), h('div.s', `${p.carName} · ${p.trackName}`)),
+          h('div.spect-live', h('strong', `${Math.round(d.angle || 0)}°`), h('span.s', `${Math.round(d.speed || 0)} km/h`)),
+          h('div.spect-progress', h('div.live-bar', h('i.gas', { style: { width: `${Math.round((d.d || 0) * 100)}%` } })), h('span.s', d.total ? `clips ${d.hit}/${d.total}` : d.inRun ? 'en run' : 'hors run'))));
+      }
+      clear(feed);
+      if (!f.runs.length) feed.append(h('p.muted', { style: { margin: 0 } }, 'Pas encore de note.'));
+      for (const r of f.runs.slice(0, 12)) {
+        const dt = r.detail || {};
+        const clips = (dt.clips || []).map((c) => (c.hit ? '●' : '○')).join('');
+        feed.append(h('div.list-row.spect-row',
+          h('div', h('div.t', r.driver), h('div.s', `${r.trackName} · ${dateFr(r.date)}${dt.zeroed ? ` · run à 0 : ${dt.zeroed}` : ''}`)),
+          h('span.s', { title: 'Clips touchés' }, clips),
+          h('strong.board-v', `${Number(r.score).toFixed(1)}`, h('small', ' /100'))));
+      }
+    };
+    await tick();
+    const timer = setInterval(tick, 2000);
+    liveOff = () => clearInterval(timer);
   }
 
   // ------------------------------------------------------------ laps
@@ -679,6 +874,22 @@ export default function telemetryView(root, params = {}) {
     return panel;
   }
 
+  function reportScore(lap) {
+    const reason = h('textarea.input', { rows: 4, maxlength: 600, placeholder: 'Ex. : le clip 3 n’a pas compté alors que je l’ai touché, la pénalité « roues dehors » est fausse…' });
+    const m = modal({
+      title: 'Signaler la note',
+      small: true,
+      body: [h('p.hint', { style: { marginTop: 0 } }, 'Les admins reçoivent ce passage (à importer) et ton explication. Ils pourront corriger le parcours (clips, zones, règles) : les runs sont alors re-notées pour tout le monde.'), reason],
+      foot: [h('button.btn.btn-ghost', { on: { click: () => m.close() } }, 'Annuler'),
+        h('button.btn.btn-primary', { on: { click: async (e) => {
+          e.target.disabled = true;
+          if (await guard(() => api.call('telemetry:reportScore', { id: lap.id, reason: reason.value }), 'Envoyé aux admins, merci !')) m.close();
+          else e.target.disabled = false;
+        } } }, 'Envoyer')],
+    });
+    reason.focus();
+  }
+
   async function renderDetail() {
     const lap = detailId ? await guard(() => api.call('telemetry:lap', detailId)) : null;
     if (!lap) {
@@ -696,7 +907,8 @@ export default function telemetryView(root, params = {}) {
         lap.ghost ? h('button.btn.btn-sm', { title: 'Rouler avec ce passage en fantôme', on: { click: () => useGhost(lap.id) } }, 'Fantôme') : null,
         tandem ? h('button.btn.btn-sm', { on: { click: () => openTandem(lap.id) } }, 'Avec le leader') : null,
         h('button.btn.btn-sm', { on: { click: () => pick('a', lap.id) } }, 'Comparer (A)'),
-        h('button.btn.btn-sm', { on: { click: () => pick('b', lap.id) } }, 'Comparer (B)'))));
+        h('button.btn.btn-sm', { on: { click: () => pick('b', lap.id) } }, 'Comparer (B)'),
+        judged ? h('button.btn.btn-sm.btn-ghost', { title: 'Cette note te paraît fausse ? Les admins reçoivent le passage pour vérifier le parcours.', on: { click: () => reportScore(lap) } }, icon('flag'), 'Signaler la note') : null)));
     const ang = lap.samples.map((x) => Math.min(90, x[COL.angle]));
     const avgAngle = Math.round(ang.reduce((p, v) => p + v, 0) / (ang.length || 1));
     body.append(h('div.detail-head.panel',
@@ -726,9 +938,83 @@ export default function telemetryView(root, params = {}) {
       const gap = lap.samples.map((x, i) => { const l = lap.tandem.leadSamples[i]; return [x[0], l ? Math.hypot(x[COL.x] - l[0], x[COL.z] - l[1]) : 0]; });
       curves.unshift(chart({ label: 'Écart avec le leader (m)', height: 110, yMin: 0, yMax: Math.ceil(Math.max(10, ...gap.map((g) => g[1])) / 5) * 5, series: [{ name: '', color: '#e3a33a', points: gap, at: (dd) => { const g = gap.find((x) => x[0] >= dd) || gap[gap.length - 1]; return `${g[1].toFixed(1)} m`; } }] }));
     }
+    const mapPanel = h('div.panel.cmp-map', h('h3', 'Carte'));
+    let map = trackMap([lap], { height: 420, course });
+    mapPanel.append(map, replayBar(lap, course, (laps) => {
+      map.replaceWith((map = trackMap(laps, { height: 420, course })));
+    }));
     body.append(
-      h('p.hint.mt', 'Survole une courbe : le point correspondant s’affiche sur la carte.'),
-      h('div.cmp-layout.detail', h('div.cmp-charts', ...curves), h('div.panel.cmp-map', h('h3', 'Carte'), trackMap([lap], { height: 420, course }))));
+      h('p.hint.mt', 'Survole une courbe : le point correspondant s’affiche sur la carte. « Rejouer » fait rouler la voiture sur la carte.'),
+      h('div.cmp-layout.detail', h('div.cmp-charts', ...curves), mapPanel));
+  }
+
+  /** Replay of a passage on the map (and the curves), optionally against another passage on the same track. */
+  function replayBar(lap, course, setLaps) {
+    replayT = null;
+    const t0 = lap.samples[0][COL.t];
+    const total = lap.samples[lap.samples.length - 1][COL.t] - t0;
+    let rival = null;
+    let playing = false;
+    let speed = 1;
+    let last = 0;
+    const slider = h('input.range-input', { type: 'range', min: 0, max: total, step: 10, value: 0 });
+    const readout = h('div.replay-readout');
+    const playBtn = h('button.btn.btn-sm.btn-primary', icon('play'), 'Rejouer');
+    const wrap = h('div.replay-bar');
+    const show = () => {
+      const s = rowAtTime(lap.samples, replayT ?? 0);
+      cursorD = s[COL.d];
+      const line = (l, r) => `${l.driver.name} : ${Math.round(r[COL.speed])} km/h · ${Math.round(Math.min(90, r[COL.angle]))}°`;
+      readout.textContent = `${((replayT ?? 0) / 1000).toFixed(1)} s / ${(total / 1000).toFixed(1)} s   ${line(lap, s)}${rival ? `   ·   ${line(rival, rowAtTime(rival.samples, replayT ?? 0))}` : ''}`;
+      slider.value = String(replayT ?? 0);
+      charts.forEach((c) => c.draw());
+    };
+    const frame = (now) => {
+      if (!playing || !wrap.isConnected) {
+        if (!wrap.isConnected) replayT = null;
+        return;
+      }
+      replayT = Math.min(total, (replayT ?? 0) + (now - last) * speed);
+      last = now;
+      show();
+      if (replayT >= total) {
+        playing = false;
+        playBtn.replaceChildren(icon('play'), 'Rejouer');
+        return;
+      }
+      requestAnimationFrame(frame);
+    };
+    playBtn.addEventListener('click', () => {
+      if (playing) {
+        playing = false;
+        playBtn.replaceChildren(icon('play'), 'Reprendre');
+        return;
+      }
+      if (replayT == null || replayT >= total) replayT = 0;
+      playing = true;
+      playBtn.replaceChildren(icon('pause'), 'Pause');
+      last = performance.now();
+      requestAnimationFrame(frame);
+    });
+    slider.addEventListener('input', () => {
+      replayT = Number(slider.value);
+      show();
+    });
+    // the other passages on this track (yours and imported ones), and the best of the shared ranking
+    const rivalSel = h('select.input.board-select', h('option', { value: '' }, 'Seul'));
+    (async () => {
+      const others = ((await api.call('telemetry:laps', { track: lap.track, layout: lap.layout || '' }).catch(() => [])) || []).filter((l) => l.id !== lap.id && !l.tandem).slice(0, 30);
+      for (const l of others) rivalSel.append(h('option', { value: l.id }, `${l.driver.name} · ${note(resultOf(l)) || lapTime(l.lapMs)} · ${dateFr(l.date)}`));
+      const board = await api.call('telemetry:board', { track: lap.track, layout: lap.layout || '', kind: 'drift', mode: judgeMode }).catch(() => null);
+      for (const r of ((board && board.remote) || []).filter((r) => !r.old).slice(0, 5)) rivalSel.append(h('option', { value: `remote-${r.id}` }, `${r.driver} · ${Number(r.score).toFixed(1)} (classement)`));
+    })();
+    rivalSel.addEventListener('change', async () => {
+      rival = rivalSel.value ? await guard(() => api.call('telemetry:lap', rivalSel.value)) : null;
+      setLaps(rival ? [lap, rival] : [lap]);
+      show();
+    });
+    wrap.append(h('div.row', playBtn, seg([[1, '×1'], [2, '×2'], [4, '×4']], speed, (v) => { speed = Number(v); }), h('span.label', 'Contre'), rivalSel), slider, readout);
+    return wrap;
   }
 
   async function pick(slot, id) {

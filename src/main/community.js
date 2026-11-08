@@ -115,8 +115,10 @@ class Community {
     });
   }
 
-  async runs({ track, layout, since, limit = 60 } = {}) {
+  async runs({ track, layout, since, driver, kind, limit = 60 } = {}) {
     const q = new URLSearchParams({ select: '*', order: 'created_at.desc', limit: String(limit) });
+    if (driver) q.set('driver', `ilike.${String(driver).replace(/[*%,()]/g, '').trim()}`);
+    if (kind) q.set('kind', `eq.${kind}`);
     if (track) q.set('track', `eq.${track}`);
     if (track && layout !== undefined) q.set('layout', `eq.${layout}`);
     if (since) q.set('created_at', `gte.${since}`);
