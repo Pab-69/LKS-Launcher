@@ -265,5 +265,9 @@ export default function servers(root, params, { go }) {
 
   load();
   const timer = setInterval(() => refresh(false), 20000);
-  return () => clearInterval(timer);
+  const offLive = api.on('live:event', (topic) => { if (topic === 'hosts' || topic === 'presence') refresh(false); }); // a game was hosted or stopped
+  return () => {
+    clearInterval(timer);
+    offLive();
+  };
 }

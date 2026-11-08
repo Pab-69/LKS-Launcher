@@ -9,6 +9,7 @@ const { pipeline } = require('stream/promises');
 const { hashFolder } = require('./hash');
 const { extractZip } = require('./zip');
 const { contentDir } = require('./acContent');
+const { serverBase, fetchLive, overlay } = require('./liveManifest');
 
 const KINDS = ['car', 'track'];
 const plural = (kind) => (kind === 'car' ? 'cars' : 'tracks');
@@ -91,9 +92,22 @@ class ContentSync extends EventEmitter {
       return this.manifest;
     }
     try {
-      const res = await this.fetch(url, { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const manifest = normalizeManifest(await res.json());
+      // the group's server first (live data), then GitHub (and always for the cars/tracks it publishes)
+      const cachedBase = serverBase(this.manifest);
+      let live = cachedBase ? await fetchLive(cachedBase, this.fetch.bind(this)) : null;
+      let github = null;
+      let githubError = null;
+      try {
+        const res = await this.fetch(url, { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        github = await res.json();
+      } catch (err) {
+        githubError = err;
+      }
+      const base = serverBase(github) || cachedBase;
+      if (!live && base && base !== cachedBase) live = await fetchLive(base, this.fetch.bind(this));
+      if (!github && !live) throw githubError;
+      const manifest = normalizeManifest(github ? overlay(github, live) : live);
       this.manifest = manifest;
       this.manifestError = null;
       this.manifestFetchedAt = new Date().toISOString();

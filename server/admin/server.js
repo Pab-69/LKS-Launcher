@@ -223,12 +223,13 @@ async function githubAdmin(req) {
 }
 
 async function putMeta(by, body) {
-  const patch = body && body.patch;
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw Object.assign(new Error('Il manque « patch »'), { status: 400 });
+  const patch = (body && body.patch) || {};
+  if (typeof patch !== 'object' || Array.isArray(patch)) throw Object.assign(new Error('« patch » invalide'), { status: 400 });
   const keys = Object.keys(patch);
   const bad = keys.find((k) => !PATCH_KEYS.has(k));
-  if (!keys.length || bad) throw Object.assign(new Error(bad ? `Clé non modifiable : ${bad}` : 'Rien à modifier'), { status: 400 });
-  const actions = (Array.isArray(body.actions) ? body.actions : []).map((a) => clean(a, 120)).filter(Boolean).slice(0, 10);
+  const actions = (Array.isArray(body && body.actions) ? body.actions : []).map((a) => clean(a, 120)).filter(Boolean).slice(0, 10);
+  // no keys is fine when it only adds history notes (cars and tracks are published from the launcher)
+  if ((!keys.length && !actions.length) || bad) throw Object.assign(new Error(bad ? `Clé non modifiable : ${bad}` : 'Rien à modifier'), { status: 400 });
   return serial(async () => {
     const state = await openManifest();
     const m = state.manifest;

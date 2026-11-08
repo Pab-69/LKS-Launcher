@@ -304,6 +304,7 @@ export default function home(root, _params, { go }) {
   renderNews();
   renderOnline();
   onlineTimer = setInterval(renderOnline, 30000);
+  const offLive = api.on('live:event', (topic) => { if (topic === 'presence') renderOnline(); }); // the server says who just came online
   let lastManifest = store.summary && store.summary.manifestUpdatedAt;
   const unsub = subscribe((patch) => {
     if ('summary' in patch || 'content' in patch || 'settings' in patch) renderStatus();
@@ -317,6 +318,7 @@ export default function home(root, _params, { go }) {
     clearInterval(timer);
     clearInterval(countdownTimer);
     clearInterval(onlineTimer);
+    offLive();
     unsub();
     offBrand();
   };

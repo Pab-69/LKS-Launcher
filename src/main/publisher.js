@@ -8,6 +8,7 @@ const { zipFolder } = require('./zip');
 const { readCar, readTrack, contentDir } = require('./acContent');
 const { normalizeManifest } = require('./sync');
 const { readBrandingFolder } = require('./branding');
+const { serverBase, fetchLive, overlay, putLive } = require('./liveManifest');
 const crypto = require('crypto');
 
 const MANIFEST_NAME = 'manifest.json';
@@ -49,7 +50,12 @@ class Publisher {
     this.release = await this.gh.ensureRelease(this.tag);
     this.assets = await this.gh.listAssets(this.release.id);
     const asset = this.assets.find((a) => a.name === MANIFEST_NAME);
-    this.manifest = normalizeManifest(asset ? JSON.parse((await this.gh.downloadAsset(asset)).toString('utf8')) : null);
+    const github = asset ? JSON.parse((await this.gh.downloadAsset(asset)).toString('utf8')) : null;
+    // group data lives on the group's server: always start from its latest version
+    this.liveBase = serverBase(github);
+    const live = await fetchLive(this.liveBase);
+    this.manifest = normalizeManifest(github ? overlay(github, live) : live);
+    this.live = Boolean(live);
     return this.manifest;
   }
 
@@ -174,6 +180,21 @@ class Publisher {
   /** Replace servers / news / group name. */
   async updateMeta(patch) {
     await this.open(); // always the latest: the site or another admin may have published meanwhile
+    if (this.live) {
+      // the group's server stores it, tells every launcher and the site at once, and keeps GitHub in step
+      const changes = {};
+      const actions = [];
+      for (const key of META_KEYS) {
+        if (patch[key] === undefined) continue;
+        changes[key] = patch[key];
+        actions.push(META_LABELS[key] || `${key} modifié`);
+      }
+      if (!actions.length) return;
+      await putLive(this.liveBase, this.gh.token, changes, actions);
+      Object.assign(this.manifest, changes);
+      this.log('✔ Enregistré sur le serveur du groupe : tout le monde le voit tout de suite');
+      return;
+    }
     for (const key of META_KEYS) {
       if (patch[key] === undefined) continue;
       this.manifest[key] = patch[key];
@@ -206,6 +227,8 @@ class Publisher {
       const date = this.manifest.updatedAt;
       const entries = this.pending.map((action) => ({ date, by, action }));
       this.manifest.history = [...entries.reverse(), ...(Array.isArray(this.manifest.history) ? this.manifest.history : [])].slice(0, 100);
+      // the group's server keeps the history: tell it what was published (best effort)
+      if (this.live && this.liveBase) await putLive(this.liveBase, this.gh.token, {}, this.pending).catch((err) => this.log(`⚠ Historique non envoyé au serveur : ${err.message}`));
       this.pending = [];
     }
     const buf = Buffer.from(JSON.stringify(this.manifest, null, 2));

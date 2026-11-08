@@ -17,6 +17,7 @@ const { zipFolder, extractZip } = require('./zip');
 const { Webhooks } = require('./webhook');
 const { GitHub } = require('./github');
 const { Publisher, isOfficial } = require('./publisher');
+const { serverBase, LiveStream } = require('./liveManifest');
 const { listFiles, hashFolder } = require('./hash');
 const { contentDir } = require('./acContent');
 const acContent = require('./acContent');
@@ -694,9 +695,28 @@ function syncBranding() {
     .catch(() => {});
 }
 
+// The group's server tells us the moment anything changes (news, events, servers, championships…):
+// no waiting for the next poll. The poll below stays as a safety net.
+let liveStream = null;
+let liveTimer = null;
+function setupLive() {
+  liveStream = new LiveStream({ getBase: () => serverBase(sync.manifest) });
+  const soon = () => {
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => refreshManifest({ autoSync: true }).catch(() => {}), 400);
+  };
+  liveStream.on('open', soon); // also catches what happened while we were disconnected
+  liveStream.on('event', (topic) => {
+    send('live:event', topic); // views can refresh themselves (runs, battles, presence…)
+    if (topic === 'meta' || topic === 'manifest') soon();
+  });
+  liveStream.start();
+}
+
 async function refreshManifest({ autoSync } = {}) {
   const before = sync.manifest.updatedAt;
   await sync.loadManifest();
+  if (liveStream) liveStream.check();
   send('sync:changed', sync.summary());
   syncBranding();
   syncSetups();
@@ -2715,13 +2735,19 @@ app.whenReady().then(async () => {
   computeWhatsNew();
   send('settings:changed', publicSettings());
   verifyAdmin().catch(() => {});
-  refreshManifest({ autoSync: true }).catch(() => {}).finally(startPresence);
+  refreshManifest({ autoSync: true })
+    .catch(() => {})
+    .finally(() => {
+      startPresence();
+      setupLive();
+    });
   setupUpdater();
 });
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   appQuitting = true;
+  if (liveStream) liveStream.stop();
   // never leave a server running or ports open behind us
   if (host.running) host.stop();
   closePorts();
