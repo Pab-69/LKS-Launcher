@@ -353,7 +353,16 @@ function trackLabel(id, layout) {
 }
 
 // ---------------------------------------------------------------- Discord channels (webhooks set by the admins)
-const webhooks = new Webhooks({ fetchImpl: (...a) => net.fetch(...a), getConfig: () => (sync && sync.manifest && sync.manifest.discord) || null });
+const webhooks = new Webhooks({
+  fetchImpl: (...a) => net.fetch(...a),
+  getConfig: () => (sync && sync.manifest && sync.manifest.discord) || null,
+  getServer: () => {
+    const m = sync && sync.manifest;
+    const base = serverBase(m);
+    const key = m && m.leaderboard && m.leaderboard.anonKey;
+    return base && key ? { base, key } : null;
+  },
+});
 function discordPost(channel, text, file) {
   return webhooks.post(channel, text, file).catch((err) => {
     console.warn('[discord]', err.message);

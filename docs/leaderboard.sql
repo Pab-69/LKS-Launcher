@@ -714,3 +714,18 @@ begin
     execute format('create trigger lks_notify after insert or update or delete on public.%I for each statement execute function public.lks_notify(%L)', t.tbl, t.topic);
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Secrets du groupe (adresses des webhooks Discord…) : jamais dans le manifeste public.
+-- Seul le service « admin » les lit ; les launchers passent par le relais /admin/api/discord/<salon>.
+create table if not exists public.lks_private (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+revoke all on public.lks_private from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'authenticator') then
+    grant select, insert, update, delete on public.lks_private to authenticator;
+  end if;
+end $$;

@@ -5,15 +5,17 @@
  * (Publication → Discord):
  *   news    — events, records, battles, proposals (manifest.discord.webhook)
  *   reports — crash reports sent to the admins (manifest.discord.reportWebhook)
- * A webhook URL lets anyone who has it post in that channel: the admins can
- * regenerate it in Discord at any time.
+ * A webhook URL lets anyone who has it post in that channel, so the group's server keeps the
+ * addresses private and relays the messages (POST /admin/api/discord/<news|reports>, with the
+ * public key, checked and rate limited). Direct posting stays as a fallback for older servers.
  */
 
 const HOOK = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,120}$/;
 
 class Webhooks {
-  constructor({ fetchImpl, getConfig, now = () => Date.now() }) {
+  constructor({ fetchImpl, getConfig, getServer, now = () => Date.now() }) {
     this.fetch = fetchImpl;
+    this.getServer = getServer || (() => null); // () => { base, key } of the group's server
     this.getConfig = getConfig; // () => manifest.discord
     this.now = now;
     this.last = 0;
@@ -27,18 +29,37 @@ class Webhooks {
   }
 
   configured(channel) {
-    return Boolean(this.url(channel));
+    return Boolean(this.getServer()) || Boolean(this.url(channel));
+  }
+
+  /** Through the group's server. true = posted, null = not possible (old server, channel not set…): try directly. */
+  async viaServer(channel, content, file) {
+    const srv = this.getServer();
+    if (!srv) return null;
+    const body = { content: String(content).slice(0, 1900) };
+    if (file) body.file = { name: String(file.name).slice(0, 80), b64: Buffer.from(file.content).toString('base64') };
+    let res;
+    try {
+      res = await this.fetch(`${srv.base}/admin/api/discord/${channel}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${srv.key}` }, body: JSON.stringify(body) });
+    } catch {
+      return null;
+    }
+    if (res.ok) return true;
+    if (res.status === 429) throw new Error('Trop de messages envoyés : réessaie un peu plus tard');
+    return null;
   }
 
   /** Post a message (and optionally a text file). Never throws for news posts. */
   post(channel, content, file) {
-    const url = this.url(channel);
-    if (!url) return Promise.resolve(false);
+    if (!this.getServer() && !this.url(channel)) return Promise.resolve(false);
     const run = async () => {
       // Discord allows a few posts per second per webhook: keep 1.5 s between ours
       const wait = this.last + 1500 - this.now();
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       this.last = this.now();
+      if (await this.viaServer(channel, content, file)) return true;
+      const url = this.url(channel);
+      if (!url) return false;
       const payload = { username: 'LKS Launcher', content: String(content).slice(0, 1900), allowed_mentions: { parse: [] } };
       let res;
       if (file) {

@@ -15,6 +15,7 @@
  *   DELETE /admin/api/events/<id>
  *   PUT    /admin/api/championships/<id> { name, season, points, rounds }
  *   DELETE /admin/api/championships/<id>
+ *   POST   /admin/api/discord/<news|reports>   relay to the group's Discord webhooks (launchers never see them)
  *
  * The GitHub token stays on the server (never sent to the browser). Admins:
  * file ADMINS_FILE, one « name:scrypt$salt$hash » per line (./lks.sh add-admin).
@@ -196,10 +197,10 @@ async function mirror() {
   return serial(async () => {
     const { data } = await loadMeta();
     const st = await openGithub();
-    if (stable(splitManifest(st.manifest).meta) === stable(data)) return;
+    if (stable(splitManifest(st.manifest).meta) === stable(publicManifest(data))) return;
     const next = {};
     for (const [k, v] of Object.entries(st.manifest)) if (OWNED.has(k)) next[k] = v;
-    await saveGithub(st, { ...next, ...data }, 'serveur', []);
+    await saveGithub(st, { ...next, ...publicManifest(data) }, 'serveur', []);
   });
 }
 
@@ -233,10 +234,120 @@ async function putMeta(by, body) {
   return serial(async () => {
     const state = await openManifest();
     const m = state.manifest;
-    for (const k of keys) m[k] = patch[k];
+    for (const k of keys) m[k] = k === 'discord' && HIDE ? await takeWebhooks({ ...(m.discord || {}), ...patch.discord }) : patch[k];
     await saveManifest(state, m, by, actions.length ? actions : keys.map((k) => `${k} modifié`));
     return { ok: true };
   });
+}
+
+
+// ------------------------------------------------------------------ Discord relay
+// The webhook addresses let anyone post in the channel, so they must not be public. With HIDE_WEBHOOKS=1 they
+// are kept in the private table lks_private (set from the launcher's Publication page as before) and removed from
+// the public manifest; launchers post through this relay, which checks the message and limits the rate.
+const HIDE = process.env.HIDE_WEBHOOKS === '1';
+const ANON_KEY = process.env.ANON_KEY || '';
+const PRIVATE_KEY = { news: 'discord_webhook', reports: 'discord_report_webhook' };
+const MANIFEST_FIELD = { news: 'webhook', reports: 'reportWebhook' };
+
+async function privateGet(key) {
+  if (!pool) return null;
+  const r = await pool.query('select value from public.lks_private where key = $1', [key]);
+  return r.rows[0] ? r.rows[0].value : null;
+}
+async function privateSet(key, value) {
+  await pool.query('insert into public.lks_private (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value, updated_at = now()', [key, value]);
+}
+
+async function webhookUrl(channel, manifest) {
+  const stored = await privateGet(PRIVATE_KEY[channel]).catch(() => null);
+  if (stored && HOOK.test(stored)) return stored;
+  const u = manifest && manifest.discord && manifest.discord[MANIFEST_FIELD[channel]];
+  return HOOK.test(u || '') ? u : null;
+}
+
+/** Public copy of the group data: no webhook address when they are kept private. */
+function publicManifest(m) {
+  if (!HIDE || !m.discord) return m;
+  const { webhook, reportWebhook, ...discord } = m.discord; // eslint-disable-line no-unused-vars
+  return { ...m, discord };
+}
+
+/** Moves webhook addresses from the data to the private table (setting HIDE_WEBHOOKS=1, or when an admin saves them). */
+async function takeWebhooks(discord) {
+  if (!pool || !discord || typeof discord !== 'object') return discord;
+  const rest = { ...discord };
+  for (const channel of ['news', 'reports']) {
+    const field = MANIFEST_FIELD[channel];
+    if (field in rest) {
+      if (HOOK.test(rest[field] || '')) await privateSet(PRIVATE_KEY[channel], rest[field]);
+      delete rest[field]; // a blank field (the Publication page shows none) never erases the stored address
+    }
+  }
+  return rest;
+}
+
+async function scrubWebhooks() {
+  if (!pool || !HIDE) return;
+  return serial(async () => {
+    const state = await openManifest();
+    const m = state.manifest;
+    if (!m.discord || (!('webhook' in m.discord) && !('reportWebhook' in m.discord))) return;
+    m.discord = await takeWebhooks(m.discord);
+    await saveManifest(state, m, 'serveur', ['Adresses des webhooks Discord retirées du manifeste public']);
+  });
+}
+
+const hits = new Map(); // memory only, never written anywhere
+function limited(key, max, windowMs) {
+  const now = Date.now();
+  const h = hits.get(key);
+  if (!h || h.reset < now) {
+    hits.set(key, { n: 1, reset: now + windowMs });
+    return false;
+  }
+  return ++h.n > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, h] of hits) if (h.reset < now) hits.delete(k);
+}, 60000).unref();
+
+const LIMITS = { news: { perIp: [12, 60000], all: [80, 60000] }, reports: { perIp: [3, 600000], all: [20, 3600000] } };
+
+async function discordRelay(req, channel, body, ip, resolveUrl = async () => webhookUrl(channel, await current())) {
+  if (ANON_KEY) {
+    const key = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const a = Buffer.from(key);
+    const b = Buffer.from(ANON_KEY);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw Object.assign(new Error('Clé invalide'), { status: 401 });
+  }
+  const lim = LIMITS[channel];
+  if (limited(`${channel}:all`, ...lim.all) || limited(`${channel}:${ip}`, ...lim.perIp)) throw Object.assign(new Error('Trop de messages, réessaie plus tard'), { status: 429 });
+  const content = clean(body && body.content, 1900);
+  if (!content) throw Object.assign(new Error('Message vide'), { status: 400 });
+  const file = body && body.file;
+  let bytes = null;
+  if (file) {
+    // only crash reports carry a file: a log (text) or a lap (base64, a few hundred kB at most)
+    const bad = () => Object.assign(new Error('Fichier refusé'), { status: 400 });
+    if (channel !== 'reports' || !/^[\w. -]{1,80}$/.test(String(file.name || ''))) throw bad();
+    if (typeof file.b64 === 'string' && file.b64.length <= 820000) bytes = Buffer.from(file.b64, 'base64');
+    else if (typeof file.content === 'string' && file.content.length <= 40000) bytes = Buffer.from(file.content, 'utf8');
+    else throw bad();
+  }
+  const url = await resolveUrl();
+  if (!url) throw Object.assign(new Error('Salon Discord non réglé'), { status: 503 });
+  const payload = { username: 'LKS Launcher', content, allowed_mentions: { parse: [] } };
+  let res;
+  if (file) {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(payload));
+    form.append('files[0]', new Blob([bytes], { type: 'application/octet-stream' }), file.name);
+    res = await fetch(`${url}?wait=true`, { method: 'POST', body: form });
+  } else res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!res.ok) throw Object.assign(new Error(`Discord a refusé le message (${res.status})`), { status: 502 });
+  return { ok: true };
 }
 
 // ------------------------------------------------------------------ live stream (SSE)
@@ -362,8 +473,8 @@ function who(req) {
 // ------------------------------------------------------------------ Discord (the group's announcement channel)
 const HOOK = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,25}\/[\w-]{20,120}$/;
 async function announce(m, content) {
-  const url = m.discord && m.discord.webhook;
-  if (!HOOK.test(url || '')) return;
+  const url = await webhookUrl('news', m);
+  if (!url) return;
   await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: content.slice(0, 1900), allowed_mentions: { parse: [] } }) }).catch(() => {});
 }
 
@@ -578,7 +689,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin/api/health') return json(res, 200, { ok: true, github: Boolean(TOKEN), live: Boolean(pool), admins: Object.keys(admins()).length });
     if (p === '/admin/api/public' && req.method === 'GET') return json(res, 200, publicView(await current()));
     if (p === '/admin/api/manifest' && req.method === 'GET') {
-      const body = JSON.stringify((await openManifest()).manifest);
+      const body = JSON.stringify(publicManifest((await openManifest()).manifest));
       const etag = `W/"${sha(body).slice(0, 20)}"`;
       if (req.headers['if-none-match'] === etag) return res.writeHead(304, { ETag: etag }).end();
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ETag: etag });
@@ -597,6 +708,11 @@ const server = http.createServer(async (req, res) => {
       if (!pool) throw Object.assign(new Error('Serveur sans base : écris directement sur GitHub'), { status: 503 });
       const admin = await githubAdmin(req);
       return json(res, 200, await putMeta(admin.login, await readJson(req, 512 * 1024)));
+    }
+    const dc = p.match(/^\/admin\/api\/discord\/(news|reports)$/);
+    if (dc && req.method === 'POST') {
+      const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?';
+      return json(res, 200, await discordRelay(req, dc[1], await readJson(req, 1200 * 1024), ip));
     }
     if (p === '/admin/api/login' && req.method === 'POST') return json(res, 200, await login(await readJson(req)));
     const me = who(req);
@@ -636,6 +752,7 @@ if (require.main === module) {
     }, 600000).unref();
     if (pool) {
       listen();
+      scrubWebhooks().catch((err) => console.error(`webhooks : ${err.message}`));
       setInterval(() => ownedFromGithub(true).catch(() => {}), 60000).unref();
       setInterval(() => {
         for (const res of clients) res.write(': ping\n\n');
@@ -645,4 +762,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { server, splitManifest, mergeManifest, putMeta, PATCH_KEYS, OWNED, hashPassword, checkPassword, publicView, cleanEvent, cleanChampionship };
+module.exports = { server, discordRelay, publicManifest, splitManifest, mergeManifest, putMeta, PATCH_KEYS, OWNED, hashPassword, checkPassword, publicView, cleanEvent, cleanChampionship };

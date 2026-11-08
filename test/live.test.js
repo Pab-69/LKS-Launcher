@@ -37,3 +37,32 @@ test('live manifest: change stream reads SSE events and reconnects', async () =>
   srv.close();
   assert.deepStrictEqual(got, ['hello', 'meta', 'runs']);
 });
+
+test('discord posts go through the group server, with the direct webhook as a fallback for older servers', async () => {
+  const { Webhooks } = require('../src/main/webhook');
+  const hook = `https://discord.com/api/webhooks/123456789012345678/${'a'.repeat(68)}`;
+  const calls = [];
+  let relayStatus = 200;
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: url.includes('/admin/api/discord/') ? relayStatus === 200 : true, status: url.includes('/admin/api/discord/') ? relayStatus : 204 };
+  };
+  const server = { base: 'https://lks.example', key: 'pub' };
+  // no webhook in the manifest any more (kept private on the server): the relay is the only way
+  const w = new Webhooks({ fetchImpl, getConfig: () => ({}), getServer: () => server, now: () => 0 });
+  assert.ok(w.configured('reports'));
+  assert.strictEqual(await w.post('reports', 'plantage', { name: 'a.lkslap', content: Buffer.from([1, 2, 3]) }), true);
+  assert.strictEqual(calls[0].url, 'https://lks.example/admin/api/discord/reports');
+  assert.strictEqual(calls[0].init.headers.Authorization, 'Bearer pub');
+  assert.strictEqual(JSON.parse(calls[0].init.body).file.b64, Buffer.from([1, 2, 3]).toString('base64'));
+  // older server (404) with a webhook still in the manifest: direct post
+  relayStatus = 404;
+  const old = new Webhooks({ fetchImpl, getConfig: () => ({ webhook: hook }), getServer: () => server, now: () => 0 });
+  assert.strictEqual(await old.post('news', 'record'), true);
+  assert.strictEqual(calls[calls.length - 1].url, hook);
+  // nothing anywhere: not sent
+  assert.strictEqual(await w.post('news', 'x'), false);
+  // rate limited by the server: the user is told
+  relayStatus = 429;
+  await assert.rejects(w.post('reports', 'encore'), /Trop de messages/);
+});

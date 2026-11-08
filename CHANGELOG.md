@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 1.28.0
+
+- **Tout en direct** : actus, soirées, championnats, serveurs et réglages du groupe arrivent dans ton launcher à la seconde où un admin les publie (plus d'attente de 5 minutes), de même que « En ligne maintenant » et les parties hébergées. Le site se met à jour tout seul aussi. Si le serveur du groupe est injoignable, le launcher continue comme avant avec GitHub.
+- **Admins** : Publication enregistre sur le serveur du groupe (historique compris) ; voitures et circuits restent publiés sur GitHub.
+- **Discord** : les annonces et les rapports de plantage passent par le serveur du groupe, qui les vérifie et limite leur nombre. Les adresses des webhooks ne sont plus visibles dans les données publiques.
+
 ## 1.27.0
 
 - **Replay d'un passage** (Télémétrie → Détail) : « Rejouer » fait rouler la voiture sur la carte (orientée comme dans le jeu), avec la vitesse et l'angle, en ×1, ×2 ou ×4, et les courbes qui suivent. « Contre » : rejoue en même temps un autre passage du circuit (le tien, un passage importé ou un des meilleurs du classement).
