@@ -36,6 +36,7 @@ async function download(url, file) {
 (async () => {
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(path.join(out, 'brand'), { recursive: true });
+  fs.mkdirSync(path.join(out, 'cars'), { recursive: true });
   fs.mkdirSync(path.join(out, 'fonts'), { recursive: true });
   for (const f of ['grenze-gotisch-latin-600-normal.woff2', 'barlow-condensed-latin-700-normal.woff2', 'barlow-latin-400-normal.woff2', 'barlow-latin-600-normal.woff2']) {
     fs.copyFileSync(path.join(root, 'src', 'renderer', 'fonts', f), path.join(out, 'fonts', f));
@@ -70,7 +71,27 @@ async function download(url, file) {
       console.warn(`${f.name} : ${err.message}`);
     }
   }
-  const showcase = ((manifest.branding && manifest.branding.showcase) || []).filter((s) => brand[s.image]);
+  // the garage shows the group's published cars (their preview pictures, newest first), like the
+  // launcher; the brand photos are only a fallback when no car has a picture yet
+  const cars = (manifest.cars || []).filter((c) => safeHttps(c.preview) && /^[\w.-]+$/.test(c.id || ''));
+  cars.sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+  const carShowcase = [];
+  for (const c of cars) {
+    const ext = (c.preview.match(/\.(png|jpe?g|webp)(?:\?|$)/i) || [, 'jpg'])[1].toLowerCase();
+    const file = `${c.id}.${ext}`;
+    try {
+      await download(c.preview, path.join(out, 'cars', file));
+    } catch (err) {
+      console.warn(`${c.id} : ${err.message}`);
+      continue;
+    }
+    const sp = c.specs || {};
+    const real = (v) => (v && !/^-/.test(String(v)) ? v : null);
+    const sub = [c.brand, real(sp.bhp), real(sp.weight)].filter(Boolean).join(' · ');
+    brand[`car:${c.id}`] = `cars/${file}`;
+    carShowcase.push({ image: `car:${c.id}`, title: c.name, subtitle: sub || 'Voiture du groupe', position: 'center 55%' });
+  }
+  const showcase = carShowcase.length ? carShowcase : ((manifest.branding && manifest.branding.showcase) || []).filter((s) => brand[s.image]);
   const discordUrl = manifest.discord && safeHttps(manifest.discord.inviteUrl);
   const donateLinks = ((manifest.donate && manifest.donate.links) || []).filter((l) => safeHttps(l.url));
   const shop = manifest.shop && manifest.shop.open && safeHttps(manifest.shop.url);
