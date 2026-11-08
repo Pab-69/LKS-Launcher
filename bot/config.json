@@ -30,8 +30,8 @@
       "live": "1567287657623453788",
       "recap": "1567287671376838806",
       "serverAlerts": "1567287666913841293",
-      "categories": "",
-      "records": "",
+      "categories": "1567287671376838806",
+      "records": "1567287651193585834",
       "challenges": ""
     },
     "soireePingRoleId": "1567287578993103030",
@@ -41,11 +41,11 @@
       "weekday": 1,
       "hour": 10
     },
-    "siteUrl": "",
+    "siteUrl": "https://lks-site.facil-kontrol.fr",
     "categoryRoles": {
-      "debutant": "",
-      "amateur": "",
-      "pro": ""
+      "debutant": "1569105504955793458",
+      "amateur": "1569105509217214594",
+      "pro": "1569105513822683257"
     }
   }
 }
