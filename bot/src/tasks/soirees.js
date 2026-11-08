@@ -7,7 +7,8 @@ const config = require('../../config.json');
 const { getManifest, sortedEvents, eventTimes, trackLabel, carName, findTrack, eventServer } = require('../lks/manifest');
 const { state } = require('../lks/store');
 const { getGuild, getTextChannel } = require('../lks/discord');
-const { eventEmbed, launcherRow } = require('../lks/views');
+const { eventEmbed } = require('../lks/views');
+const S = require('../lks/signups');
 const { truncate } = require('../lks/format');
 
 const HOUR = 60 * 60 * 1000;
@@ -29,16 +30,20 @@ async function sendReminders(client, m) {
     if (!which) continue;
 
     const title = which === 'h1' ? '⏰ La soirée commence dans moins d’1 heure !' : '📅 Rappel : soirée demain';
+    // 1 h avant : les inscrits (bouton « Je viens ») sont mentionnés
+    const signed = which === 'h1' ? S.members(event) : [];
+    const who = signed.length ? `\nInscrits : ${signed.map((id) => `<@${id}>`).join(' ')}` : '';
     await channel.send({
-      content: `${ping}${which === 'h1' ? 'Lancez le launcher, ça commence bientôt !' : 'N’oubliez pas la soirée !'}`,
+      content: `${ping}${which === 'h1' ? 'Lancez le launcher, ça commence bientôt !' : 'N’oubliez pas la soirée ! Clique « Je viens » pour être prévenu 1 h avant.'}${who}`,
       embeds: [eventEmbed(m, event, { title: `${title} — ${event.title || 'Soirée LKS'}` })],
-      components: [launcherRow()],
-      allowedMentions: { roles: config.lks.soireePingRoleId ? [config.lks.soireePingRoleId] : [] },
+      components: [S.row(event)],
+      allowedMentions: { roles: config.lks.soireePingRoleId ? [config.lks.soireePingRoleId] : [], users: signed },
     });
     state.data.reminders[key] = { ...sent, [which]: new Date().toISOString(), ...(which === 'h1' ? { veille: true } : {}) };
     state.save();
   }
 
+  S.prune();
   // Ménage : on oublie les rappels des soirées passées depuis plus de 2 jours
   for (const key of Object.keys(state.data.reminders)) {
     const date = key.split('@')[1];

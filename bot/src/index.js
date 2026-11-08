@@ -10,6 +10,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers, // nécessaire pour les messages de bienvenue (à activer dans le portail développeur)
+    GatewayIntentBits.GuildMessages, // fils sous les records postés par le launcher (pas besoin du contenu des messages)
   ],
   partials: [Partials.GuildMember],
 });

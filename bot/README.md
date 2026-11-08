@@ -44,6 +44,10 @@ battles, décisions du juge, propositions, photos) : pas de doublons.
 | `lks.channels.newContent` | Annonce des nouvelles voitures / nouveaux circuits |
 | `lks.channels.recap` | Récap de la semaine automatique |
 | `lks.channels.serverAlerts` | « Ça roule sur … » quand un serveur passe de 0 à 1 joueur |
+| `lks.channels.categories` | Annonces « X passe Pro ! » (montées et descentes de catégorie) |
+| `lks.channels.records` | Salon où le launcher poste les records : le bot ouvre un fil sous chaque annonce |
+| `lks.categoryRoles.debutant` / `amateur` / `pro` | Rôles donnés aux membres liés selon leur catégorie (les deux autres sont retirés) |
+| `lks.siteUrl` | Adresse du site vitrine (liens vers les battles et classements), ex. `https://lks-syndicate.fr` |
 | `lks.soireePingRoleId` | Rôle mentionné dans les rappels de soirée |
 | `lks.enPisteRoleId` | Rôle donné aux membres liés (`/lier`) qui roulent en ce moment |
 | `lks.scheduledEvents` | `true` : crée un « événement Discord » pour chaque soirée |
@@ -61,7 +65,7 @@ Il garde ses données (liens pilote ↔ Discord, rappels déjà envoyés…) dan
 ## Commandes
 ### LKS (pour tout le monde)
 - `/launcher` — lien de téléchargement
-- `/soiree` — la prochaine soirée (ou celle en cours)
+- `/soiree` — la prochaine soirée (ou celle en cours), avec le bouton « Je viens » (les inscrits sont mentionnés 1 h avant)
 - `/contenu [voiture] [circuit]` — voitures et circuits du groupe, ou la fiche de l'un d'eux
 - `/classement circuit [categorie] [type] [tous] [voiture]` — top 10 drift / tandem d'une catégorie (Débutant, Amateur, Pro), comme dans le launcher ; `tous` montre tous les pilotes avec leur catégorie
 - `/record pilote` — meilleurs scores d'un pilote
@@ -69,6 +73,9 @@ Il garde ses données (liens pilote ↔ Discord, rappels déjà envoyés…) dan
 - `/qui-roule` — qui a le launcher ouvert, où et avec quoi
 - `/serveurs` — serveurs du groupe (joueurs, circuit, voitures) + parties hébergées
 - `/battles [circuit]` — derniers résultats (décision du juge comprise)
+- `/defi membre [circuit]` — défier un membre lié : il accepte d'un bouton, puis le résultat de votre battle est posté tout seul
+- `/comparer pilote1 pilote2 circuit [categorie] [type]` — face-à-face : notes, angle / vitesse / ligne, clips et zones un par un
+- `/parcours circuit` — image du parcours drift (ligne, clips numérotés, start, début du drift, arrivée)
 - `/championnat [nom]` — classement général et prochaine manche
 - `/propositions [statut]` — propositions avec 👍 / 👎
 - `/photo` — une photo au hasard de la galerie
@@ -89,7 +96,10 @@ Il garde ses données (liens pilote ↔ Discord, rappels déjà envoyés…) dan
 | Rôle « En piste » | toutes les 60 s |
 | Alerte serveur 0 → 1 joueur (max 1 / 30 min par serveur) | toutes les 45 s |
 | Nouveau contenu | toutes les 5 min |
-| Récap de la semaine | lundi 10 h (configurable) |
+| Récap de la semaine (avec le pilote de la semaine : plus grosse progression) | lundi 10 h (configurable) |
+| Catégories : annonces + rôles Débutant / Amateur / Pro | toutes les 5 min |
+| Résultats des défis `/defi` acceptés | toutes les 60 s |
+| Fil sous chaque record posté par le launcher | à chaque message |
 
 ## Ajouter une fonctionnalité
 - **Commande** : fichier dans `src/commands/<dossier>/` qui exporte `{ data, execute, autocomplete? }`.
