@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.25.0
+
+- **Plus de classement chrono** : les classements (launcher et site) et la comparaison ne gardent que le drift et le tandem. Les temps au tour ne sont plus envoyés au classement partagé.
+- **Les photos du launcher sont les voitures du groupe** : l'accueil, le Garage, la boutique et les autres grandes images montrent maintenant les voitures publiées (l'aperçu fait à la publication, en haute définition), les plus récentes d'abord, avec leur nom, la marque, la puissance et le poids. Une voiture publiée apparaît toute seule. Les anciennes photos ne servent plus que s'il n'y a aucune voiture avec un aperçu.
+
 ## 1.24.1
 
 - Télémétrie → Profil : si le serveur du groupe n'a pas encore la mise à jour des catégories, le launcher le dit (« un admin doit lancer ./lks.sh update ») au lieu d'afficher tout le monde Débutant sans explication.

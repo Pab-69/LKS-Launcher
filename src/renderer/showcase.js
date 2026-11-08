@@ -3,7 +3,7 @@
 // (see src/main/branding.js). Everything here degrades to a neutral theme.
 import { api } from './ui.js';
 
-let state = { version: null, files: [], showcase: [] };
+let state = { version: null, files: [], showcase: [], cars: [] };
 const listeners = new Set();
 
 export function brandUrl(name) {
@@ -11,8 +11,13 @@ export function brandUrl(name) {
   return `lks-img://branding/${encodeURIComponent(name)}?v=${String(state.version || '').slice(0, 10)}`;
 }
 
-/** [{ image (url), title, subtitle, position }] */
+/**
+ * [{ image (url), title, subtitle, position }]: the published cars (their
+ * preview), or the association's photos while no car has one.
+ */
 export function brandShowcase() {
+  const cars = (state.cars || []).filter((c) => /^https:\/\//.test(c.image || ''));
+  if (cars.length) return cars;
   return (state.showcase || []).map((s) => ({ ...s, image: brandUrl(s.image) })).filter((s) => s.image);
 }
 
@@ -27,7 +32,7 @@ export function onBrand(fn) {
 }
 
 function setState(s) {
-  state = { version: null, files: [], showcase: [], ...(s || {}) };
+  state = { version: null, files: [], showcase: [], cars: [], ...(s || {}) };
   for (const fn of listeners) fn(state);
 }
 

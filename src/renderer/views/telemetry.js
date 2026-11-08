@@ -16,8 +16,8 @@ const catOf = (name) => {
 };
 const catOfMode = (m) => (catInfo ? Object.keys(catInfo.modes).find((k) => catInfo.modes[k] === m) : null) || ({ debutant: 'debutant', normal: 'amateur', pro: 'pro' })[m];
 let compare = { a: null, b: null };
-let boardQuery = { track: '', layout: '', car: '', kind: 'time' };
-let compareMode = 'time';
+let boardQuery = { track: '', layout: '', car: '', kind: 'drift' }; // drift | tandem (no lap-time ranking)
+let compareMode = 'drift';
 let judgeMode = 'normal'; // debutant | normal | pro
 let boardWho = 'cat'; // ranking: drivers of the chosen category, or everybody
 let editor = null; // drift course editor state
@@ -786,11 +786,12 @@ export default function telemetryView(root, params = {}) {
       Object.assign(boardQuery, combosMap.get(first));
     }
     const cars = [...new Set([...laps.map((l) => l.car), ...((store.content && store.content.cars) || []).filter((c) => c.lks).map((c) => c.id)])];
-    const judged = boardQuery.kind !== 'time';
+    if (boardQuery.kind === 'time') boardQuery.kind = 'drift';
+    const judged = true;
     body.append(h('div.toolbar',
       select(keys.map((k) => [k, trackName(combosMap.get(k).track, combosMap.get(k).layout)]), `${boardQuery.track}|${boardQuery.layout}`, (v) => { Object.assign(boardQuery, combosMap.get(v)); render(); }, 'board-select'),
       select([['', 'Toutes les voitures'], ...cars.map((c) => [c, carName(c)])], boardQuery.car, (v) => { boardQuery.car = v; render(); }, 'board-select'),
-      seg([['time', 'Chrono'], ['drift', 'Drift'], ['tandem', 'Tandem']], boardQuery.kind, (v) => { boardQuery.kind = v; render(); }),
+      seg([['drift', 'Drift'], ['tandem', 'Tandem']], boardQuery.kind, (v) => { boardQuery.kind = v; render(); }),
       judged ? h('div.row', h('span.label', 'Catégorie'), seg(MODES, judgeMode, (v) => { judgeMode = v; judgeModeChosen = true; render(); })) : null));
     if (!boardQuery.track) {
       body.append(h('div.empty', h('strong', 'Pas encore de tours'), 'Le classement se remplit dès ton premier tour.'));
@@ -842,8 +843,8 @@ export default function telemetryView(root, params = {}) {
   }
 
   async function compareWith(row, rival) {
-    const drift = boardQuery.kind === 'drift';
-    compareMode = drift ? 'drift' : 'time';
+    const drift = true; // rankings are judged runs only (no lap-time ranking)
+    compareMode = 'drift';
     if (rival) {
       // my own row: me against the driver just above (or below when I'm first)
       const [mine, theirs] = await Promise.all([guard(() => api.call('telemetry:lap', row.id)), guard(() => api.call('telemetry:lap', rival.id))]);
@@ -871,7 +872,8 @@ export default function telemetryView(root, params = {}) {
     const tandem = compareMode === 'tandem' && a && a.tandem;
     if (compareMode === 'tandem' && !tandem) compareMode = 'drift';
     const drift = compareMode === 'drift';
-    const modes = [['time', 'Chrono'], ['drift', 'Drift'], ...(a && a.tandem ? [['tandem', 'Tandem']] : [])];
+    if (compareMode === 'time') compareMode = 'drift';
+    const modes = [['drift', 'Drift'], ...(a && a.tandem ? [['tandem', 'Tandem']] : [])];
     body.append(h('div.toolbar',
       seg(modes, compareMode, (v) => { if (v === 'tandem' && a && a.tandem) compare.b = leadLap(a); compareMode = v; render(); }),
       compareMode !== 'time' ? seg(MODES, judgeMode, (v) => { judgeMode = v; render(); }) : null));

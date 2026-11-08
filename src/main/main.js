@@ -660,12 +660,35 @@ async function hostStatus() {
   return s;
 }
 
+/**
+ * Photos of the launcher (home, garage, shop…): the cars published by the
+ * admins, with the preview made at publication. The association's own photos
+ * are only used while no car has a preview.
+ */
+function carShowcase() {
+  const cars = ((sync && sync.manifest && sync.manifest.cars) || []).filter((c) => /^https:\/\//.test(c.preview || ''));
+  cars.sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+  return cars.map((c) => {
+    const sp = c.specs || {};
+    const sub = [c.brand, sp.bhp && !/^-/.test(sp.bhp) ? sp.bhp : null, sp.weight && !/^-/.test(sp.weight) ? sp.weight : null].filter(Boolean).join(' · ');
+    return { image: c.preview, title: c.name, subtitle: sub || 'Voiture du groupe', position: 'center 55%', car: c.id };
+  });
+}
+function brandingStatus() {
+  return { ...branding.status(), cars: carShowcase() };
+}
+let carShowcaseSig = '';
 function syncBranding() {
+  const sig = JSON.stringify(carShowcase());
+  if (sig !== carShowcaseSig) {
+    carShowcaseSig = sig;
+    send('branding:changed', brandingStatus());
+  }
   branding
     .sync(sync.manifest.branding)
     .then((changed) => {
       if (!changed) return;
-      send('branding:changed', branding.status());
+      send('branding:changed', brandingStatus());
       applyBrandIcon();
     })
     .catch(() => {});
@@ -1249,7 +1272,7 @@ function setupTelemetry() {
     const label = (modes) => (modes.includes('normal') ? '' : ` (${MODE_LABELS[modes[0]]})`);
     if (pbTandem && pbTandem.length) send('toast', { kind: 'success', text: `Record de tandem : ${(lap.tandem.modes[pbTandem.includes('normal') ? 'normal' : pbTandem[0]] || {}).score}/100${label(pbTandem)}` });
     else if (pbDrift && pbDrift.length) send('toast', { kind: 'success', text: `Record de drift : ${(lap.drift.modes[pbDrift.includes('normal') ? 'normal' : pbDrift[0]] || {}).score}/100${label(pbDrift)}` });
-    else if (pbTime) send('toast', { kind: 'success', text: `Record perso : ${fmtLap(lap.lapMs)}` });
+    // no lap-time records any more: rankings are judged runs only
   });
   telemetry.on('submitted', () => send('toast', { kind: 'info', text: 'Envoyé au classement' }));
   telemetry.on('submitError', (err) => send('toast', { kind: 'warn', text: err.message }));
@@ -2067,7 +2090,7 @@ function setupIpc() {
       return true;
     }),
   );
-  handle('branding:get', () => branding.status());
+  handle('branding:get', () => brandingStatus());
   handle('clipboard:write', (text) => {
     clipboard.writeText(String(text || ''));
     return true;
