@@ -32,7 +32,7 @@ Tu colles juste une adresse et une clé dans Publication.
 - **aucun Steam ID** : depuis la version 1.17 le launcher ne l'envoie plus du tout. Chaque
   pilote est le nom qu'il a choisi plus un identifiant tiré au hasard par son launcher
   (jamais lisible par les autres). Le serveur **refuse** tout envoi qui ressemble à un Steam ID ;
-- **aucune adresse IP des membres** : pas de journal d'accès (ni Caddy, ni l'API, ni le stockage) ;
+- **aucune adresse IP des membres** : pas de journal d'accès (ni Caddy, ni l'API, ni le stockage). Derrière un autre proxy (Traefik de Coolify…), désactive le journal d'accès pour ces routes (`observability: {accessLogs: false}` sur chaque route) ;
 - **aucun compte, mot de passe, e-mail** ;
 - **aucune métadonnée des photos** : position GPS, appareil, date… sont retirées avant l'envoi
   (dans le launcher) et encore une fois à l'arrivée (sur le serveur) ;
@@ -177,7 +177,7 @@ Lance-les depuis le dossier `LKS-Launcher/server` (avec `sudo` si ton utilisateu
 dans `.env`). Les fichiers (photos, propositions) sont dans `data/storage/`. Pour être tranquille,
 copie de temps en temps ces deux dossiers ailleurs que sur le serveur.
 
-**Un membre demande d'effacer ses données** : `./lks.sh forget "Son nom de pilote"`.
+**Un membre demande d'effacer ses données** : `./lks.sh forget "Son nom de pilote"` (serveur déployé par Coolify : `sudo ./forget-coolify.sh "Son nom de pilote"`).
 Les sauvegardes qui le contiennent disparaissent d'elles-mêmes au bout de 7 jours.
 
 ---
