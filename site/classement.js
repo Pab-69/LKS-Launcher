@@ -5,6 +5,7 @@
   var h = L.h;
   var $ = function (id) { return document.getElementById(id); };
   var status = $('board-status');
+  L.live(['runs', 'laps', 'battles', 'categories', 'meta'], function () { location.reload(); }); // un nouveau record apparaît tout de suite
 
   function fmtMs(ms) {
     var m = Math.floor(ms / 60000);

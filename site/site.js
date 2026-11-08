@@ -124,9 +124,23 @@
 
   window.LKS = { SERVER: SERVER, h: h, clear: clear, dateFr: dateFr, getJson: getJson, group: group, trackName: trackName, carName: carName, db: db, CATEGORY: CATEGORY, categories: categories, catBadge: catBadge, unpack: unpack };
 
+  /** En direct : le serveur prévient (flux SSE) dès qu'une donnée change ; fn est rappelée (une fois pour une rafale). */
+  window.LKS.live = function (topics, fn) {
+    if (!SERVER || !window.EventSource) return;
+    var es = (window.LKS.stream = window.LKS.stream || new EventSource(SERVER + '/admin/api/stream'));
+    var timer;
+    topics.forEach(function (topic) {
+      es.addEventListener(topic, function () {
+        clearTimeout(timer);
+        timer = setTimeout(fn, 800);
+      });
+    });
+  };
+
   // ------------------------------------------------------------ page d'accueil
   var soirees = document.getElementById('soirees');
   if (!soirees || !SERVER) return;
+  window.LKS.live(['meta', 'manifest'], function () { location.reload(); }); // nouvelle soirée ou actu : la page se met à jour
   group().then(function (g) {
     var now = Date.now();
     var upcoming = (g.events || []).filter(function (e) {
