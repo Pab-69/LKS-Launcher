@@ -1,4 +1,4 @@
-"""Precise course analysis (official drift courses, analysis 2).
+"""Precise course analysis, version 2.
 
 For one layout:
   - valid track surface (physics meshes whose surface has IS_VALID_TRACK=1, from data/surfaces.ini),
@@ -233,6 +233,7 @@ def first_pass(P, x, z, lo, hi, tol=8.0):
     return lo + int(run[d[run].argmin()])
 
 
+CLIP_SPLINE = os.environ.get('LKS_LINE', 'clips') == 'clips'  # line from the clips only (LKS_LINE=road: older method along the road)  # the line is the smoothest curve through the clips only (not tied to the road's middle)
 W1 = 0.0  # weight of the path length (a shorter line keeps to the inside of the bends)
 JUNCTION_CAP = 0.8  # m of room above the running median the line may use (a junction mouth is cut off)
 TURN_RULE = False  # the line turns the right way at every clip
@@ -484,7 +485,21 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
         if sv[1]: wt.append(t)
         elif sv[0]: vt.append(t)
     valid = raster(g, np.concatenate(vt)) if vt else np.zeros((g.h, g.w), bool)
-    wall = raster(g, np.concatenate(wt), line=True) if wt else np.zeros((g.h, g.w), bool)
+    # walls high above the road (a bridge over the track) are not barriers for the cars
+    if vt and wt:
+        T = np.concatenate(vt)
+        hmap = Image.new('I', (g.w, g.h), -100000)
+        dh = ImageDraw.Draw(hmap)
+        for t in T:
+            dh.polygon([g.px(t[0, 0], t[0, 2]), g.px(t[1, 0], t[1, 2]), g.px(t[2, 0], t[2, 2])], fill=int(t[:, 1].mean() * 100))
+        H = np.array(hmap)
+        W = np.concatenate(wt)
+        cx = ((W[:, :, 0].mean(1) - g.x0) / g.res).astype(int).clip(0, g.w - 1)
+        cz = ((g.z1 - W[:, :, 2].mean(1)) / g.res).astype(int).clip(0, g.h - 1)
+        road_y = H[cz, cx] / 100.0
+        low = (road_y < -900) | (W[:, :, 1].min(1) - road_y < 2.0)
+        wt = [W[low]]
+    wall = raster(g, np.concatenate(wt), line=True) if wt and len(wt[0]) else np.zeros((g.h, g.w), bool)
     F, N = C.frames(P)
     hi, lo = edges(g, valid, wall, P, N)
     # the base path is moved to the middle of the track (twice): offsets from a base hugging an edge in a
@@ -555,6 +570,11 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
     i1 = cross_idx(c['finish'], range(n - 2, max(0, s1 - a - 25), -1))
     if i0 is not None and i1 is not None and i1 > i0:
         line = Lfull[max(0, i0 - 1):min(n, i1 + 3)]
+    if CLIP_SPLINE:
+        # the line from the clips only (see clip_line)
+        line, _, _ = clip_line(g, valid, wall, c)
+        Lfull = line
+        a = s0
     rad, ang = radius(Lfull)
     res = dict(angles=angles, key=key, cfg=cfg, course=course, g=g, valid=valid, wall=wall, P=P, N=N, lo=lo, hi=hi, P1=P1, N1=N1, lo1=lo1, hi1=hi1,
                s0=s0, s1=s1, a=a, q=q, fixed=fixed, line=line, Lfull=Lfull, rad=rad, angle=angle, box=box)
@@ -667,3 +687,135 @@ def report(res):
             out.append((cl['name'], d))
             print(f"  {cl['name']:8s} {cl['kind']:5s} r={cl['r']}: ligne→clip {d:.2f} m")
     return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Line from the clips only: the smoothest curve through the start gate, every clip (centre of a
+# clip, centre line of a zone) in order, and the finish gate. The track only matters where the
+# curve would leave it: there it is pushed back inside (distance to the edge >= margin).
+
+def control_points(c, step_zone=3.0):
+    """[(x, z)] the line must go through, in order."""
+    mid = lambda g: np.mean(np.array(g, float), 0)
+    pts = [mid(c['start'])]
+    for cl in c['clips']:
+        if cl.get('path') and len(cl['path']) > 1:
+            P = np.array(cl['path'], float)
+            s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(P, axis=0).T))])
+            t = np.linspace(0, s[-1], max(2, int(round(s[-1] / step_zone)) + 1))
+            pts += list(np.stack([np.interp(t, s, P[:, 0]), np.interp(t, s, P[:, 1])], 1))
+        else:
+            pts.append(np.array([cl['x'], cl['z']], float))
+    pts.append(mid(c['finish']))
+    # a zone that starts at the start gate or ends at the finish: the gate stands for its first / last point
+    def gate_dist(p, g):
+        a, b = np.array(g[0], float), np.array(g[1], float); v = b - a
+        k = np.clip((p - a) @ v / (v @ v), 0, 1); return np.hypot(*(a + v * k - p))
+    inner = [p for p in pts[1:-1] if gate_dist(p, c['start']) > 3 and gate_dist(p, c['finish']) > 3]
+    return np.array([pts[0]] + inner + [pts[-1]])
+
+
+def track_distance(g, valid, wall, line):
+    """Distance (m) to the edge of the track the line is on, and its gradient (towards the inside)."""
+    from scipy import ndimage
+    m = valid & ~ndimage.binary_dilation(wall, iterations=1)
+    m = ndimage.binary_closing(m, iterations=2)
+    lab, n = ndimage.label(m)
+    keep = set()
+    for x, z in line[::5]:
+        u, v = int((x - g.x0) / g.res), int((g.z1 - z) / g.res)
+        if 0 <= v < lab.shape[0] and 0 <= u < lab.shape[1] and lab[v, u]: keep.add(int(lab[v, u]))
+    m = np.isin(lab, list(keep))
+    din = ndimage.distance_transform_edt(m) * g.res
+    dout = ndimage.distance_transform_edt(~m) * g.res
+    D = np.where(m, din, -dout)
+    gy, gx = np.gradient(D)
+    return D, gx / g.res, gy / g.res
+
+
+def sample_field(g, F, x, z):
+    u = np.clip(((x - g.x0) / g.res).astype(int), 0, F.shape[1] - 1)
+    v = np.clip(((g.z1 - z) / g.res).astype(int), 0, F.shape[0] - 1)
+    return F[v, u]
+
+
+def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25):
+    import osqp
+    from scipy import sparse
+    Q = control_points(c)
+    # stations: ~1 m apart along the polyline through the control points; each control point pinned
+    seg = np.hypot(*np.diff(Q, axis=0).T)
+    # lead-in before the start gate and run-out after the finish (free, so the line crosses the gates
+    # wherever it flows; they are cut off afterwards)
+    LEAD = 12
+    f0 = (Q[1] - Q[0]) / (np.linalg.norm(Q[1] - Q[0]) or 1); f1 = (Q[-1] - Q[-2]) / (np.linalg.norm(Q[-1] - Q[-2]) or 1)
+    pts = [Q[0] - f0 * step * k for k in range(LEAD, 0, -1)] + [Q[0]]
+    pin = [LEAD]
+    for i in range(len(Q) - 1):
+        k = max(1, int(round(seg[i] / step)))
+        for j in range(1, k + 1): pts.append(Q[i] + (Q[i + 1] - Q[i]) * j / k)
+        pin.append(len(pts) - 1)
+    pts += [Q[-1] + f1 * step * k for k in range(1, LEAD + 1)]
+    L0 = np.array(pts); n = len(L0)
+    # a smooth first guess (pins kept) so that the track test sees a curve, not a polyline
+    def D(order):
+        M = sparse.identity(n, format='csr')
+        for _ in range(order): M = (M[1:] - M[:-1])
+        return M
+    D1, D2, D3 = D(1), D(2), D(3)
+    # objective on X = [x(0..n-1), z(0..n-1)]: curvature, its change, and even spacing (tiny)
+    blk = lambda M, w: sparse.block_diag([w * M, w * M])
+    A = sparse.vstack([blk(D2, w2), blk(D3, w3), blk(D1, 0.05)]).tocsc()
+    H = (A.T @ A).tocsc() * 2
+    f = np.zeros(2 * n)
+    # pins: equality on x and z for the clips; the first and last points slide along their gate
+    inner = pin[1:-1]
+    Ip = sparse.csr_matrix((np.ones(len(inner)), (np.arange(len(inner)), inner)), shape=(len(inner), n))
+    rows = [sparse.block_diag([Ip, Ip]).tocsr()]
+    lo_e = [np.concatenate([L0[inner, 0], L0[inner, 1]])]; up_e = [lo_e[0]]
+    for i, gate in ((pin[0], c['start']), (pin[-1], c['finish'])):
+        a, b = np.array(gate[0], float), np.array(gate[1], float)
+        u = (b - a) / np.linalg.norm(b - a); nn = np.array([-u[1], u[0]])
+        R = sparse.csr_matrix(([nn[0], nn[1], u[0], u[1]], ([0, 0, 1, 1], [i, n + i, i, n + i])), shape=(2, 2 * n))
+        rows.append(R)
+        lo_e.append(np.array([nn @ a, u @ a + 0.8])); up_e.append(np.array([nn @ a, u @ b - 0.8]))
+    Apin = sparse.vstack(rows).tocsc()
+    bpin = np.concatenate(lo_e); bpin_u = np.concatenate(up_e)
+    D, Gx, Gy = track_distance(g, valid, wall, L0)
+    X = np.concatenate([L0[:, 0], L0[:, 1]])
+    pinset = set(inner)
+    active = {}
+    for it in range(iters):
+        Cs, ls = [Apin], [bpin]; us = [bpin_u]
+        if active:
+            idx = sorted(active)
+            rows = []
+            lo = []
+            for r, i in enumerate(idx):
+                x, z = X[i], X[n + i]
+                d = float(sample_field(g, D, np.array([x]), np.array([z]))[0])
+                gx = float(sample_field(g, Gx, np.array([x]), np.array([z]))[0]); gz = -float(sample_field(g, Gy, np.array([x]), np.array([z]))[0])
+                nn = np.hypot(gx, gz) or 1.0; gx, gz = gx / nn, gz / nn
+                # d + grad . (p - p0) >= margin   (linearised distance to the edge)
+                rows.append((r, i, gx)); rows.append((r, n + i, gz))
+                lo.append(margin - d + gx * x + gz * z)
+            R = sparse.csr_matrix(([v for _, _, v in rows], ([r for r, _, _ in rows], [c_ for _, c_, _ in rows])), shape=(len(idx), 2 * n))
+            Cs.append(R); ls.append(np.array(lo)); us.append(np.full(len(idx), np.inf))
+        Cm = sparse.vstack(Cs).tocsc()
+        m = osqp.OSQP()
+        m.setup(P=H, q=f, A=Cm, l=np.concatenate(ls), u=np.concatenate(us), verbose=False, eps_abs=1e-7, eps_rel=1e-7, max_iter=100000, polish=True)
+        r = m.solve()
+        if r.x is None: break
+        X = r.x
+        L = np.stack([X[:n], X[n:]], 1)
+        d = sample_field(g, D, L[:, 0], L[:, 1])
+        bad = [i for i in range(pin[0], pin[-1] + 1) if d[i] < margin - 0.05 and i not in pinset]
+        if not bad: break
+        # every point near a violation gets the constraint (a whole stretch, not a single point)
+        for i in bad:
+            for j in range(max(pin[0], i - 3), min(pin[-1] + 1, i + 4)):
+                if j not in pinset: active[j] = True
+    L = np.stack([X[:n], X[n:]], 1)
+    L = L[pin[0]:pin[-1] + 1]  # from the start gate to the finish gate
+    d = sample_field(g, D, L[:, 0], L[:, 1])
+    return L, d, Q

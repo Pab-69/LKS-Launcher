@@ -11,10 +11,11 @@ Pour chaque tracé :
    îlots compris), simplifié à 6 cm.
 3. **Clips** : chaque clip ponctuel est recalé sur le centre du marquage peint au sol qui est dessous
    (peinture, cadres, losanges…) ; les zones suivent les bandes peintes.
-4. **Ligne de référence** : elle passe par chaque clip (centre d'un clip ponctuel, milieu de la bande
-   d'une zone, à 15 cm près), la plus fluide possible (courbure et variation de courbure minimales),
-   à au moins 50 cm des limites ; les entrées de carrefour et routes latérales ne comptent pas comme de
-   la place pour elle.
+4. **Ligne de référence** : elle ne dépend que des clips : la courbe la plus fluide (courbure et
+   variation de courbure minimales) qui passe par le début du drift, chaque clip dans l'ordre (centre
+   d'un clip, milieu de la bande d'une zone) et l'arrivée. La piste n'intervient que là où la courbe en
+   sortirait : elle est alors repoussée à 60 cm du bord. Les murs à plus de 2 m au-dessus de la route
+   (un pont) ne comptent pas. `LKS_LINE=road` reprend l'ancienne méthode, le long de la route.
 5. **Départ, début du drift, arrivée** : repris des lignes peintes et panneaux du circuit (gardés tels
    quels) ; la ligne commence et finit exactement en les traversant.
 
