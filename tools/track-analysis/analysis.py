@@ -36,7 +36,7 @@ LAYOUTS = {
     'eng': dict(track='englishtown_gambler_esda', layout='', models=None, surf='data/surfaces.ini', ai='ai-for replays/fast_lane.ai', json='englishtown_gambler_esda.json'),
     'kart': dict(track='kart_volan_championship', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai/fast_lane.ai', json='kart_volan_championship.json'),
     'pge': dict(track='poland_pge_narodowy_v3', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai0/fast_lane.ai', json='poland_pge_narodowy_v3.json'),
-    'bik': dict(start_at=0.8, track='vdc_bikernieki_2022', layout='drift_vdc', models='models_drift_vdc.ini', surf='drift_vdc/data/surfaces.ini', ai='drift_vdc/ai/fast_lane.ai', json='vdc_bikernieki_2022.drift_vdc.json'),
+    'bik': dict(start_at=0.8, hug=dict(to='Clip 1', off=1.6), track='vdc_bikernieki_2022', layout='drift_vdc', models='models_drift_vdc.ini', surf='drift_vdc/data/surfaces.ini', ai='drift_vdc/ai/fast_lane.ai', json='vdc_bikernieki_2022.drift_vdc.json'),
 }
 
 # ground paint (name or material) and clip posts / boards of each layout, found by surveying the meshes under every clip
@@ -572,7 +572,10 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
         line = Lfull[max(0, i0 - 1):min(n, i1 + 3)]
     if CLIP_SPLINE:
         # the line from the clips only (see clip_line)
-        line, _, _ = clip_line(g, valid, wall, c, start_at=cfg.get('start_at'), finish_at=cfg.get('finish_at'))
+        guides = []
+        if cfg.get('hug'):  # follow the outside of the bend from the start to a clip, `off` m from the edge
+            guides = hug_points(g, valid, wall, c, **cfg['hug'])
+        line, _, _ = clip_line(g, valid, wall, c, start_at=cfg.get('start_at'), finish_at=cfg.get('finish_at'), guides=guides)
         Lfull = line
         a = s0
     rad, ang = radius(Lfull)
@@ -694,10 +697,10 @@ def report(res):
 # clip, centre line of a zone) in order, and the finish gate. The track only matters where the
 # curve would leave it: there it is pushed back inside (distance to the edge >= margin).
 
-def control_points(c, step_zone=3.0):
+def control_points(c, step_zone=3.0, guides=()):
     """[(x, z)] the line must go through, in order."""
     mid = lambda g: np.mean(np.array(g, float), 0)
-    pts = [mid(c['start'])]; zone_pt = [False]
+    pts = [mid(c['start'])] + [np.array(gp, float) for gp in guides]; zone_pt = [False] + [False] * len(guides)
     for cl in c['clips']:
         if cl.get('path') and len(cl['path']) > 1:
             P = np.array(cl['path'], float)
@@ -715,6 +718,31 @@ def control_points(c, step_zone=3.0):
     # (only the points of a zone: a small clip next to a gate stays, the line goes through it)
     inner = [p for p, z in zip(pts[1:-1], zone_pt[1:]) if not z or (gate_dist(p, c['start']) > 3 and gate_dist(p, c['finish']) > 3)]
     return np.array([pts[0]] + inner + [pts[-1]])
+
+
+def hug_points(g, valid, wall, c, to='Clip 1', off=1.6, every=6.0, skip=8.0):
+    """Points `off` m inside the OUTER edge of the bend between the start gate and the clip `to`."""
+    a = np.mean(np.array(c['start'], float), 0)
+    cl = [k for k in c['clips'] if k['name'] == to][0]
+    b = np.array(cl['path'][0], float) if cl.get('path') else np.array([cl['x'], cl['z']], float)
+    ref = np.array(c['refLine'], float)
+    i0 = int(np.hypot(*(ref - a).T).argmin()); i1 = int(np.hypot(*(ref - b).T).argmin())
+    R = C.resample(ref[i0:i1 + 1], 1.0)
+    D, _, _ = track_distance(g, valid, wall, R)
+    F, N = C.frames(R)
+    # the outside of the bend: away from the turn of the stretch
+    k = C.smooth(C.curvature(R, 5), 4)
+    out = []
+    s_all = np.arange(len(R))
+    for j in s_all[int(skip):-int(skip)]:
+        if j % int(every): continue
+        side = -np.sign(k[j]) or 1.0  # curvature > 0 turns towards +N: outside is -N
+        p = R[j]
+        for t in np.arange(0, 25, 0.1):
+            q = p + N[j] * side * t
+            if sample_field(g, D, np.array([q[0]]), np.array([q[1]]))[0] <= off:
+                out.append(q); break
+    return out
 
 
 def track_distance(g, valid, wall, line):
@@ -741,10 +769,10 @@ def sample_field(g, F, x, z):
     return F[v, u]
 
 
-def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25, start_at=None, finish_at=None):
+def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25, start_at=None, finish_at=None, guides=()):
     import osqp
     from scipy import sparse
-    Q = control_points(c)
+    Q = control_points(c, guides=guides)
     # stations: ~1 m apart along the polyline through the control points; each control point pinned
     seg = np.hypot(*np.diff(Q, axis=0).T)
     # lead-in before the start gate and run-out after the finish (free, so the line crosses the gates

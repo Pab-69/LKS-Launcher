@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.29.5
+
+- **Bikernieki** : du début du drift au clip 1, la ligne suit l'extérieur du virage.
+
 ## 1.29.4
 
 - **Bikernieki** : la ligne commence à l'extérieur, plus sur les zébras.
