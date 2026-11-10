@@ -8,14 +8,11 @@ const { Canvas } = require('./png');
 
 const RAW = 'https://raw.githubusercontent.com/Pab-69/LKS-Launcher/main/src/main/telemetry/courses/';
 
-async function courseOf(track, layout = '') {
-  const m = await getManifest();
-  const published = (m.drift ?? {})[`${track}|${layout}`];
-  if (published) return { course: published, source: 'publié par les admins' };
+async function officialOf(track, layout) {
   for (const file of layout ? [`${track}.${layout}.json`, `${track}.json`] : [`${track}.json`]) {
     try {
       const data = await cached(RAW + file, 60 * 60 * 1000, () => fetchJson(RAW + file, { timeoutMs: 10000 }));
-      if (data?.course) return { course: data.course, source: `parcours officiel (${data.name})`, notes: data.notes };
+      if (data?.course) return data;
     } catch {
       /* fichier suivant */
     }
@@ -23,9 +20,21 @@ async function courseOf(track, layout = '') {
   return null;
 }
 
-const COLORS = { line: [63, 207, 134], inner: [90, 200, 255], outer: [255, 90, 255], staging: [236, 229, 218], start: [255, 230, 0], finish: [224, 27, 58] };
+async function courseOf(track, layout = '') {
+  const m = await getManifest();
+  const published = (m.drift ?? {})[`${track}|${layout}`];
+  const official = await officialOf(track, layout);
+  // comme le launcher : un parcours publié avant l'analyse précise du parcours officiel ne garde que ses règles
+  if (published && !(official && (official.course.analysis || 0) > (published.basedOn || 0))) {
+    return { course: { ...published, limits: published.limits ?? official?.course.limits }, source: 'publié par les admins' };
+  }
+  if (official) return { course: { ...official.course, rules: published?.rules ?? official.course.rules }, source: `parcours officiel (${official.name})`, notes: official.notes };
+  return null;
+}
 
-/** Image du parcours : ligne de référence, clips numérotés, start / début du drift / arrivée (z vers le bas, comme le jeu). */
+const COLORS = { limit: [255, 170, 60], line: [63, 207, 134], inner: [90, 200, 255], outer: [255, 90, 255], staging: [236, 229, 218], start: [255, 230, 0], finish: [224, 27, 58] };
+
+/** Image du parcours : limites de piste, ligne de référence, clips numérotés, start / début du drift / arrivée (z vers le bas, comme le jeu). */
 function courseImage(course, size = 900) {
   const pts = [...(course.refLine ?? [])];
   for (const c of course.clips ?? []) pts.push([c.x, c.z], ...(c.path ?? []));
@@ -39,7 +48,10 @@ function courseImage(course, size = 900) {
   const P = ([x, z]) => [pad + (x - x0) * k, pad + (z - z0) * k];
   const cv = new Canvas(W, H);
   const line = (course.refLine ?? []).map(P);
-  cv.poly(line, [40, 40, 44], Math.max(10, 9 * k)); // la route, à peu près
+  if (Array.isArray(course.limits) && course.limits.length) {
+    // limites exactes de la piste (analyse du circuit)
+    for (const l of course.limits) cv.poly(l.map(P), COLORS.limit, 2, 0.9);
+  } else cv.poly(line, [40, 40, 44], Math.max(10, 9 * k)); // la route, à peu près
   cv.poly(line, COLORS.line, 3);
   (course.clips ?? []).forEach((c, i) => {
     const col = COLORS[c.kind] ?? COLORS.inner;

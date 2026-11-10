@@ -246,6 +246,12 @@ function trackMap(laps, { height = 260, live, course, onClick, section } = {}) {
       pts.forEach(([x, z], j) => (j ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z))));
       g.stroke();
     };
+    // exact track limits (official analysis)
+    if (course && Array.isArray(course.limits)) {
+      g.strokeStyle = 'rgba(255,170,60,0.55)';
+      g.lineWidth = 1.2;
+      for (const l of course.limits) path(l);
+    }
     if (course && course.refLine && course.refLine.length) {
       g.strokeStyle = 'rgba(236,229,218,0.25)';
       g.lineWidth = 6;
@@ -612,26 +618,42 @@ export default function telemetryView(root, params = {}) {
         h('div.row', h('div', h('div.label', 'Ta catégorie'), h('div.category-name', CAT_LABEL[catInfo.mine])),
           h('div.grow.s', catInfo.serverOutdated
             ? 'Le serveur du groupe n’est pas encore à jour : les catégories n’y existent pas, tout le monde est affiché Débutant. Un admin doit lancer « ./lks.sh update » sur le serveur (ou relancer le script SQL sur Supabase) : chaque pilote reçoit alors sa catégorie d’après ses notes déjà enregistrées.'
-            : me && me.runs >= 3
-            ? `Moyenne de tes 5 meilleures notes (notées ${CAT_LABEL[catInfo.mine]}) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
-            : `Il faut au moins 3 runs partagées pour être classé. Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
+            : me && me.runs >= (catInfo.minRuns || 10)
+            ? `Moyenne de tes ${me.runs} dernières runs (notées ${CAT_LABEL[catInfo.mine]}, les 0 comptent) : ${me.avg}/100.${next ? ` À ${catInfo.up} tu passes ${next}.` : ''}${catInfo.mine !== 'debutant' ? ` Sous ${catInfo.down} tu redescends.` : ''}`
+            : `Ta catégorie se joue sur toutes tes runs : la moyenne de tes ${catInfo.window || 20} dernières, les 0 compris (il en faut au moins ${catInfo.minRuns || 10}). Chaque catégorie a sa notation : Débutant (tolérante), Amateur, Pro (une faute peut mettre la run à 0).`))));
       const goals = !catInfo.serverOutdated ? await api.call('telemetry:goals').catch(() => null) : null;
       if (goals && goals.configured) {
         const lines = [];
-        if (goals.next && goals.plan) {
-          lines.push(h('p', { style: { margin: '0 0 6px' } }, goals.plan.gap > 0
-            ? `Pour passer ${CAT_LABEL[goals.next]} : il te manque ${goals.plan.gap} point(s) de moyenne. Ta 5e meilleure note est ${goals.plan.lowest}.`
-            : `Ta moyenne atteint ${goals.up} : tu passes ${CAT_LABEL[goals.next]} à ta prochaine run partagée.`));
-          if (goals.plan.gap > 0) {
-            lines.push(h('p.s', { style: { margin: 0 } }, goals.plan.one <= 100
-              ? `Une seule run à ${goals.plan.one} suffit (elle remplace ta note de ${goals.plan.lowest}).`
-              : goals.plan.two !== null && goals.plan.two <= 100 ? `Il faut deux runs à ${goals.plan.two} (elles remplacent tes deux notes les plus basses).` : 'Il faut plusieurs très bonnes runs : vise les circuits ci-dessous.'));
+        const plan = goals.plan;
+        if (goals.next && plan) {
+          if (plan.reached) lines.push(h('p', { style: { margin: 0 } }, `Ta moyenne atteint ${goals.up} : tu passes ${CAT_LABEL[goals.next]} à ta prochaine run partagée.`));
+          else {
+            lines.push(h('p', { style: { margin: '0 0 6px' } }, plan.missing > 0
+              ? `Pour passer ${CAT_LABEL[goals.next]} : ${plan.missing} run(s) de plus pour avoir une moyenne, puis ${goals.up} de moyenne sur tes ${goals.window} dernières runs.`
+              : `Pour passer ${CAT_LABEL[goals.next]} : il te manque ${plan.gap} point(s) de moyenne sur tes ${goals.runs} dernières runs (${goals.up} à atteindre).`));
+            lines.push(h('p.s', { style: { margin: 0 } }, plan.steps.length
+              ? plan.steps.map((st) => `${st.runs === 1 ? 'une run' : `${st.runs} runs d’affilée`} à ${st.score}`).join(', ou ') + ' : c’est ce qu’il faut.'
+              : 'Il faut une longue série de très bonnes runs : vise les circuits ci-dessous.'));
           }
-        } else if (goals.next) lines.push(h('p', { style: { margin: 0 } }, `Encore ${Math.max(0, 3 - goals.runs)} run(s) partagée(s) pour avoir une moyenne.`));
-        else lines.push(h('p', { style: { margin: 0 } }, 'Tu es dans la catégorie la plus haute.'));
-        if (goals.danger) lines.push(h('p.s', { style: { margin: '6px 0 0', color: 'var(--warn)' } }, `Attention : sous ${goals.down} de moyenne tu redescends.`));
+        } else if (!goals.next) lines.push(h('p', { style: { margin: 0 } }, 'Tu es dans la catégorie la plus haute : reste régulier pour y rester.'));
+        if (goals.zeros) lines.push(h('p.s', { style: { margin: '6px 0 0' } }, `${goals.zeros} run(s) à 0 dans tes ${goals.runs} dernières : chacune pèse dans ta moyenne jusqu’à ce qu’elle sorte de la fenêtre.`));
+        if (goals.prev && goals.down !== null) {
+          lines.push(h('p.s', { style: { margin: '6px 0 0', color: goals.danger ? 'var(--warn)' : undefined } },
+            goals.grace > 0
+              ? `Tu viens de changer de catégorie : encore ${goals.grace} run(s) avant de pouvoir redescendre (sous ${goals.down} de moyenne).`
+              : goals.keep === 0
+                ? `Sous ${goals.down} de moyenne tu redescends ${CAT_LABEL[goals.prev]} : même un 0 à ta prochaine run ne t’y fait pas tomber.`
+                : `Attention : sous ${goals.down} de moyenne tu redescends ${CAT_LABEL[goals.prev]}. Ta prochaine run doit faire au moins ${goals.keep}.`));
+        }
+        // the window itself: one bar per run, oldest on the left, the zeros in red
+        const bars = goals.scores.length
+          ? h('div.window-bars', { title: `Tes ${goals.runs} dernières runs (notation ${CAT_LABEL[goals.category]}), de la plus ancienne à la plus récente` },
+            goals.scores.map((v) => h(`i${v === 0 ? '.zero' : ''}`, { style: { height: `${Math.max(4, v)}%` }, title: String(v) })),
+            goals.up !== null ? h('b.window-line.up', { style: { bottom: `${goals.up}%` }, title: `${goals.up} : tu montes` }) : null,
+            goals.down !== null ? h('b.window-line.down', { style: { bottom: `${goals.down}%` }, title: `${goals.down} : tu descends` }) : null)
+          : null;
         const tracks = goals.tracks.filter((t) => t.gap !== null && t.gap > 0).slice(0, 5);
-        body.append(h('div.panel.mt.goals-panel', h('h3', 'Objectif'), ...lines,
+        body.append(h('div.panel.mt.goals-panel', h('h3', 'Objectif'), bars, ...lines,
           tracks.length ? h('div.mt', h('div.label', `Où tu as le plus à gagner (écart avec le meilleur ${CAT_LABEL[goals.category]})`),
             h('div.list', tracks.map((t) => h('div.list-row.profile-row', h('div', h('div.t', t.name), h('div.s', `${t.bestDriver} : ${t.best}${t.mine !== null ? ` · toi : ${t.mine}` : ' · pas encore roulé'}`)), h('strong', `+${t.gap}`))))) : null));
       }

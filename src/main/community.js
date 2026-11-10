@@ -140,7 +140,21 @@ class Community {
   /** Category of every driver (set by the server from the best notes): [{ name, category, avg, runs, updatedAt }] */
   async categories() {
     const rows = await this.request('/rest/v1/lks_categories_list?select=*&limit=1000');
-    return (rows || []).map((r) => ({ name: r.name, category: ['debutant', 'amateur', 'pro'].includes(r.category) ? r.category : 'debutant', avg: Number(r.avg) || 0, runs: Number(r.runs) || 0, updatedAt: r.updated_at }));
+    const num = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
+    return (rows || []).map((r) => ({
+      name: r.name,
+      category: ['debutant', 'amateur', 'pro'].includes(r.category) ? r.category : 'debutant',
+      avg: Number(r.avg) || 0,
+      runs: Number(r.runs) || 0,
+      updatedAt: r.updated_at,
+      // since 1.29 (server): every run counts, rolling window of the last runs
+      since: num(r.since),
+      up: num(r.up),
+      down: num(r.down),
+      window: num(r.window_size),
+      minRuns: num(r.min_runs),
+      scores: Array.isArray(r.scores) ? r.scores.map(num) : null,
+    }));
   }
 
   // ------------------------------------------------------------ battles launched in game

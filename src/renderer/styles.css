@@ -778,3 +778,10 @@ select.input.board-select { width: auto; min-width: 240px; }
 .challenge-title { font: 700 30px var(--display); letter-spacing: 0.04em; text-transform: uppercase; }
 .challenge-goal { font: 600 17px var(--display); color: var(--text-2); }
 .challenge-goal strong { color: var(--accent-2); font-size: 22px; }
+
+/* category window: the last runs, one bar each */
+.window-bars { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 64px; margin: 4px 0 10px; padding: 0 2px; border-bottom: 1px solid var(--line); }
+.window-bars i { flex: 1; max-width: 18px; background: var(--text-2); border-radius: 2px 2px 0 0; opacity: 0.8; }
+.window-bars i.zero { background: var(--accent-2); height: 4px !important; opacity: 1; }
+.window-bars .window-line { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--ok); pointer-events: none; }
+.window-bars .window-line.down { border-top-color: var(--warn); }

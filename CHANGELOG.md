@@ -1,5 +1,21 @@
 # Journal des versions
 
+## 1.29.0
+
+- **Catégories sur toutes tes runs** : ta catégorie se joue maintenant sur la moyenne de tes **20 dernières runs**, notées dans ta catégorie, **les 0 compris** (il en faut au moins 10). Une run ratée pèse jusqu'à ce qu'elle sorte de la fenêtre : il faut être régulier pour rester en haut.
+  - Débutant → Amateur à 70 de moyenne (notation Débutant), Amateur → Pro à 65 (notation Amateur).
+  - Pro → Amateur sous 30 (notation Pro), Amateur → Débutant sous 35 (notation Amateur).
+  - Après un changement de catégorie, 10 runs de répit avant de pouvoir redescendre. Chaque pilote garde sa catégorie actuelle à la mise à jour du serveur.
+  - Télémétrie → Profil : tes 20 dernières runs en barres (les 0 en rouge), ce qu'il faut pour monter (« 3 runs d'affilée à 82 »), et la note minimale de ta prochaine run pour ne pas redescendre. Le bot (`/moi`, annonces) et le site affichent la nouvelle règle.
+- **Parcours officiels refaits, bien plus précis** (les 10 tracés du groupe : Val d'Argenton 2023 et 2024, Calmont, Charade, Croix-en-Ternois, Val de Vienne, Englishtown, Kart Volan, PGE Narodowy, Bikernieki) :
+  - **Limites de piste exactes** : le contour de la surface « piste valide » du circuit, relevé à 10 cm près (carrefours, aires et îlots compris). Elles s'affichent sur la carte du passage, dans le mode spectateur, dans l'éditeur de parcours (et « coller au bord » s'y accroche) et dans `/parcours`.
+  - **Clips recalés sur le marquage peint au sol** : chaque clip est au centre de son marquage (corrections de 6 à 53 cm), les zones suivent les bandes peintes.
+  - **Nouvelle ligne de référence** : c'est le chemin du **centre de la voiture** qui met le pare-chocs avant sur chaque corde et l'arrière sur chaque clip extérieur et chaque zone, à un angle de drift normal (presque droite dans les transitions, comme au milieu du huit de PGE). Elle est fluide (plus aucun coude, rayon mini de 4,4 à 23 m selon la piste) et la voiture entière reste dans les limites. En roulant dessus, le pare-chocs passe à moins de 0,8 m de chaque clip et couvre les zones.
+  - Départ, début du drift et arrivée restent sur les lignes peintes et panneaux du circuit ; la ligne les traverse exactement.
+  - Les parcours publiés par les admins avant cette analyse (Calmont, Kart Volan, Englishtown, Bikernieki) gardent leurs règles (pénalités par circuit), avec la nouvelle géométrie. Un parcours modifié ensuite par un admin reste prioritaire, comme avant.
+  - La version des parcours change : les records d'avant restent visibles en grisé dans les classements, tes runs locales sont re-notées toutes seules.
+- **Outil d'analyse dans le dépôt** (`tools/track-analysis/`) : il refait ces parcours depuis les fichiers du circuit, avec une image de contrôle par tracé.
+
 ## 1.28.0
 
 - **Tout en direct** : actus, soirées, championnats, serveurs et réglages du groupe arrivent dans ton launcher à la seconde où un admin les publie (plus d'attente de 5 minutes), de même que « En ligne maintenant » et les parties hébergées. Le site se met à jour tout seul aussi. Si le serveur du groupe est injoignable, le launcher continue comme avant avec GitHub.

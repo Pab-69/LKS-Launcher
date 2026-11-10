@@ -446,7 +446,7 @@ begin
   insert into public.lks_runs (id, driver, car, track, layout, kind, score, detail)
   values (p_id, p_driver, coalesce(p_car, ''), p_track, coalesce(p_layout, ''), p_kind, p_score, coalesce(p_detail, '{}'::jsonb))
   on conflict (id) do nothing;
-  perform public.lks_update_category(p_driver);
+  if p_kind = 'drift' then perform public.lks_category_push(p_driver, public.lks_run_scores(p_score, p_detail)); end if;
   return 'ok';
 end $$;
 revoke all on function public.add_run(uuid, text, text, text, text, text, numeric, jsonb) from public;
@@ -495,9 +495,14 @@ grant execute on function public.set_live(text, text, text, text, text, text, js
 -- ---------------------------------------------------------------------------
 -- Catégories des pilotes : Débutant, Amateur, Pro. Chaque catégorie a sa
 -- notation (debutant, normal, pro). Le serveur range le pilote tout seul après
--- chaque run : moyenne de ses 5 meilleures notes dans sa catégorie (au moins 3
--- runs). 75 ou plus : il monte. Moins de 35 : il descend. Un nouveau pilote
--- commence en Débutant.
+-- chaque run, sur TOUS ses passages : la moyenne de ses 20 dernières runs dans
+-- la notation de sa catégorie, les 0 compris (une run ratée fait baisser la
+-- moyenne : il faut être régulier pour rester en haut).
+--   Débutant → Amateur : moyenne Débutant de 70 ou plus (au moins 10 runs)
+--   Amateur → Pro      : moyenne Amateur de 65 ou plus (au moins 10 runs)
+--   Pro → Amateur      : moyenne Pro sous 30 ; Amateur → Débutant : moyenne Amateur sous 35
+-- Après un changement, 10 runs de répit avant de pouvoir redescendre.
+-- Chaque run garde ses trois notes, la fenêtre survit donc à la purge des runs.
 
 create table if not exists public.lks_categories (
   key text primary key,           -- nom du pilote en minuscules
@@ -507,82 +512,111 @@ create table if not exists public.lks_categories (
   runs integer not null default 0,
   updated_at timestamptz not null default now()
 );
+alter table public.lks_categories add column if not exists recent jsonb not null default '[]'::jsonb; -- [[debutant, normal, pro], …] les 20 dernières, la plus récente à la fin
+alter table public.lks_categories add column if not exists since integer not null default 0;           -- runs depuis le dernier changement de catégorie
 alter table public.lks_categories enable row level security;
 revoke all on public.lks_categories from anon, authenticated;
-create or replace view public.lks_categories_list with (security_invoker = false) as
-  select name, category, avg, runs, updated_at from public.lks_categories;
+
+-- seuils (une seule source : le launcher, le bot et le site les lisent dans la vue)
+create or replace function public.lks_category_up(cat text) returns numeric language sql immutable as $$
+  select case cat when 'debutant' then 70 when 'amateur' then 65 else null end::numeric $$;
+create or replace function public.lks_category_down(cat text) returns numeric language sql immutable as $$
+  select case cat when 'amateur' then 35 when 'pro' then 30 else null end::numeric $$;
+create or replace function public.lks_category_mode(cat text) returns text language sql immutable as $$
+  select case cat when 'debutant' then 'debutant' when 'amateur' then 'normal' else 'pro' end $$;
+create or replace function public.lks_category_idx(cat text) returns integer language sql immutable as $$
+  select case cat when 'debutant' then 0 when 'amateur' then 1 else 2 end $$;
+
+drop view if exists public.lks_categories_list;
+create view public.lks_categories_list with (security_invoker = false) as
+  select name, category, avg, runs, updated_at, since,
+         public.lks_category_up(category) as up, public.lks_category_down(category) as down,
+         20 as window_size, 10 as min_runs,
+         (select coalesce(jsonb_agg(e -> public.lks_category_idx(category)), '[]'::jsonb) from jsonb_array_elements(recent) e) as scores
+    from public.lks_categories;
 grant select on public.lks_categories_list to anon, authenticated;
 
-create or replace function public.lks_update_category(p_driver text) returns text
+-- moyenne de la fenêtre dans une notation (0, 1, 2) : { n, avg }
+create or replace function public.lks_window_avg(w jsonb, idx integer) returns numeric[] language sql immutable as $$
+  select array[count(*)::numeric, coalesce(avg((e ->> idx)::numeric), 0)]
+    from jsonb_array_elements(w) e where jsonb_typeof(e -> idx) = 'number' $$;
+
+-- une run de plus pour le pilote : ses trois notes entrent dans la fenêtre, la catégorie suit
+create or replace function public.lks_category_push(p_driver text, p_scores jsonb) returns text
 language plpgsql security definer set search_path = public as $$
 declare
   k text := lower(trim(p_driver));
-  cur text;
-  m text;
-  n integer;
-  a numeric;
-  nxt text;
+  cur public.lks_categories%rowtype;
+  w jsonb;
+  cat text; nxt text;
+  na numeric[];
+  sinc integer;
 begin
-  select category into cur from public.lks_categories where key = k;
-  cur := coalesce(cur, 'debutant');
-  m := case cur when 'debutant' then 'debutant' when 'amateur' then 'normal' else 'pro' end;
-  select count(*), coalesce(avg(sc), 0) into n, a from (
-    select (detail->'modes'->>m)::numeric as sc from public.lks_runs
-     where lower(trim(driver)) = k and kind = 'drift' and jsonb_typeof(detail->'modes'->m) = 'number'
-     order by 1 desc limit 5) t;
-  nxt := cur;
-  if n >= 3 and a >= 75 and cur <> 'pro' then nxt := case cur when 'debutant' then 'amateur' else 'pro' end;
-  elsif n >= 3 and a < 35 and cur <> 'debutant' then nxt := case cur when 'pro' then 'amateur' else 'debutant' end;
+  select * into cur from public.lks_categories where key = k;
+  cat := coalesce(cur.category, 'debutant');
+  w := coalesce(cur.recent, '[]'::jsonb) || jsonb_build_array(p_scores);
+  while jsonb_array_length(w) > 20 loop w := w - 0; end loop;
+  sinc := coalesce(cur.since, 0) + 1;
+  na := public.lks_window_avg(w, public.lks_category_idx(cat));
+  nxt := cat;
+  if na[1] >= 10 and cat <> 'pro' and na[2] >= public.lks_category_up(cat) then
+    nxt := case cat when 'debutant' then 'amateur' else 'pro' end;
+  elsif na[1] >= 10 and sinc >= 10 and cat <> 'debutant' and na[2] < public.lks_category_down(cat) then
+    nxt := case cat when 'pro' then 'amateur' else 'debutant' end;
   end if;
-  insert into public.lks_categories (key, name, category, avg, runs, updated_at) values (k, trim(p_driver), nxt, round(a, 1), n, now())
+  if nxt <> cat then sinc := 0; na := public.lks_window_avg(w, public.lks_category_idx(nxt)); end if;
+  insert into public.lks_categories (key, name, category, avg, runs, recent, since, updated_at)
+  values (k, trim(p_driver), nxt, round(least(na[2], 100), 1), na[1]::integer, w, sinc, now())
   on conflict (key) do update set name = excluded.name, category = excluded.category, avg = excluded.avg, runs = excluded.runs,
+    recent = excluded.recent, since = excluded.since,
     updated_at = case when public.lks_categories.category <> excluded.category then now() else public.lks_categories.updated_at end;
   return nxt;
 end $$;
+revoke all on function public.lks_category_push(text, jsonb) from public, anon, authenticated;
+
+-- les trois notes d'une run (avant la 1.19 : une seule note, elle sert pour les trois)
+create or replace function public.lks_run_scores(p_score numeric, p_detail jsonb) returns jsonb language sql immutable as $$
+  select case when jsonb_typeof(p_detail -> 'modes') = 'object' then
+    jsonb_build_array(
+      case when jsonb_typeof(p_detail -> 'modes' -> 'debutant') = 'number' then p_detail -> 'modes' -> 'debutant' else 'null'::jsonb end,
+      case when jsonb_typeof(p_detail -> 'modes' -> 'normal') = 'number' then p_detail -> 'modes' -> 'normal' else 'null'::jsonb end,
+      case when jsonb_typeof(p_detail -> 'modes' -> 'pro') = 'number' then p_detail -> 'modes' -> 'pro' else 'null'::jsonb end)
+  else jsonb_build_array(p_score, p_score, p_score) end $$;
+
+-- ancienne fonction (5 meilleures notes) : remplacée, gardée pour les appels restés en route
+create or replace function public.lks_update_category(p_driver text) returns text
+language plpgsql security definer set search_path = public as $$
+declare r record;
+begin
+  select score, detail into r from public.lks_runs where lower(trim(driver)) = lower(trim(p_driver)) and kind = 'drift' order by created_at desc limit 1;
+  if r is null then return null; end if;
+  return public.lks_category_push(p_driver, public.lks_run_scores(r.score, r.detail));
+end $$;
 revoke all on function public.lks_update_category(text) from public, anon, authenticated;
 
--- Catégories de tous les pilotes à partir des données déjà sur le serveur :
--- les runs (notes dans les trois catégories depuis la 1.19, sinon la note
--- Amateur) et les records (une note par catégorie). Par pilote : moyenne des
--- 5 meilleures notes (au moins 3) ; Débutant → Amateur à 75 en notation
--- Débutant, Amateur → Pro à 75 en notation Amateur. Faute de notes dans une
--- catégorie, celle de la catégorie au-dessus sert de minimum (plus sévère).
+-- Fenêtre de chaque pilote reconstruite avec les runs encore sur le serveur
+-- (les 20 plus récentes). La catégorie de chacun est gardée, avec 10 runs de
+-- répit ; la règle ci-dessus s'applique ensuite run après run.
 -- Lancé une fois à l'installation de cette version ; ./lks.sh categories le relance.
 create or replace function public.lks_recompute_categories() returns integer
 language plpgsql security definer set search_path = public as $$
 declare
   r record;
   cnt integer := 0;
-  n_deb integer; a_deb numeric;
-  n_nor integer; a_nor numeric;
-  n_pro integer; a_pro numeric;
+  w jsonb;
+  na numeric[];
   cat text;
-  n integer; a numeric;
 begin
-  create temporary table lks_scores on commit drop as
-    select lower(trim(driver)) as k, trim(driver) as name, m.key as mode, (m.value)::text::numeric as sc
-      from public.lks_runs, jsonb_each(case when jsonb_typeof(detail->'modes') = 'object' then detail->'modes' else '{}'::jsonb end) m
-     where kind = 'drift' and jsonb_typeof(m.value) = 'number'
-    union all
-    select lower(trim(driver)), trim(driver), 'normal', score from public.lks_runs
-     where kind = 'drift' and jsonb_typeof(detail->'modes') is distinct from 'object'
-    union all
-    select lower(trim(driver)), trim(driver), substring(rules from '-(debutant|normal|pro)(@|$)'), score from public.lks_laps
-     where kind = 'drift' and score is not null and rules ~ '-(debutant|normal|pro)(@|$)';
-  for r in select k, max(name) as name from lks_scores group by k loop
-    select count(*), coalesce(avg(sc), 0) into n_deb, a_deb from (select sc from lks_scores where k = r.k and mode = 'debutant' order by sc desc limit 5) t;
-    select count(*), coalesce(avg(sc), 0) into n_nor, a_nor from (select sc from lks_scores where k = r.k and mode = 'normal' order by sc desc limit 5) t;
-    select count(*), coalesce(avg(sc), 0) into n_pro, a_pro from (select sc from lks_scores where k = r.k and mode = 'pro' order by sc desc limit 5) t;
-    if n_deb < 3 and n_nor > n_deb then n_deb := n_nor; a_deb := a_nor; end if;
-    if n_nor < 3 and n_pro > n_nor then n_nor := n_pro; a_nor := a_pro; end if;
-    cat := 'debutant';
-    if n_deb >= 3 and a_deb >= 75 then cat := 'amateur'; end if;
-    if cat = 'amateur' and n_nor >= 3 and a_nor >= 75 then cat := 'pro'; end if;
-    if cat = 'debutant' then n := n_deb; a := a_deb; elsif cat = 'amateur' then n := n_nor; a := a_nor; else n := n_pro; a := a_pro; end if;
-    if cat = 'pro' and n < 3 then n := n_nor; a := a_nor; end if;
-    if cat = 'amateur' and n = 0 then n := n_deb; a := a_deb; end if;
-    insert into public.lks_categories (key, name, category, avg, runs, updated_at) values (r.k, r.name, cat, round(least(a, 100), 1), n, now())
-    on conflict (key) do update set name = excluded.name, category = excluded.category, avg = excluded.avg, runs = excluded.runs, updated_at = now();
+  for r in select lower(trim(driver)) as k, max(trim(driver)) as name from public.lks_runs where kind = 'drift' group by 1 loop
+    select coalesce(jsonb_agg(sc order by created_at), '[]'::jsonb) into w from (
+      select public.lks_run_scores(score, detail) as sc, created_at from public.lks_runs
+       where lower(trim(driver)) = r.k and kind = 'drift' order by created_at desc limit 20) t;
+    select category into cat from public.lks_categories where key = r.k;
+    cat := coalesce(cat, 'debutant');
+    na := public.lks_window_avg(w, public.lks_category_idx(cat));
+    insert into public.lks_categories (key, name, category, avg, runs, recent, since, updated_at)
+    values (r.k, r.name, cat, round(least(na[2], 100), 1), na[1]::integer, w, 0, now())
+    on conflict (key) do update set name = excluded.name, avg = excluded.avg, runs = excluded.runs, recent = excluded.recent, since = 0;
     cnt := cnt + 1;
   end loop;
   return cnt;
@@ -594,9 +628,9 @@ alter table public.lks_meta enable row level security;
 revoke all on public.lks_meta from anon, authenticated;
 do $$
 begin
-  if not exists (select 1 from public.lks_meta where key = 'categories_v1') then
+  if not exists (select 1 from public.lks_meta where key = 'categories_v2') then
     perform public.lks_recompute_categories();
-    insert into public.lks_meta (key, value) values ('categories_v1', 'fait');
+    insert into public.lks_meta (key, value) values ('categories_v2', 'fait') on conflict (key) do nothing;
   end if;
 end $$;
 

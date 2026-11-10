@@ -51,7 +51,7 @@ function likeValue(text) {
 async function categories() {
   let rows = [];
   try {
-    rows = await query('lks_categories_list', { select: 'name,category,avg,runs' }, { ttlMs: 5 * 60 * 1000 });
+    rows = await query('lks_categories_list', { select: '*' }, { ttlMs: 5 * 60 * 1000 });
   } catch {
     rows = [];
   }

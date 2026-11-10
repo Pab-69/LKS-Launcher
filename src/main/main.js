@@ -41,6 +41,7 @@ const { SharedMemorySource, SimulatedSource } = require('./telemetry/source');
 const { Simulator } = require('./telemetry/simulator');
 const telemetryTools = require('./telemetry/tools');
 const ingame = require('./telemetry/ingame');
+const { categoryGoal } = require('./telemetry/categoryGoal');
 const { Leaderboard } = require('./telemetry/leaderboard');
 const { courseVersion, referenceFrom, driftOf, MODE_LABELS, MODE_IDS, MODES } = require('./telemetry/drift');
 const ailine = require('./telemetry/ailine');
@@ -812,11 +813,25 @@ function autoDriftCourse(track, layout = '') {
   }
   return autoCourses.get(key);
 }
+/**
+ * A course published by the admins before the precise analysis of the official course
+ * (analysis 2: clips on the paint, line of the car's centre, exact track limits) only
+ * keeps its rules: the geometry is the new official one. Published after it (basedOn),
+ * the admins' version wins as before.
+ */
+function overOfficial(published, official) {
+  if (!published) return null;
+  if (official && (official.analysis || 0) > (published.basedOn || 0)) return { ...official, rules: published.rules || official.rules };
+  return official && official.limits && !published.limits ? { ...published, limits: official.limits } : published;
+}
 function driftCourseInfo(c) {
   const all = (sync && sync.manifest && sync.manifest.drift) || {};
   const published = all[`${c.track}|${c.layout || ''}`] || Object.entries(all).find(([k]) => k.toLowerCase() === `${c.track}|${c.layout || ''}`.toLowerCase())?.[1];
-  if (published) return { course: published, source: 'published' };
   const official = bundledCourse(c.track, c.layout || '');
+  if (published) {
+    const course = overOfficial(published, official);
+    return { course, source: course === published || course.basedOn ? 'published' : 'official' };
+  }
   if (official) return { course: official, source: 'official' };
   const auto = autoDriftCourse(c.track, c.layout || '');
   return { course: auto, source: auto ? 'auto' : null };
@@ -863,7 +878,11 @@ function allDriftCourses() {
       if (c) out[`${t.id}|${l.id || ''}`] = c;
     }
   }
-  return { ...bundledCourses(), ...out, ...((sync.manifest && sync.manifest.drift) || {}) };
+  const published = Object.fromEntries(Object.entries((sync.manifest && sync.manifest.drift) || {}).map(([k, v]) => {
+    const i = k.indexOf('|');
+    return [k, overOfficial(v, bundledCourse(k.slice(0, i), k.slice(i + 1)))];
+  }));
+  return { ...bundledCourses(), ...out, ...published };
 }
 
 let driftSignature = null;
@@ -999,8 +1018,9 @@ async function refreshGhostLibrary(combo, force = false) {
 }
 
 // ---------------------------------------------------------------- driver categories (Débutant / Amateur / Pro)
-// Set by the group's server from each driver's best notes (docs/leaderboard.sql,
-// lks_update_category). Each category has its own judging (drift modes).
+// Set by the group's server from ALL the driver's runs: average of the last 20 in
+// the notation of the category, zeros included (docs/leaderboard.sql,
+// lks_category_push). Each category has its own judging (drift modes).
 const CATEGORY_MODE = { debutant: 'debutant', amateur: 'normal', pro: 'pro' };
 let categories = { at: 0, map: {} }; // driver name (lower case) -> { category, avg, runs }
 async function refreshCategories(force) {
@@ -2292,6 +2312,7 @@ function setupIpc() {
     if (!c) return { configured: false };
     const map = await refreshCategories(false);
     const name = settings.data.driverName || '';
+    const row = map[name.trim().toLowerCase()] || null;
     const category = categoryOf(name);
     const mode = CATEGORY_MODE[category];
     const scoreOf = (r) => {
@@ -2299,19 +2320,9 @@ function setupIpc() {
       return Number.isFinite(v) ? v : null;
     };
     const [mine, all] = await Promise.all([c.runs({ driver: name, kind: 'drift', limit: 500 }), c.runs({ kind: 'drift', limit: 2000 })]);
-    const scores = mine.map(scoreOf).filter((v) => v !== null).sort((a, b) => b - a);
-    const top = scores.slice(0, 5);
-    const avg = top.length ? top.reduce((a, b) => a + b, 0) / top.length : null;
-    const UP = 75;
-    const DOWN = 35;
-    const next = { debutant: 'amateur', amateur: 'pro', pro: null }[category];
-    let plan = null;
-    if (next && top.length >= 3) {
-      const sum = top.reduce((a, b) => a + b, 0);
-      const one = UP * top.length - (sum - top[top.length - 1]); // one run replacing the lowest of the 5
-      const two = top.length >= 2 ? (UP * top.length - (sum - top[top.length - 1] - top[top.length - 2])) / 2 : null;
-      plan = { gap: Math.max(0, Math.round((UP - avg) * 10) / 10), lowest: top[top.length - 1], one: Math.round(one * 10) / 10, two: two === null ? null : Math.round(two * 10) / 10 };
-    }
+    // an older server has no window: the latest runs still there stand in for it
+    const fallback = mine.slice().sort((a, b) => Date.parse(a.date || 0) - Date.parse(b.date || 0)).map(scoreOf).filter((v) => v !== null);
+    const goal = categoryGoal(row && row.scores ? row : { ...(row || {}), category }, fallback);
     // per track: my best vs the best driver of my category
     const sameCat = (driver) => {
       const r = map[String(driver || '').trim().toLowerCase()];
@@ -2332,7 +2343,7 @@ function setupIpc() {
       .filter((t) => t.best !== null || t.mine !== null)
       .map((t) => ({ ...t, gap: t.best === null ? null : Math.round((t.best - (t.mine ?? 0)) * 10) / 10 }))
       .sort((a, b) => (b.gap ?? -1) - (a.gap ?? -1));
-    return { configured: true, category, next, mode, avg: avg === null ? null : Math.round(avg * 10) / 10, runs: scores.length, top, up: UP, down: DOWN, plan, danger: category !== 'debutant' && avg !== null && avg < DOWN + 5, tracks: list.slice(0, 8) };
+    return { configured: true, ...goal, tracks: list.slice(0, 8) };
   });
   // a member thinks a note is wrong: the admins get the passage (to import) and the reason
   handle('telemetry:reportScore', async ({ id, reason }) => {
@@ -2356,7 +2367,9 @@ function setupIpc() {
   });
   handle('telemetry:categories', async () => {
     const map = await refreshCategories(false);
-    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: 75, down: 35, serverOutdated: Boolean(categories.outdated) };
+    const me = map[String(settings.data.driverName || '').trim().toLowerCase()];
+    const g = categoryGoal(me || { category: categoryOf(settings.data.driverName) });
+    return { mine: categoryOf(settings.data.driverName), me: settings.data.driverName || '', map, modes: CATEGORY_MODE, up: g.up, down: g.down, window: g.window, minRuns: g.minRuns, serverOutdated: Boolean(categories.outdated) };
   });
   handle('telemetry:settings', async (patch) => {
     settings.update({ telemetry: patch || {} });
@@ -2384,11 +2397,16 @@ function setupIpc() {
   });
   // edges of the road (AI line of the installed track), for the course editor
   handle('drift:road', ({ track, layout }) => {
+    // exact outline of the track from the official analysis, the AI line's edges for the rest
+    const official = bundledCourse(track, layout || '');
+    let road = null;
     try {
-      return ailine.trackRoad(acRoot(), track, layout || '');
+      road = ailine.trackRoad(acRoot(), track, layout || '');
     } catch {
-      return null;
+      road = null;
     }
+    if (official && Array.isArray(official.limits) && official.limits.length) return { ...(road || {}), limits: official.limits, line: (road && road.line) || official.refLine };
+    return road;
   });
   handle('drift:modes', () => ({ ids: MODE_IDS, labels: MODE_LABELS, presets: MODES }));
   handle('ghost:status', () => (acRoot() ? ghosts.currentGhost(ingame.appDir(acRoot())) : null));
@@ -2605,13 +2623,16 @@ function setupIpc() {
       if (!pub.manifest) await pub.open();
       const key = `${track}|${layout}`;
       const all = { ...(pub.manifest.drift || {}) };
+      const official = bundledCourse(track, layout);
+      // a course published before the official analysis it is based on: start from the new official one
+      if (all[key] && official && (official.analysis || 0) > (all[key].basedOn || 0)) all[key] = { ...overOfficial(all[key], official) };
       if (remove) delete all[key];
       else {
         const sec = [Math.max(0, Number(section[0]) || 0), Math.min(1, Number(section[1]) || 1)];
         if (!(sec[1] > sec[0])) throw new Error('Début et fin du parcours invalides');
         const course = { section: sec, clips: (clips || []).slice(0, 30).map((c, i) => ({ name: String(c.name || `Clip ${i + 1}`).slice(0, 30), kind: c.kind === 'outer' ? 'outer' : 'inner', x: Number(c.x), z: Number(c.z), r: Math.min(15, Math.max(0.5, Number(c.r) || 3)), ...(Number.isFinite(Number(c.y)) && c.y !== null && c.y !== '' ? { y: Number(c.y) } : {}), ...(Array.isArray(c.path) && c.path.length > 1 ? { path: c.path.slice(0, 60).map((q) => [Math.round((Number(q[0]) || 0) * 100) / 100, Math.round((Number(q[1]) || 0) * 100) / 100]) } : {}), ...clipTarget(c.target) })), refLine: [], refSpeed: 0 };
         // runs between gates (official course): keep its gates, start spot and zones
-        const gated = [all[key], bundledCourse(track, layout)].find((c) => hasGates(c));
+        const gated = [all[key], official].find((c) => hasGates(c));
         if (gated) for (const k of ['progress', 'staging', 'start', 'finish', 'zones']) if (gated[k] !== undefined) course[k] = gated[k];
         const cleanLine = (pts) => pts.slice(0, 4000).map((p) => [Math.round((Number(p[0]) || 0) * 100) / 100, Math.round((Number(p[1]) || 0) * 100) / 100]);
         if (lapId) {
@@ -2626,6 +2647,8 @@ function setupIpc() {
         } else if (Array.isArray(refLine)) Object.assign(course, { refLine: refLine.slice(0, 2000).map((p) => [Number(p[0]) || 0, Number(p[1]) || 0]), refDriver: typeof refDriver === 'string' && refDriver ? refDriver.slice(0, 60) : gated ? 'ligne officielle' : 'ligne IA' });
         else if (all[key]) Object.assign(course, { refLine: all[key].refLine || [], refSpeed: all[key].refSpeed || 0, refDriver: all[key].refDriver, slipSign: all[key].slipSign });
         if (rules) course.rules = cleanRules(rules);
+        if (official && official.analysis) course.basedOn = official.analysis;
+        delete course.limits; // they come from the official course (exact outline of the track)
         all[key] = course;
       }
       await pub.updateMeta({ drift: all });

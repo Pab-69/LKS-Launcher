@@ -6,7 +6,8 @@
   var box = document.getElementById('pilotes');
   var KIND = { drift: 'Drift', tandem: 'Tandem', time: 'Chrono' };
   var ORDER = ['pro', 'amateur', 'debutant'];
-  var UP = 75, DOWN = 35;
+  // seuils par catégorie (le serveur les envoie aussi : up / down)
+  var UP = { debutant: 70, amateur: 65 }, DOWN = { amateur: 35, pro: 30 };
   function day(iso) { return new Date(iso).toLocaleDateString('fr-FR'); }
   window.LKSBattleCard = battleCard; // aussi utilisé par la page des classements
   if (!box) return;
@@ -37,7 +38,7 @@
   function list(catOf) {
     L.clear(box);
     box.appendChild(h('h2', 'Pilotes'));
-    box.appendChild(h('p.muted', 'Chaque pilote a une catégorie selon ses notes : la moyenne de ses 5 meilleures runs (au moins 3). ' + UP + ' et plus : catégorie au-dessus ; moins de ' + DOWN + ' : catégorie en dessous. Les runs sont notées selon la catégorie du pilote.'));
+    box.appendChild(h('p.muted', 'Chaque pilote a une catégorie selon toutes ses runs : la moyenne de ses 20 dernières, les 0 compris (au moins 10 runs). Débutant → Amateur à ' + UP.debutant + ', Amateur → Pro à ' + UP.amateur + ' ; sous ' + DOWN.amateur + ' (Amateur) ou ' + DOWN.pro + ' (Pro), on redescend. Les runs sont notées selon la catégorie du pilote : il faut être régulier pour rester en haut.'));
     var search = h('input', { type: 'search', placeholder: 'Chercher un pilote', 'aria-label': 'Chercher un pilote' });
     box.appendChild(h('div.filters', search));
     var cols = h('div.cat-columns');
@@ -68,7 +69,7 @@
     var next = c === 'pro' ? null : c === 'amateur' ? 'Pro' : 'Amateur';
     box.appendChild(h('div.detail-head',
       h('div', h('h2', name, ' ', L.catBadge(c)),
-        h('p.muted', info.runs ? 'Moyenne des 5 meilleures runs : ' + Number(info.avg).toFixed(1) + (next ? ' · ' + UP + ' pour passer ' + next : '') : 'Pas encore assez de runs notées : catégorie Débutant.')),
+        h('p.muted', info.runs ? 'Moyenne de ses ' + info.runs + ' dernières runs (les 0 comptent) : ' + Number(info.avg).toFixed(1) + (next ? ' · ' + (info.up != null ? info.up : UP[c]) + ' pour passer ' + next : '') + (c !== 'debutant' ? ' · sous ' + (info.down != null ? info.down : DOWN[c]) + ' : redescend' : '') : 'Pas encore assez de runs notées : catégorie Débutant.')),
       info.avg !== null && info.avg !== undefined ? h('div.detail-score', Number(info.avg).toFixed(1)) : null));
     var records = h('div.card', h('h3', 'Records'), h('p.status', 'Chargement…'));
     var runs = h('div.card', h('h3', 'Dernières runs'), h('p.status', 'Chargement…'));

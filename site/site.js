@@ -90,7 +90,7 @@
   /** Catégorie de chaque pilote : fonction nom -> { category, avg, runs } (Débutant par défaut). */
   function categories(g) {
     if (!catCache) {
-      catCache = db(g)('lks_categories_list', 'select=name,category,avg,runs,updated_at').then(function (list) {
+      catCache = db(g)('lks_categories_list', 'select=*').then(function (list) {
         var map = {};
         (list || []).forEach(function (r) { map[String(r.name).trim().toLowerCase()] = r; });
         var of = function (name) { return map[String(name || '').trim().toLowerCase()] || { name: name, category: 'debutant', avg: null, runs: 0 }; };

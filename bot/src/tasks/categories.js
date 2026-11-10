@@ -22,8 +22,8 @@ async function announce(client, changes) {
       .setTitle(up ? `${categoryLabel(c.to).split(' ')[0]} ${c.name} passe ${CATEGORY_LABEL[c.to]} !` : `${c.name} redescend en ${CATEGORY_LABEL[c.to]}`)
       .setDescription(
         up
-          ? `Moyenne de ses 5 meilleures notes : **${fmtScore(c.avg)}**. Bravo${id ? ` <@${id}>` : ''} ! Ses runs sont maintenant notées comme la catégorie ${CATEGORY_LABEL[c.to]}.`
-          : `Moyenne de ses 5 meilleures notes : **${fmtScore(c.avg)}**. Ses runs sont notées comme la catégorie ${CATEGORY_LABEL[c.to]} : de quoi remonter vite.`,
+          ? `Moyenne de ses ${c.runs || 20} dernières runs, les 0 compris : **${fmtScore(c.avg)}**. Bravo${id ? ` <@${id}>` : ''} ! Ses runs sont maintenant notées comme la catégorie ${CATEGORY_LABEL[c.to]}.`
+          : `Sa moyenne sur ses dernières runs est passée sous le seuil (les 0 comptent). Ses runs sont notées comme la catégorie ${CATEGORY_LABEL[c.to]} : de quoi remonter vite.`,
       );
     await channel.send({ embeds: [embed], allowedMentions: { users: id && up ? [id] : [] } }).catch((e) => console.error('[catégories]', e.message));
   }
@@ -62,7 +62,7 @@ module.exports = {
     if (known) {
       const changes = Object.entries(now)
         .filter(([k, r]) => known[k] && known[k] !== r.category)
-        .map(([k, r]) => ({ key: k, name: r.name, from: known[k], to: r.category, avg: r.avg }));
+        .map(([k, r]) => ({ key: k, name: r.name, from: known[k], to: r.category, avg: r.avg, runs: r.runs }));
       if (changes.length) await announce(client, changes);
     }
     // premier passage : on retient l'état actuel sans rien annoncer

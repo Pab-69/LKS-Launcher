@@ -67,9 +67,14 @@ function nearestOn(pts, x, z) {
 /** Bord de route le plus proche (pour coller un clip au vibreur ou au mur). */
 export function snapToEdge(road, x, z) {
   if (!road) return null;
-  const a = nearestOn(road.left, x, z);
-  const b = nearestOn(road.right, x, z);
-  return !a ? b : !b ? a : a.d < b.d ? a : b;
+  // exact limits of the track (official analysis) first, else the AI line's edges
+  const lines = Array.isArray(road.limits) && road.limits.length ? road.limits : [road.left, road.right];
+  let best = null;
+  for (const l of lines) {
+    const n = l && l.length > 1 ? nearestOn(l, x, z) : null;
+    if (n && (!best || n.d < best.d)) best = n;
+  }
+  return best;
 }
 
 /** Direction de la route près d'un point (pour poser une zone dans le bon sens). */
@@ -110,7 +115,7 @@ export function courseMap({ state, onChange, height = 560 }) {
 
   const fit = () => {
     const all = [];
-    if (state.road) all.push(...state.road.left, ...state.road.right);
+    if (state.road && state.road.left) all.push(...state.road.left, ...state.road.right);
     if (state.line) all.push(...state.line);
     if (state.trace) all.push(...state.trace);
     for (const c of state.clips) all.push([c.x, c.z]);
@@ -147,17 +152,28 @@ export function courseMap({ state, onChange, height = 560 }) {
       });
     };
     // la route : surface entre les deux bords
-    if (state.road) {
+    if (state.road && state.road.left && state.road.right) {
       g.fillStyle = 'rgba(236,229,218,0.06)';
       path([...state.road.left, ...state.road.right.slice().reverse()]);
       g.closePath();
       g.fill();
-      g.strokeStyle = 'rgba(236,229,218,0.35)';
-      g.lineWidth = 1;
-      path(state.road.left);
-      g.stroke();
-      path(state.road.right);
-      g.stroke();
+      if (!state.road.limits) {
+        g.strokeStyle = 'rgba(236,229,218,0.35)';
+        g.lineWidth = 1;
+        path(state.road.left);
+        g.stroke();
+        path(state.road.right);
+        g.stroke();
+      }
+    }
+    // limites exactes de la piste (contour de la surface valide, relevé sur le circuit)
+    if (state.road && Array.isArray(state.road.limits)) {
+      g.strokeStyle = 'rgba(255,170,60,0.85)';
+      g.lineWidth = Math.max(1, Math.min(2.5, k * 0.12));
+      for (const l of state.road.limits) {
+        path(l);
+        g.stroke();
+      }
     }
     // le passage choisi (référence)
     if (state.trace && state.trace.length) {

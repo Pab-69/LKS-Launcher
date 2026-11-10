@@ -41,7 +41,7 @@ module.exports = {
 
     const drift = [...records].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     embed.addFields(
-      { name: '🏷️ Catégorie', value: `${categoryLabel(cat.category)}${cat.runs >= 3 && cat.avg != null ? `\nmoyenne ${fmtScore(cat.avg)}` : ''}`, inline: true },
+      { name: '🏷️ Catégorie', value: `${categoryLabel(cat.category)}${cat.runs >= 10 && cat.avg != null ? `\nmoyenne ${fmtScore(cat.avg)} sur ${cat.runs} runs${cat.up != null ? ` (${cat.up} pour monter)` : ''}${cat.down != null ? `, sous ${cat.down} tu redescends` : ''}` : ''}`, inline: true },
       { name: '📈 Records', value: `${records.length} au total`, inline: true },
       { name: '⭐ Meilleure note', value: drift[0] ? `${fmtScore(drift[0].score)}/100` : '—', inline: true },
     );
