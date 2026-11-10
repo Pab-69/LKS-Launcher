@@ -7,7 +7,7 @@
   var KIND = { drift: 'Drift', tandem: 'Tandem', time: 'Chrono' };
   var ORDER = ['pro', 'amateur', 'debutant'];
   // seuils par catégorie (le serveur les envoie aussi : up / down)
-  var UP = { debutant: 70, amateur: 65 }, DOWN = { amateur: 35, pro: 30 };
+  var UP = { debutant: 80, amateur: 80 }, DOWN = { amateur: 50, pro: 50 };
   function day(iso) { return new Date(iso).toLocaleDateString('fr-FR'); }
   window.LKSBattleCard = battleCard; // aussi utilisé par la page des classements
   if (!box) return;
@@ -38,7 +38,7 @@
   function list(catOf) {
     L.clear(box);
     box.appendChild(h('h2', 'Pilotes'));
-    box.appendChild(h('p.muted', 'Chaque pilote a une catégorie selon toutes ses runs : la moyenne de ses 20 dernières, les 0 compris (au moins 10 runs). Débutant → Amateur à ' + UP.debutant + ', Amateur → Pro à ' + UP.amateur + ' ; sous ' + DOWN.amateur + ' (Amateur) ou ' + DOWN.pro + ' (Pro), on redescend. Les runs sont notées selon la catégorie du pilote : il faut être régulier pour rester en haut.'));
+    box.appendChild(h('p.muted', 'Chaque pilote a une catégorie selon toutes ses runs : la moyenne de ses 20 dernières dans la notation de sa catégorie, les 0 compris (au moins 10 runs). ' + UP.debutant + ' ou plus : catégorie au-dessus ; moins de ' + DOWN.pro + ' : catégorie en dessous. Il faut être régulier pour rester en haut.'));
     var search = h('input', { type: 'search', placeholder: 'Chercher un pilote', 'aria-label': 'Chercher un pilote' });
     box.appendChild(h('div.filters', search));
     var cols = h('div.cat-columns');

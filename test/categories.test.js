@@ -36,7 +36,7 @@ test('category goal: pro floor, next run minimum and grace after a change', () =
 
 test('category goal: older server without window uses the runs still there', () => {
   const g = categoryGoal({ category: 'debutant' }, [80, 70]);
-  assert.equal(g.up, 70);
+  assert.equal(g.up, 80);
   assert.equal(g.runs, 2);
   assert.equal(g.plan.missing, 8);
 });

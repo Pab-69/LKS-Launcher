@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.29.2
+
+- **Règle des catégories plus simple** : **80 ou plus** de moyenne dans la notation de ta catégorie, tu passes à celle du dessus ; **moins de 50**, tu redescends. En Débutant à 81 de moyenne (notation Débutant) tu passes Amateur ; en Amateur à 81 (notation Amateur) tu passes Pro ; en Pro à 49 (notation Pro) tu redescends Amateur. Toujours sur tes 20 dernières runs, 0 compris, avec 10 runs de répit après un changement. Les catégories sont recalculées avec toutes les notes déjà marquées.
+- **Bikernieki, Croix-en-Ternois, Englishtown** : nouvelle ligne de référence, calculée à partir des clips seuls : la courbe la plus fluide qui passe par chaque clip (centre du clip, milieu de la bande d'une zone), sans dépendre de la forme de la route. Elle ne s'écarte de ce chemin que pour rester dans la piste. Plus de zigzag entre les clips 3 et 4 de Bikernieki ; à Croix-en-Ternois, le pont au-dessus de la piste n'est plus pris pour un mur.
+
 ## 1.29.1
 
 - **Catégories d'après toutes les notes déjà marquées** : à la mise à jour du serveur, chaque pilote est rangé avec toutes ses notes existantes (runs et records, dans les trois notations, les 0 compris) : Débutant → Amateur à 70 de moyenne Débutant, Amateur → Pro à 65 de moyenne Amateur. Ensuite, la règle des 20 dernières runs s'applique run après run.
