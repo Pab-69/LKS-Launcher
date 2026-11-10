@@ -31,12 +31,12 @@ LAYOUTS = {
     'arg24': dict(track='Circuit_Du_Val_Argenton', layout='val_dargenton_layout_2024', models='models_val_dargenton_layout_2024.ini', surf='val_dargenton_layout_2024/data/surfaces.ini', ai='val_dargenton_layout_2023/ai/fast_lane.ai', json='Circuit_Du_Val_Argenton.val_dargenton_layout_2024.json'),
     'cal': dict(track='cfd_calmont_2023', layout='Calmont', models='models_Calmont.ini', surf='Calmont/data/surfaces.ini', ai=None, json='cfd_calmont_2023.Calmont.json'),
     'cha': dict(track='cfd_circuit_charade_2025', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai/fast_lane.ai', json='cfd_circuit_charade_2025.json'),
-    'cro': dict(track='cfd_croix_en_ternois_2025', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai_for_cam/fast_lane.ai', json='cfd_croix_en_ternois_2025.json'),
-    'vdv': dict(track='cfd_val_de_vienne_2022', layout='', models=None, surf='data/surfaces.ini', ai='ai/fast_lane.ai', json='cfd_val_de_vienne_2022.json'),
+    'cro': dict(finish_at=0.23, track='cfd_croix_en_ternois_2025', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai_for_cam/fast_lane.ai', json='cfd_croix_en_ternois_2025.json'),
+    'vdv': dict(finish_at=0.5, track='cfd_val_de_vienne_2022', layout='', models=None, surf='data/surfaces.ini', ai='ai/fast_lane.ai', json='cfd_val_de_vienne_2022.json'),
     'eng': dict(track='englishtown_gambler_esda', layout='', models=None, surf='data/surfaces.ini', ai='ai-for replays/fast_lane.ai', json='englishtown_gambler_esda.json'),
     'kart': dict(track='kart_volan_championship', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai/fast_lane.ai', json='kart_volan_championship.json'),
     'pge': dict(track='poland_pge_narodowy_v3', layout='', models='models.ini', surf='data/surfaces.ini', ai='ai0/fast_lane.ai', json='poland_pge_narodowy_v3.json'),
-    'bik': dict(track='vdc_bikernieki_2022', layout='drift_vdc', models='models_drift_vdc.ini', surf='drift_vdc/data/surfaces.ini', ai='drift_vdc/ai/fast_lane.ai', json='vdc_bikernieki_2022.drift_vdc.json'),
+    'bik': dict(start_at=0.8, track='vdc_bikernieki_2022', layout='drift_vdc', models='models_drift_vdc.ini', surf='drift_vdc/data/surfaces.ini', ai='drift_vdc/ai/fast_lane.ai', json='vdc_bikernieki_2022.drift_vdc.json'),
 }
 
 # ground paint (name or material) and clip posts / boards of each layout, found by surveying the meshes under every clip
@@ -233,7 +233,7 @@ def first_pass(P, x, z, lo, hi, tol=8.0):
     return lo + int(run[d[run].argmin()])
 
 
-CLIP_SPLINE = os.environ.get('LKS_LINE', 'clips') == 'clips'  # line from the clips only (LKS_LINE=road: older method along the road)  # the line is the smoothest curve through the clips only (not tied to the road's middle)
+CLIP_SPLINE = os.environ.get('LKS_LINE', 'clips') == 'clips'  # the line is the smoothest curve through the clips only (not tied to the road's middle)
 W1 = 0.0  # weight of the path length (a shorter line keeps to the inside of the bends)
 JUNCTION_CAP = 0.8  # m of room above the running median the line may use (a junction mouth is cut off)
 TURN_RULE = False  # the line turns the right way at every clip
@@ -572,7 +572,7 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
         line = Lfull[max(0, i0 - 1):min(n, i1 + 3)]
     if CLIP_SPLINE:
         # the line from the clips only (see clip_line)
-        line, _, _ = clip_line(g, valid, wall, c)
+        line, _, _ = clip_line(g, valid, wall, c, start_at=cfg.get('start_at'), finish_at=cfg.get('finish_at'))
         Lfull = line
         a = s0
     rad, ang = radius(Lfull)
@@ -697,21 +697,23 @@ def report(res):
 def control_points(c, step_zone=3.0):
     """[(x, z)] the line must go through, in order."""
     mid = lambda g: np.mean(np.array(g, float), 0)
-    pts = [mid(c['start'])]
+    pts = [mid(c['start'])]; zone_pt = [False]
     for cl in c['clips']:
         if cl.get('path') and len(cl['path']) > 1:
             P = np.array(cl['path'], float)
             s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(P, axis=0).T))])
             t = np.linspace(0, s[-1], max(2, int(round(s[-1] / step_zone)) + 1))
-            pts += list(np.stack([np.interp(t, s, P[:, 0]), np.interp(t, s, P[:, 1])], 1))
+            new = list(np.stack([np.interp(t, s, P[:, 0]), np.interp(t, s, P[:, 1])], 1))
+            pts += new; zone_pt += [True] * len(new)
         else:
-            pts.append(np.array([cl['x'], cl['z']], float))
+            pts.append(np.array([cl['x'], cl['z']], float)); zone_pt.append(False)
     pts.append(mid(c['finish']))
     # a zone that starts at the start gate or ends at the finish: the gate stands for its first / last point
     def gate_dist(p, g):
         a, b = np.array(g[0], float), np.array(g[1], float); v = b - a
         k = np.clip((p - a) @ v / (v @ v), 0, 1); return np.hypot(*(a + v * k - p))
-    inner = [p for p in pts[1:-1] if gate_dist(p, c['start']) > 3 and gate_dist(p, c['finish']) > 3]
+    # (only the points of a zone: a small clip next to a gate stays, the line goes through it)
+    inner = [p for p, z in zip(pts[1:-1], zone_pt[1:]) if not z or (gate_dist(p, c['start']) > 3 and gate_dist(p, c['finish']) > 3)]
     return np.array([pts[0]] + inner + [pts[-1]])
 
 
@@ -739,7 +741,7 @@ def sample_field(g, F, x, z):
     return F[v, u]
 
 
-def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25):
+def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25, start_at=None, finish_at=None):
     import osqp
     from scipy import sparse
     Q = control_points(c)
@@ -778,7 +780,12 @@ def clip_line(g, valid, wall, c, margin=0.6, w2=1.0, w3=6.0, step=1.0, iters=25)
         u = (b - a) / np.linalg.norm(b - a); nn = np.array([-u[1], u[0]])
         R = sparse.csr_matrix(([nn[0], nn[1], u[0], u[1]], ([0, 0, 1, 1], [i, n + i, i, n + i])), shape=(2, 2 * n))
         rows.append(R)
-        lo_e.append(np.array([nn @ a, u @ a + 0.8])); up_e.append(np.array([nn @ a, u @ b - 0.8]))
+        at = start_at if i == pin[0] else finish_at
+        if at is None:
+            lo_e.append(np.array([nn @ a, u @ a + 0.8])); up_e.append(np.array([nn @ a, u @ b - 0.8]))
+        else:  # pinned at this share of the gate (from its first point)
+            pos = u @ (a + (b - a) * at)
+            lo_e.append(np.array([nn @ a, pos])); up_e.append(np.array([nn @ a, pos]))
     Apin = sparse.vstack(rows).tocsc()
     bpin = np.concatenate(lo_e); bpin_u = np.concatenate(up_e)
     D, Gx, Gy = track_distance(g, valid, wall, L0)

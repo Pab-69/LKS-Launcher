@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 1.29.4
+
+- **Bikernieki** : la ligne commence à l'extérieur, plus sur les zébras.
+- **Croix-en-Ternois** : le dernier clip, peint sur la ligne d'arrivée, est ajouté (clip 7) et la ligne passe dessus.
+- **Englishtown** : les trois zones sont refaites sur le marquage peint (la zone 1 dans son cadre, les zones 2 et 3 au milieu des deux arcs peints, en courbe régulière) ; l'arrivée est sur la ligne peinte à la fin de la dernière zone.
+- **Val de Vienne** : la ligne finit au centre de la ligne d'arrivée.
+
 ## 1.29.3
 
 - **Catégories plus exigeantes** : **85 ou plus** de moyenne dans la notation de ta catégorie pour passer à celle du dessus, **moins de 60** pour redescendre (toujours sur tes 20 dernières runs, 0 compris, 10 runs de répit après un changement). Recalculées avec toutes les notes déjà marquées.
