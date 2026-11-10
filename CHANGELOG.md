@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 1.29.1
+
+- **Catégories d'après toutes les notes déjà marquées** : à la mise à jour du serveur, chaque pilote est rangé avec toutes ses notes existantes (runs et records, dans les trois notations, les 0 compris) : Débutant → Amateur à 70 de moyenne Débutant, Amateur → Pro à 65 de moyenne Amateur. Ensuite, la règle des 20 dernières runs s'applique run après run.
+- **Nouvelle ligne de référence sur tous les circuits** : elle **passe par chaque clip** (au centre du clip, et au milieu de la bande pour une zone), de la manière la plus fluide possible (courbure la plus régulière), sans sortir de la piste. Elle ne va plus chercher l'extérieur entre deux clips ni ne déborde dans un carrefour (Bikernieki entre les clips 3 et 4, Croix-en-Ternois).
+- **Englishtown** : l'arrivée est à la fin de la dernière zone.
+
 ## 1.29.0
 
 - **Catégories sur toutes tes runs** : ta catégorie se joue maintenant sur la moyenne de tes **20 dernières runs**, notées dans ta catégorie, **les 0 compris** (il en faut au moins 10). Une run ratée pèse jusqu'à ce qu'elle sorte de la fenêtre : il faut être régulier pour rester en haut.

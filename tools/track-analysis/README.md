@@ -11,22 +11,22 @@ Pour chaque tracé :
    îlots compris), simplifié à 6 cm.
 3. **Clips** : chaque clip ponctuel est recalé sur le centre du marquage peint au sol qui est dessous
    (peinture, cadres, losanges…) ; les zones suivent les bandes peintes.
-4. **Ligne de référence** : le chemin du **centre de la voiture** qui met le pare-chocs avant sur
-   chaque corde et le pare-chocs arrière sur chaque clip extérieur ou zone, à 35° de dérive (8° dans
-   les transitions, quand la ligne tourne dans l'autre sens), la plus fluide possible (courbure et
-   à-coups minimum), la carrosserie dans les limites.
+4. **Ligne de référence** : elle passe par chaque clip (centre d'un clip ponctuel, milieu de la bande
+   d'une zone, à 15 cm près), la plus fluide possible (courbure et variation de courbure minimales),
+   à au moins 50 cm des limites ; les entrées de carrefour et routes latérales ne comptent pas comme de
+   la place pour elle.
 5. **Départ, début du drift, arrivée** : repris des lignes peintes et panneaux du circuit (gardés tels
    quels) ; la ligne commence et finit exactement en les traversant.
 
-Contrôles affichés à chaque analyse : écart clip / marquage, distance pare-chocs / clip, part de
-chaque zone couverte, rayon de courbure minimum de la ligne. Une image de contrôle par tracé
+Contrôles affichés à chaque analyse : écart clip / marquage, distance ligne / clip et ligne / axe de
+chaque zone, rayon de courbure minimum de la ligne. Une image de contrôle par tracé
 (`out/<tracé>.png`) montre la piste, les limites, les marquages, les clips, la ligne et une voiture
 à l'endroit où elle prend chaque clip.
 
 ## Utilisation
 
 ```bash
-pip install numpy pillow scipy scikit-image
+pip install numpy pillow scipy scikit-image osqp
 python3 fetch.py                    # télécharge les modèles et lignes IA des circuits du groupe (sans textures)
 python3 run.py cha,cro              # analyse + images de contrôle
 python3 run.py cha --export         # écrit aussi le parcours officiel

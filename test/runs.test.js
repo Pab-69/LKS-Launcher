@@ -162,40 +162,6 @@ test('online the game gives the layout in lower case (« calmont »): same cours
   assert.strictEqual(r.live.layout, 'Calmont');
 });
 
-/**
- * The car drifting along the recorded run: heading = direction of travel turned by `angle`
- * towards the inside of the turn (nose in, tail out), as a driver holds a drift.
- */
-function withDriftYaw(samples, angle = 35) {
-  const X = 9;
-  const Z = 10;
-  const th = (angle * Math.PI) / 180;
-  const n = samples.length;
-  const at = (i) => samples[Math.max(0, Math.min(n - 1, i))];
-  return samples.map((s, i) => {
-    const a = at(i - 4);
-    const b = at(i + 4);
-    const fx = b[X] - a[X];
-    const fz = b[Z] - a[Z];
-    // turn direction from the heading change over ±8 samples
-    const p = at(i - 8);
-    const q = at(i + 8);
-    const cross = (s[X] - p[X]) * (q[Z] - s[Z]) - (s[Z] - p[Z]) * (q[X] - s[X]);
-    const sign = cross > 0 ? 1 : -1;
-    // turning radius from the three points: in a transition (nearly straight) the car is nearly straight too
-    const ab = Math.hypot(s[X] - p[X], s[Z] - p[Z]);
-    const bc = Math.hypot(q[X] - s[X], q[Z] - s[Z]);
-    const ca = Math.hypot(q[X] - p[X], q[Z] - p[Z]);
-    const radius = (ab * bc * ca) / (2 * Math.abs(cross) || 1e-9);
-    const drift = radius < 45 ? th : (8 * Math.PI) / 180;
-    const travel = Math.atan2(fx, fz); // forward = (sin yaw, cos yaw)
-    const out = s.slice(0, 14);
-    while (out.length < 14) out.push(0);
-    out[14] = travel - sign * drift;
-    return out;
-  });
-}
-
 test('runs on the new tracks: one run from the départ line to the finish, every painted clip on the line', () => {
   // PGE Narodowy passes its finish area twice: the run must not end on the first pass
   for (const [track, layout] of [['kart_volan_championship', ''], ['poland_pge_narodowy_v3', ''], ['englishtown_gambler_esda', ''], ['vdc_bikernieki_2022', 'drift_vdc']]) {
@@ -208,8 +174,8 @@ test('runs on the new tracks: one run from the départ line to the finish, every
     assert.strictEqual(laps.length, 1, track);
     const run = laps[0];
     assert.ok(run.samples[0][0] < 0.02 && run.samples[run.samples.length - 1][0] > 0.98, track);
-    // the official line is the path of the car's centre: drifting along it, the bumpers touch the clips
-    const res = scoreDrift(withDriftYaw(run.samples), course);
+    // the official line goes through every clip
+    const res = scoreDrift(run.samples, course);
     assert.strictEqual(res.clips.filter((c) => c.hit).length, course.clips.length, `${track}: ${JSON.stringify(res.clips.map((c) => [c.name, c.hit, c.dist]))}`);
   }
 });
