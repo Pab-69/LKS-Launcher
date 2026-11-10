@@ -498,8 +498,8 @@ grant execute on function public.set_live(text, text, text, text, text, text, js
 -- chaque run, sur TOUS ses passages : la moyenne de ses 20 dernières runs dans
 -- la notation de sa catégorie, les 0 compris (une run ratée fait baisser la
 -- moyenne : il faut être régulier pour rester en haut).
---   80 ou plus de moyenne dans la notation de sa catégorie : catégorie au-dessus (au moins 10 runs)
---   moins de 50 : catégorie en dessous
+--   85 ou plus de moyenne dans la notation de sa catégorie : catégorie au-dessus (au moins 10 runs)
+--   moins de 60 : catégorie en dessous
 -- Après un changement, 10 runs de répit avant de pouvoir redescendre.
 -- Chaque run garde ses trois notes, la fenêtre survit donc à la purge des runs.
 
@@ -518,9 +518,9 @@ revoke all on public.lks_categories from anon, authenticated;
 
 -- seuils (une seule source : le launcher, le bot et le site les lisent dans la vue)
 create or replace function public.lks_category_up(cat text) returns numeric language sql immutable as $$
-  select case cat when 'debutant' then 80 when 'amateur' then 80 else null end::numeric $$;
+  select case cat when 'debutant' then 85 when 'amateur' then 85 else null end::numeric $$;
 create or replace function public.lks_category_down(cat text) returns numeric language sql immutable as $$
-  select case cat when 'amateur' then 50 when 'pro' then 50 else null end::numeric $$;
+  select case cat when 'amateur' then 60 when 'pro' then 60 else null end::numeric $$;
 create or replace function public.lks_category_mode(cat text) returns text language sql immutable as $$
   select case cat when 'debutant' then 'debutant' when 'amateur' then 'normal' else 'pro' end $$;
 create or replace function public.lks_category_idx(cat text) returns integer language sql immutable as $$
@@ -595,7 +595,7 @@ revoke all on function public.lks_update_category(text) from public, anon, authe
 
 -- Catégorie de chaque pilote d'après TOUTES les notes déjà marquées : les runs encore sur le
 -- serveur et les records (une note par notation). Par notation, la moyenne de toutes ses notes
--- (0 compris) : Débutant → Amateur à 80 de moyenne Débutant, Amateur → Pro à 80 de moyenne
+-- (0 compris) : Débutant → Amateur à 85 de moyenne Débutant, Amateur → Pro à 85 de moyenne
 -- Amateur (au moins 3 notes dans chaque). La fenêtre (20 dernières runs) est remplie avec ses
 -- runs, la règle run après run prend ensuite le relais (10 runs de répit).
 -- Lancé une fois à l'installation de cette version ; ./lks.sh categories le relance.
@@ -646,9 +646,9 @@ alter table public.lks_meta enable row level security;
 revoke all on public.lks_meta from anon, authenticated;
 do $$
 begin
-  if not exists (select 1 from public.lks_meta where key = 'categories_v4') then
+  if not exists (select 1 from public.lks_meta where key = 'categories_v5') then
     perform public.lks_recompute_categories();
-    insert into public.lks_meta (key, value) values ('categories_v4', 'fait') on conflict (key) do nothing;
+    insert into public.lks_meta (key, value) values ('categories_v5', 'fait') on conflict (key) do nothing;
   end if;
 end $$;
 

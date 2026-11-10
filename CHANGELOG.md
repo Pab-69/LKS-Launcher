@@ -1,5 +1,9 @@
 # Journal des versions
 
+## 1.29.3
+
+- **Catégories plus exigeantes** : **85 ou plus** de moyenne dans la notation de ta catégorie pour passer à celle du dessus, **moins de 60** pour redescendre (toujours sur tes 20 dernières runs, 0 compris, 10 runs de répit après un changement). Recalculées avec toutes les notes déjà marquées.
+
 ## 1.29.2
 
 - **Règle des catégories plus simple** : **80 ou plus** de moyenne dans la notation de ta catégorie, tu passes à celle du dessus ; **moins de 50**, tu redescends. En Débutant à 81 de moyenne (notation Débutant) tu passes Amateur ; en Amateur à 81 (notation Amateur) tu passes Pro ; en Pro à 49 (notation Pro) tu redescends Amateur. Toujours sur tes 20 dernières runs, 0 compris, avec 10 runs de répit après un changement. Les catégories sont recalculées avec toutes les notes déjà marquées.

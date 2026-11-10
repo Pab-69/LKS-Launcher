@@ -11,7 +11,7 @@ const CATEGORY_MODE = { debutant: 'debutant', amateur: 'normal', pro: 'pro' };
 const NEXT = { debutant: 'amateur', amateur: 'pro', pro: null };
 const PREV = { debutant: null, amateur: 'debutant', pro: 'amateur' };
 // same values as the server (used when an older server does not send them)
-const RULES = { up: { debutant: 80, amateur: 80, pro: null }, down: { debutant: null, amateur: 50, pro: 50 }, window: 20, minRuns: 10, grace: 10 };
+const RULES = { up: { debutant: 85, amateur: 85, pro: null }, down: { debutant: null, amateur: 60, pro: 60 }, window: 20, minRuns: 10, grace: 10 };
 
 const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);

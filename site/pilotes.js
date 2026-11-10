@@ -7,7 +7,7 @@
   var KIND = { drift: 'Drift', tandem: 'Tandem', time: 'Chrono' };
   var ORDER = ['pro', 'amateur', 'debutant'];
   // seuils par catégorie (le serveur les envoie aussi : up / down)
-  var UP = { debutant: 80, amateur: 80 }, DOWN = { amateur: 50, pro: 50 };
+  var UP = { debutant: 85, amateur: 85 }, DOWN = { amateur: 60, pro: 60 };
   function day(iso) { return new Date(iso).toLocaleDateString('fr-FR'); }
   window.LKSBattleCard = battleCard; // aussi utilisé par la page des classements
   if (!box) return;
