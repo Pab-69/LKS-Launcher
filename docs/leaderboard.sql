@@ -594,9 +594,11 @@ begin
 end $$;
 revoke all on function public.lks_update_category(text) from public, anon, authenticated;
 
--- Fenêtre de chaque pilote reconstruite avec les runs encore sur le serveur
--- (les 20 plus récentes). La catégorie de chacun est gardée, avec 10 runs de
--- répit ; la règle ci-dessus s'applique ensuite run après run.
+-- Catégorie de chaque pilote d'après TOUTES les notes déjà marquées : les runs encore sur le
+-- serveur et les records (une note par notation). Par notation, la moyenne de toutes ses notes
+-- (0 compris) : Débutant → Amateur à 70 de moyenne Débutant, Amateur → Pro à 65 de moyenne
+-- Amateur (au moins 3 notes dans chaque). La fenêtre (20 dernières runs) est remplie avec ses
+-- runs, la règle run après run prend ensuite le relais (10 runs de répit).
 -- Lancé une fois à l'installation de cette version ; ./lks.sh categories le relance.
 create or replace function public.lks_recompute_categories() returns integer
 language plpgsql security definer set search_path = public as $$
@@ -606,17 +608,34 @@ declare
   w jsonb;
   na numeric[];
   cat text;
+  n_deb integer; a_deb numeric; n_nor integer; a_nor numeric;
 begin
-  for r in select lower(trim(driver)) as k, max(trim(driver)) as name from public.lks_runs where kind = 'drift' group by 1 loop
+  create temporary table lks_all_scores on commit drop as
+    select lower(trim(driver)) as k, trim(driver) as name, m.key as mode, (m.value)::text::numeric as sc
+      from public.lks_runs, jsonb_each(case when jsonb_typeof(detail->'modes') = 'object' then detail->'modes' else '{}'::jsonb end) m
+     where kind = 'drift' and jsonb_typeof(m.value) = 'number'
+    union all
+    select lower(trim(driver)), trim(driver), md, score from public.lks_runs, unnest(array['debutant', 'normal', 'pro']) md
+     where kind = 'drift' and jsonb_typeof(detail->'modes') is distinct from 'object'
+    union all
+    select lower(trim(driver)), trim(driver), substring(rules from '-(debutant|normal|pro)(@|$)'), score from public.lks_laps
+     where kind = 'drift' and score is not null and rules ~ '-(debutant|normal|pro)(@|$)';
+  for r in select k, max(name) as name from lks_all_scores group by k loop
+    select count(*), coalesce(avg(sc), 0) into n_deb, a_deb from lks_all_scores where k = r.k and mode = 'debutant';
+    select count(*), coalesce(avg(sc), 0) into n_nor, a_nor from lks_all_scores where k = r.k and mode = 'normal';
+    cat := 'debutant';
+    if n_deb >= 3 and a_deb >= public.lks_category_up('debutant') then cat := 'amateur'; end if;
+    if cat = 'amateur' and n_nor >= 3 and a_nor >= public.lks_category_up('amateur') then cat := 'pro'; end if;
     select coalesce(jsonb_agg(sc order by created_at), '[]'::jsonb) into w from (
       select public.lks_run_scores(score, detail) as sc, created_at from public.lks_runs
        where lower(trim(driver)) = r.k and kind = 'drift' order by created_at desc limit 20) t;
-    select category into cat from public.lks_categories where key = r.k;
-    cat := coalesce(cat, 'debutant');
-    na := public.lks_window_avg(w, public.lks_category_idx(cat));
+    -- the average shown: all the notes of the driver in the notation of the category
+    select array[count(*)::numeric, coalesce(avg(sc), 0)] into na from lks_all_scores where k = r.k and mode = public.lks_category_mode(cat);
     insert into public.lks_categories (key, name, category, avg, runs, recent, since, updated_at)
     values (r.k, r.name, cat, round(least(na[2], 100), 1), na[1]::integer, w, 0, now())
-    on conflict (key) do update set name = excluded.name, avg = excluded.avg, runs = excluded.runs, recent = excluded.recent, since = 0;
+    on conflict (key) do update set name = excluded.name, category = excluded.category, avg = excluded.avg, runs = excluded.runs,
+      recent = excluded.recent, since = 0,
+      updated_at = case when public.lks_categories.category <> excluded.category then now() else public.lks_categories.updated_at end;
     cnt := cnt + 1;
   end loop;
   return cnt;
@@ -628,9 +647,9 @@ alter table public.lks_meta enable row level security;
 revoke all on public.lks_meta from anon, authenticated;
 do $$
 begin
-  if not exists (select 1 from public.lks_meta where key = 'categories_v2') then
+  if not exists (select 1 from public.lks_meta where key = 'categories_v3') then
     perform public.lks_recompute_categories();
-    insert into public.lks_meta (key, value) values ('categories_v2', 'fait') on conflict (key) do nothing;
+    insert into public.lks_meta (key, value) values ('categories_v3', 'fait') on conflict (key) do nothing;
   end if;
 end $$;
 
