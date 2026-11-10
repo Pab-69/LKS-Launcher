@@ -88,11 +88,11 @@ services:
     <<: *node
     container_name: admin-lks
     command: ['node', 'admin.js']
-    mem_limit: 64m
+    mem_limit: 128m
     cpus: 0.25
     depends_on: {db: {condition: service_healthy}}
     environment:
-      NODE_OPTIONS: --max-old-space-size=40
+      NODE_OPTIONS: --max-old-space-size=96
       PGHOST: db
       PGUSER: authenticator
       PGPASSWORD: ${AUTHENTICATOR_PASSWORD}
