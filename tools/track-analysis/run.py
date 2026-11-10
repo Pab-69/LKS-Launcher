@@ -44,6 +44,12 @@ def write(res):
     Ls = C.resample(L, 1.5)
     c['refLine'] = [[r2(x), r2(z)] for x, z in list(Ls) + [L[-1]]]
     c['limits'] = [[[round(float(x), 1), round(float(z), 1)] for x, z in L] for L in res['limits']]
+    # gates a bit longer than the panels (a line along the edge still crosses them)
+    for k in ('start', 'finish'):
+        a, b = np.array(c[k][0], float), np.array(c[k][1], float); d = (b - a) / np.linalg.norm(b - a)
+        if not c.get('gatesExtended'):
+            c[k] = [[r2(x), r2(z)] for x, z in (a - d * 1.5, b + d * 1.5)]
+    c['gatesExtended'] = True
     c['analysis'] = 2
     data['course'] = c
     json.dump(data, open(v2.COURSES + cfg['json'], 'w'), ensure_ascii=False, separators=(',', ':'))

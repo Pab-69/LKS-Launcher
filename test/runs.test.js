@@ -218,7 +218,7 @@ test('in-game app files: courses with gates, battle runs, ghost library', () => 
   fs.mkdirSync(dir, { recursive: true });
   writeCourses(ac, { 'cfd_calmont_2023|Calmont': bundledCourse('cfd_calmont_2023', 'Calmont'), 'x|': { clips: [{ name: 'A"b', x: 1, z: 2, r: 3 }] } });
   const lua = fs.readFileSync(path.join(dir, 'courses.lua'), 'utf8');
-  assert.match(lua, /start = \{ \{ -67\.6, -11 \}/);
+  assert.match(lua, /start = \{ \{ -69\.05, -10\.62 \}/);
   assert.match(lua, /path = \{ \{ -?\d/, "long painted zones keep their path");
   assert.match(lua, /line = \{ \{/);
   assert.match(lua, /staging = \{ \{ -56\.6, 115\.2 \}/);

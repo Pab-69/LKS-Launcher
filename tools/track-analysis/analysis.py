@@ -233,6 +233,16 @@ def first_pass(P, x, z, lo, hi, tol=8.0):
     return lo + int(run[d[run].argmin()])
 
 
+W1 = 0.0  # weight of the path length (a shorter line keeps to the inside of the bends)
+JUNCTION_CAP = 0.8  # m of room above the running median the line may use (a junction mouth is cut off)
+TURN_RULE = False  # the line turns the right way at every clip
+TOL = {}      # station -> tolerance of its target (m), filled by drift_targets
+W2, W3 = 1.0, 30.0  # weights of the curvature and of its change along the line
+LINE_MARGIN = 0.5  # m between the line and the track limits
+THROUGH_CLIPS = True  # the line goes through each clip (centre of a clip, centre line of a zone)
+TOL_K = 0.35  # share of the clip radius the line may miss its target by (the bumper stays well inside the clip)
+
+
 def drift_targets(P, N, F, lo, hi, clips, s0, s1, angle=DRIFT_ANGLE, angles=None):
     """Station -> centre offset. Front bumper on a corde, rear bumper on an outer clip or zone, at `angle`."""
     th = math.radians(angle)
@@ -244,6 +254,7 @@ def drift_targets(P, N, F, lo, hi, clips, s0, s1, angle=DRIFT_ANGLE, angles=None
     for ci, c in enumerate(clips):
         a_c = math.radians(angles[ci]) if angles else th
         d_lat = HALF_LENGTH * math.sin(a_c); d_long = HALF_LENGTH * math.cos(a_c)
+        if THROUGH_CLIPS: d_lat = d_long = 0.0
         sgn_long = -1 if c['kind'] != 'outer' else 1  # centre behind a corde, ahead of an outer clip
         pts = np.array(c['path'], float) if c.get('path') and len(c['path']) > 1 else np.array([[c['x'], c['z']]])
         if len(pts) > 1:
@@ -263,15 +274,16 @@ def drift_targets(P, N, F, lo, hi, clips, s0, s1, angle=DRIFT_ANGLE, angles=None
             sts.append(i)
         for j, v in per.items():
             fixed[j] = float(np.mean(v))
-            if len(pts) == 1:  # a small clip: the same offset over +-1.5 m around it
+            TOL[j] = 0.15 if THROUGH_CLIPS else TOL_K * c['r']
+            if len(pts) == 1 and not THROUGH_CLIPS:  # a small clip: the same offset over +-1.5 m around it
                 for dj in (-2, -1, 1, 2):
-                    if s0 <= j + dj <= s1 and (j + dj) not in fixed: fixed[j + dj] = float(np.mean(v))
+                    if s0 <= j + dj <= s1 and (j + dj) not in fixed: fixed[j + dj] = float(np.mean(v)); TOL[j + dj] = 0.15 if THROUGH_CLIPS else TOL_K * c['r']
         info.append((c['name'], min(sts), max(sts)))
         cursor = min(sts)
     return fixed, info
 
 
-def solve_line(P, N, lo, hi, fixed, w2=6.0, w3=30.0, wc=2.0, margin=HALF_WIDTH + 0.25):
+def solve_line_old(P, N, lo, hi, fixed, w2=6.0, w3=30.0, wc=2.0, margin=HALF_WIDTH + 0.25):
     n = len(P)
     D2 = DL.diff_matrix(n, 2); D3 = DL.diff_matrix(n, 3)
     blocks, rhs = [], []
@@ -299,6 +311,111 @@ def solve_line(P, N, lo, hi, fixed, w2=6.0, w3=30.0, wc=2.0, margin=HALF_WIDTH +
         bad = [i for i in free if q[i] < lo_b[i] - 1e-3 or q[i] > hi_b[i] + 1e-3]
         if not bad: break
         for i in bad: pins[i] = float(np.clip(q[i], lo_b[i], hi_b[i]))
+    return q
+
+
+def solve_line(P, N, lo, hi, fixed, w2=None, w3=None, wc=None, tol=0.4, w0=0.002, margin=None, tols=None, w1=None):
+    margin = LINE_MARGIN if margin is None else margin
+    w2 = W2 if w2 is None else w2; w3 = W3 if w3 is None else w3
+    """Smoothest line (curvature and curvature change, on the positions) with box constraints:
+    the car inside the track (lo + margin <= q <= hi - margin) and within `tol` m of each clip target.
+    A tiny pull to the middle of the track picks a natural line where the track is wide."""
+    from scipy import sparse
+    from scipy.optimize import lsq_linear
+    n = len(P)
+    def D(order):
+        M = sparse.identity(n, format='csr')
+        for _ in range(order):
+            M = (M[1:] - M[:-1])
+        return M
+    rows, rhs = [], []
+    w1 = W1 if w1 is None else w1
+    for M, w in ((D(1), w1), (D(2), w2), (D(3), w3)):
+        if not w: continue
+        for k in (0, 1):
+            rows.append(w * M @ sparse.diags(N[:, k])); rhs.append(-w * (M @ P[:, k]))
+    rows.append(w0 * sparse.identity(n)); rhs.append(np.zeros(n))
+    A = sparse.vstack(rows).toarray(); b = np.concatenate(rhs)
+    lo_b = lo + margin; hi_b = hi - margin
+    lo_b = np.minimum(lo_b, -0.2); hi_b = np.maximum(hi_b, 0.2)  # a very narrow spot: the middle stays possible
+    # a clip closer to the edge than the margin: the margin opens gradually around it (no kink)
+    for i, t in fixed.items():
+        if 0 <= i < n:
+            for j in range(max(0, i - 12), min(n, i + 13)):
+                lo_b[j] = min(lo_b[j], t - 0.3 - 0.12 * abs(j - i))
+                hi_b[j] = max(hi_b[j], t + 0.3 + 0.12 * abs(j - i))
+    for i, t in fixed.items():
+        if 0 <= i < n:
+            tt = tols.get(i, tol) if tols else tol
+            lo_b[i] = t - tt; hi_b[i] = t + tt
+    bad = lo_b > hi_b
+    lo_b[bad], hi_b[bad] = hi_b[bad] - 0.01, lo_b[bad] + 0.01
+    import osqp
+    As = sparse.csc_matrix(A)
+    H = (As.T @ As).tocsc() * 2; f = -2 * (As.T @ b)
+    m = osqp.OSQP()
+    m.setup(P=H, q=f, A=sparse.identity(n, format='csc'), l=lo_b, u=hi_b, verbose=False, eps_abs=1e-9, eps_rel=1e-9, max_iter=200000, polish=True)
+    r = m.solve()
+    if r.x is None or not np.all(np.isfinite(r.x)):
+        r = lsq_linear(A, b, bounds=(lo_b, hi_b), method='bvls', max_iter=20000)
+    return r.x
+
+
+TURN_H = 6          # stations (m) on each side to measure the line's turn at a clip
+TURN_MIN = 1 / 90.0  # the line turns at least this much (1/m) the right way at each clip
+
+
+def solve_line_qp(P, N, lo, hi, fixed, turns, tols=None, w2=1.0, w3=30.0, w0=0.002, margin=HALF_WIDTH + 0.25, iters=4):
+    """Smoothest line with the car inside the track, each clip target within its tolerance, AND the line
+    turning the right way at every clip: towards a corde (nose in), away from an outer clip (tail out).
+    turns = [(station, sign)] with sign the wanted sign of cross(L[j]-L[j-h], L[j+h]-L[j]).
+    Sequential QP (the turn is linearised around the previous line)."""
+    import osqp
+    from scipy import sparse
+    n = len(P)
+    def D(order):
+        M = sparse.identity(n, format='csr')
+        for _ in range(order): M = (M[1:] - M[:-1])
+        return M
+    rows, rhs = [], []
+    for M, w in ((D(1), W1), (D(2), w2), (D(3), w3)):
+        if not w: continue
+        for k in (0, 1):
+            rows.append(w * M @ sparse.diags(N[:, k])); rhs.append(-w * (M @ P[:, k]))
+    rows.append(w0 * sparse.identity(n)); rhs.append(np.zeros(n))
+    A = sparse.vstack(rows).tocsc(); b = np.concatenate(rhs)
+    H = (A.T @ A).tocsc() * 2; f = -2 * (A.T @ b)
+    lo_b = np.minimum(lo + margin, -0.2); hi_b = np.maximum(hi - margin, 0.2)
+    for i, t in fixed.items():
+        if 0 <= i < n:
+            tt = tols.get(i, 0.4) if tols else 0.4
+            lo_b[i] = t - tt; hi_b[i] = t + tt
+    bad = lo_b > hi_b
+    lo_b[bad], hi_b[bad] = hi_b[bad] - 0.01, lo_b[bad] + 0.01
+    q = solve_line(P, N, lo, hi, fixed, tols=tols)  # start: smoothest line without the turn rule
+    h = TURN_H
+    for _ in range(iters):
+        L = P + N * q[:, None]
+        Cr, lc = [], []
+        for j, sg in turns:
+            if j - h < 0 or j + h >= n: continue
+            for jj in (j - 2, j, j + 2):
+                if jj - h < 0 or jj + h >= n: continue
+                a = L[jj] - L[jj - h]; bb = L[jj + h] - L[jj]
+                cr = a[0] * bb[1] - a[1] * bb[0]
+                ga = np.array([bb[1], -bb[0]]); gb = np.array([-a[1], a[0]])
+                g = np.zeros(n)
+                g[jj - h] = -ga @ N[jj - h]; g[jj + h] = gb @ N[jj + h]; g[jj] = (ga - gb) @ N[jj]
+                # sg * (cr + g.(q' - q)) >= TURN_MIN * h^3
+                Cr.append(sg * g); lc.append(TURN_MIN * h ** 3 - sg * cr + sg * g @ q)
+        Cm = sparse.vstack([sparse.identity(n, format='csc')] + ([sparse.csc_matrix(np.array(Cr))] if Cr else [])).tocsc()
+        l = np.concatenate([lo_b, np.array(lc)]) if Cr else lo_b
+        u = np.concatenate([hi_b, np.full(len(lc), np.inf)]) if Cr else hi_b
+        m = osqp.OSQP()
+        m.setup(P=H, q=f, A=Cm, l=l, u=u, verbose=False, eps_abs=1e-6, eps_rel=1e-6, max_iter=40000, polish=True)
+        r = m.solve()
+        if r.x is None or not np.all(np.isfinite(r.x)): break
+        q = r.x
     return q
 
 
@@ -381,7 +498,7 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
         P = C.resample(P, 0.5); P = np.stack([C.smooth(P[:, 0], 6), C.smooth(P[:, 1], 6)], 1)
         F, N = C.frames(P)
         hi_raw, lo_raw = edges(g, valid, wall, P, N)
-        hi = clean_edge(hi_raw, 1); lo = clean_edge(lo_raw, -1)
+        hi = clean_edge(hi_raw, 1, k=40); lo = clean_edge(lo_raw, -1, k=40)  # the main road only (no junction)
     # course section on the base path (1 m stations for the line)
     P1 = C.resample(P, 1.0)
     F1, N1 = C.frames(P1)
@@ -389,7 +506,8 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
     s_1 = np.arange(len(P1)) * 1.0
     lo1 = np.interp(s_1, s_b, lo); hi1 = np.interp(s_1, s_b, hi)
     # the line's bounds: the raw rays (a junction or a paddock really is room), narrowest over 12 m
-    lo1r = np.interp(s_1, s_b, C.smooth(lo_raw, 1)); hi1r = np.interp(s_1, s_b, C.smooth(hi_raw, 1))
+    # side roads and junction mouths are not room for the line: the room is kept near its median over 20 m
+    lo1r = np.interp(s_1, s_b, clean_edge(lo_raw, -1, k=40, cap=JUNCTION_CAP)); hi1r = np.interp(s_1, s_b, clean_edge(hi_raw, 1, k=40, cap=JUNCTION_CAP))
     mid = lambda gt: np.mean(np.array(gt), 0)
     # stations followed along the old line, in order (a layout can pass the same place twice)
     i = DL.station_of(P1, *ref[0], 0, len(P1) // 2)
@@ -403,10 +521,20 @@ def analyze(key, angle=DRIFT_ANGLE, w2=15.0, w3=60.0, wc=8.0, verbose=True, cour
     def env(e, f, k=6): return np.array([f(e[max(0, i - k):i + k + 1]) for i in range(len(e))])
     lo_l = C.smooth(env(lo1r, np.max), 4); hi_l = C.smooth(env(hi1r, np.min), 4)
     angles = None
+    TOL.clear()
     for it in range(2):
         fixed, info = drift_targets(P1, N1, F1, lo1, hi1, c['clips'], s0, s1, angle, angles)
         fx = {i - a: v for i, v in fixed.items() if a <= i < b}
-        q = solve_line(P1[a:b], N1[a:b], lo_l[a:b], hi_l[a:b], fx, w2=w2, w3=w3, wc=wc)
+        tl = {i - a: v for i, v in TOL.items() if a <= i < b}
+        turns = []
+        for (nm, i_lo, i_hi), cl in zip(info, c['clips']):
+            j = (i_lo + i_hi) // 2 - a
+            off = float((np.array([cl['x'], cl['z']]) - P1[j + a]) @ N1[j + a])
+            side = 1 if off > 0 else -1               # clip on the +N side of the path
+            want = side if cl['kind'] != 'outer' else -side  # turn towards a corde, away from an outer clip
+            # the normal N is the left of the direction of travel: cross > 0 turns left (towards +N)
+            turns.append((j, want))
+        q = solve_line_qp(P1[a:b], N1[a:b], lo_l[a:b], hi_l[a:b], fx, turns, tols=tl) if TURN_RULE else solve_line(P1[a:b], N1[a:b], lo_l[a:b], hi_l[a:b], fx, tols=tl)
         Lfull = P1[a:b] + N1[a:b] * q[:, None]
         line = Lfull[s0 - a:s1 - a + 1]
         # where the line turns away from a clip (a transition, e.g. the waist of a figure of eight),
@@ -530,13 +658,12 @@ def report(res):
     print(f"== {res['key']}: ligne {len(L)} m, rayon mini {r.min():.1f} m, {len(res['marks'])} marquages")
     out = []
     for cl in c['clips']:
-        bump = car_at(res, cl)
         if cl.get('path'):
-            ds = np.array([min(np.hypot(bump[:, 0] - x, bump[:, 1] - z)) for x, z in cl['path']])
-            out.append((cl['name'], float(np.mean(ds <= cl['r']))))
-            print(f"  {cl['name']:8s} {cl['kind']:5s} zone r={cl['r']}: pare-chocs→zone moyenne {ds.mean():.2f} m (max {ds.max():.2f}), couverte {np.mean(ds <= cl['r']) * 100:.0f} %")
+            ds = np.array([dist_poly(L, x, z) for x, z in cl['path']])
+            out.append((cl['name'], float(ds.max())))
+            print(f"  {cl['name']:8s} {cl['kind']:5s} zone: ligne→axe de la zone moyenne {ds.mean():.2f} m (max {ds.max():.2f})")
         else:
-            d = float(min(np.hypot(bump[:, 0] - cl['x'], bump[:, 1] - cl['z'])))
+            d = dist_poly(L, cl['x'], cl['z'])
             out.append((cl['name'], d))
-            print(f"  {cl['name']:8s} {cl['kind']:5s} r={cl['r']}: pare-chocs→clip {d:.2f} m")
+            print(f"  {cl['name']:8s} {cl['kind']:5s} r={cl['r']}: ligne→clip {d:.2f} m")
     return out
